@@ -83,7 +83,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -374,6 +374,60 @@ export default {
 
 
 
+
+
+    if (url.pathname === "/api/kb/search-stocks" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB API 인증 정보가 설정되지 않았습니다." }, 503);
+      let input: { query?: string };
+      try { input = await request.json() as { query?: string }; }
+      catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      const query = String(input.query || "").trim().toLocaleLowerCase("ko-KR");
+      if (query.length < 2) return json({ success: true, stocks: [] });
+      const cacheKey = new Request("https://kb-ai-trader-cache.local/kb-stock-master-v1");
+      let masterResponse = await caches.default.match(cacheKey);
+      if (!masterResponse) {
+        const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
+        let tokenResponse: Response;
+        try {
+          tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
+            signal: AbortSignal.timeout(15000),
+          });
+        } catch (error) { return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "KB 인증 서버 연결 실패" }, 502); }
+        let tokenResult: any;
+        try { tokenResult = await tokenResponse.json(); } catch { return json({ success: false, message: "KB 인증 응답 오류" }, 502); }
+        const accessToken = tokenResult?.dataBody?.access_token;
+        if (!tokenResponse.ok || !accessToken) return json({ success: false, message: getKbErrorMessage(tokenResult) }, 502);
+        let response: Response;
+        try {
+          response = await fetch(`${baseUrl}/api/v1/siam4983`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: {} }),
+            signal: AbortSignal.timeout(30000),
+          });
+        } catch (error) { return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "종목 마스터 조회 실패" }, 502); }
+        if (!response.ok) return json({ success: false, message: "KB 종목 마스터 조회 실패 (HTTP " + response.status + ")" }, 502);
+        const raw = await response.text();
+        try { masterResponse = new Response(raw, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=21600" } }); await caches.default.put(cacheKey, masterResponse.clone()); }
+        catch { masterResponse = new Response(raw); }
+      }
+      let master: any;
+      try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
+      const rows = master?.dataBody?.Record1 || master?.dataBody?.record1 || master?.dataBody?.output || [];
+      const stocks = (Array.isArray(rows) ? rows : []).filter((row: any) => {
+        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim().toLocaleLowerCase("ko-KR");
+        const code = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim();
+        return name.includes(query) && /^\\d{6}$/.test(code);
+      }).slice(0, 20).map((row: any) => ({
+        name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim(),
+        code: String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim(),
+        market: String(row.mrkt_ccd || row.dl_mkt_ccd || ""),
+      }));
+      return json({ success: true, stocks, count: stocks.length, cached: true });
+    }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
       if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
