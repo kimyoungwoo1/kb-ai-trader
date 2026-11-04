@@ -154,7 +154,7 @@ export default function App() {
       setMarketAnalysis(result.market_analysis || '')
       if (Array.isArray(result.priority_disclosures)) setDisclosures(result.priority_disclosures)
       setNewsDiagnostics(Array.isArray(result.diagnostics) ? result.diagnostics.map((item: any) => item.source + ' · ' + item.query + ': HTTP ' + item.status + ', 원본 ' + (item.raw_count ?? '-') + '건, 유효 ' + (item.valid_count ?? '-') + '건, 오늘 ' + item.count + '건' + (item.newest_published ? ', 최신 ' + new Date(item.newest_published).toLocaleString('ko-KR') : '') + (item.sample_title ? ' · 제목 샘플: ' + item.sample_title : '') + (item.sample_link ? ' · 링크 샘플: ' + item.sample_link : '') + (item.error ? ' · ' + item.error : '')) : [])
-      setNewsMessage((result.message || '시장 뉴스 조회 완료') + ' · 기준일 ' + result.market_date_kst + ' (KST) · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
+      setNewsMessage((result.message || '시장 뉴스 조회 완료') + ' · 보유 ' + (result.research_context?.holdings_count ?? holdings.length) + '종목 · 관심 ' + (result.research_context?.watchlist_count ?? 0) + '종목 · 관련 공시 ' + (result.research_context?.matched_disclosure_count ?? 0) + '건 · 기준일 ' + result.market_date_kst + ' (KST) · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
     } catch { setNewsMessage('뉴스 서버에 연결하지 못했습니다.') }
     finally { setNewsLoading(false) }
   }
