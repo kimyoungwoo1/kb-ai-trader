@@ -383,7 +383,7 @@ export default {
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const query = String(input.query || "").trim().toLocaleLowerCase("ko-KR");
       if (query.length < 2) return json({ success: true, stocks: [] });
-      const cacheKey = new Request("https://kb-ai-trader-cache.local/kb-stock-master-v1");
+      const cacheKey = new Request("https://kb-ai-trader-cache.local/kb-stock-master-v2");
       let masterResponse = await caches.default.match(cacheKey);
       if (!masterResponse) {
         const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
