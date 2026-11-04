@@ -148,7 +148,7 @@ export default function App() {
       const result = await response.json()
       if (response.status === 401) { logout(); setError('세션이 만료되었습니다. 다시 로그인해 주세요.'); return }
       if (!response.ok || !result.success) {
-        setDisclosureMessage((result.message || '공시 조회에 실패했습니다.') + (result.error_type ? ' · 오류 유형: ' + result.error_type : '') + (result.cause_type ? ' · 원인: ' + result.cause_type : '') + (result.cause_code ? ' · 코드: ' + result.cause_code : '') + (result.stage ? ' · 단계: ' + result.stage : ''))
+        setDisclosureMessage((result.message || '공시 조회에 실패했습니다.') + (result.error_type ? ' · 오류 유형: ' + result.error_type : '') + (result.cause_type ? ' · 원인: ' + result.cause_type : '') + (result.cause_code ? ' · 코드: ' + result.cause_code : '') + (result.stage ? ' · 단계: ' + result.stage : '') + (result.public_host_ok !== undefined ? ' · 일반 외부 연결: ' + (result.public_host_ok ? '정상' : '실패') : '') + (result.public_host_status ? ' · 외부 응답: ' + result.public_host_status : ''))
         return
       }
       setDisclosures(result.disclosures || [])
