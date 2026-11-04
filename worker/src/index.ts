@@ -431,8 +431,10 @@ export default {
           source: "금융감독원 OpenDART 공시검색 API",
           message: disclosures.length ? "최근 3일 공시 " + disclosures.length + "건을 수집했습니다." : "조회 기간에 공시가 없습니다.",
         });
-      } catch {
-        return json({ success: false, stage: "network", message: "OpenDART 요청 중 네트워크 오류가 발생했습니다. 인증키나 요청 URL은 보안상 화면에 표시하지 않습니다." }, 502);
+      } catch (error) {
+        const errorName = error instanceof Error ? error.name : "UnknownError";
+        const errorMessage = errorName === "TimeoutError" || errorName === "AbortError" ? "OpenDART 연결 시간이 초과됐습니다." : errorName === "TypeError" ? "OpenDART 외부 연결 또는 TLS 단계에서 실패했습니다." : "OpenDART 요청 처리 중 오류가 발생했습니다.";
+        return json({ success: false, stage: "network", error_type: errorName, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
       }
     }
 
@@ -480,7 +482,7 @@ export default {
           const validItems = parsedItems.filter(item => item.title && /^https?:\/\//i.test(item.link));
           const items = validItems.filter(item => item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
           const newest = validItems.reduce((latest, item) => Math.max(latest, item.published_ms), 0);
-          return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, raw_count: matches.length, valid_count: validItems.length, count: items.length, newest_published: newest ? new Date(newest).toISOString() : null, content_type: response.headers.get("content-type") || "", error: matches.length ? null : "RSS/Atom 항목을 찾지 못했습니다." } };
+          return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, raw_count: matches.length, valid_count: validItems.length, count: items.length, newest_published: newest ? new Date(newest).toISOString() : null, sample_title: parsedItems[0]?.title.slice(0, 100) || "", sample_link: parsedItems[0]?.link.slice(0, 160) || "", content_type: response.headers.get("content-type") || "", error: matches.length && !validItems.length ? "RSS 항목은 있으나 제목 또는 링크 추출에 실패했습니다." : matches.length ? null : "RSS/Atom 항목을 찾지 못했습니다." } };
         } catch (error) {
           return { items: [], diagnostic: { source: feed.source, query: feed.category, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
