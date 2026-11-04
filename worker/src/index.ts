@@ -412,11 +412,39 @@ export default {
           return json({ success: false, stage: "connectivity_probe", error_type: dartHostProbe.error_type, cause_code: dartHostProbe.cause_code, public_host_ok: publicHostProbe.ok, public_host_status: publicHostProbe.status || null, message: "Cloudflare Worker에서 OpenDART 호스트 연결 자체가 실패했습니다. 인증키 문제가 아닌 네트워크/TLS 연결 문제입니다." }, 502);
         }
         dartStage = "api_fetch";
-        const response = await fetch("https://opendart.fss.or.kr/api/list.json?" + params.toString(), {
-          headers: { "Accept": "application/json" },
-          redirect: "follow",
-          signal: AbortSignal.timeout(15000),
-        });
+        let requestUrl = "https://opendart.fss.or.kr/api/list.json?" + params.toString();
+        const visitedUrls = new Set<string>();
+        let response: Response | null = null;
+        for (let redirectCount = 0; redirectCount <= 4; redirectCount++) {
+          const currentUrl = new URL(requestUrl);
+          if (currentUrl.hostname !== "opendart.fss.or.kr") {
+            return json({ success: false, stage: "redirect_blocked", redirect_host: currentUrl.hostname, redirect_path: currentUrl.pathname, message: "OpenDART가 다른 호스트로 이동을 요청해 보안상 중단했습니다. 인증키는 전달하지 않았습니다." }, 502);
+          }
+          const safeCurrentUrl = currentUrl.origin + currentUrl.pathname;
+          if (visitedUrls.has(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"))) {
+            return json({ success: false, stage: "redirect_loop", redirect_host: currentUrl.hostname, redirect_path: currentUrl.pathname, message: "OpenDART API가 동일 주소로 반복 이동시켜 요청을 중단했습니다." }, 502);
+          }
+          visitedUrls.add(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"));
+          response = await fetch(requestUrl, {
+            headers: { "Accept": "application/json" },
+            redirect: "manual",
+            signal: AbortSignal.timeout(15000),
+          });
+          if (response.status < 300 || response.status >= 400) break;
+          const location = response.headers.get("location");
+          if (!location) {
+            return json({ success: false, stage: "redirect_without_location", http_status: response.status, message: "OpenDART가 이동 응답을 반환했지만 Location 헤더가 없습니다." }, 502);
+          }
+          const nextUrl = new URL(location, requestUrl);
+          if (nextUrl.hostname !== "opendart.fss.or.kr") {
+            return json({ success: false, stage: "redirect_blocked", http_status: response.status, redirect_host: nextUrl.hostname, redirect_path: nextUrl.pathname, message: "OpenDART가 다른 호스트로 이동을 요청해 보안상 중단했습니다. 인증키는 전달하지 않았습니다." }, 502);
+          }
+          if (redirectCount === 4) {
+            return json({ success: false, stage: "redirect_limit", http_status: response.status, redirect_host: nextUrl.hostname, redirect_path: nextUrl.pathname, message: "OpenDART 리다이렉트가 5회를 초과해 요청을 중단했습니다." }, 502);
+          }
+          requestUrl = nextUrl.toString();
+        }
+        if (!response) return json({ success: false, stage: "api_fetch", message: "OpenDART 응답을 받지 못했습니다." }, 502);
         dartStage = "response_headers";
         const contentType = response.headers.get("content-type") || "";
         if (!response.ok) return json({ success: false, stage: "http", http_status: response.status, message: "OpenDART HTTP 오류: " + response.status }, 502);
