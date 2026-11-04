@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number }
 type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number }
@@ -26,7 +26,10 @@ export default function PaperTrading({ token }: { token: string }) {
   const [notice, setNotice] = useState('가상 계좌가 준비되었습니다. 실제 시세 API 연결 전까지 기준 가격은 직접 입력해야 합니다.')
   const [confirmReset, setConfirmReset] = useState(false)
   const [quoteLoading, setQuoteLoading] = useState(false)
-  const [quoteInfo, setQuoteInfo] = useState('현재가 조회 전')
+  const [quoteInfo, setQuoteInfo] = useState('종목명을 입력해 검색하세요.')
+  const [stockResults, setStockResults] = useState<{ name: string; code: string; market: string }[]>([])
+  const [stockSearchLoading, setStockSearchLoading] = useState(false)
+  const [selectedStock, setSelectedStock] = useState(false)
 
   const valuation = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.lastPrice, 0), [account.positions])
   const invested = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.averagePrice, 0), [account.positions])
@@ -34,6 +37,36 @@ export default function PaperTrading({ token }: { token: string }) {
   const pnl = valuation - invested
   const persist = (next: PaperState) => { setAccount(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) }
 
+
+
+  useEffect(() => {
+    const query = name.trim()
+    if (selectedStock || query.length < 2) { setStockResults([]); return }
+    const timer = window.setTimeout(async () => {
+      setStockSearchLoading(true)
+      try {
+        const response = await fetch('https://kb-ai-trader.ksmsy1.workers.dev/api/kb/search-stocks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ query }),
+        })
+        const result = await response.json()
+        setStockResults(response.ok && result.success ? result.stocks || [] : [])
+        if (!response.ok || !result.success) setQuoteInfo(result.message || '종목 검색에 실패했습니다.')
+      } catch { setQuoteInfo('종목 검색 서버에 연결하지 못했습니다.') }
+      finally { setStockSearchLoading(false) }
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [name, token, selectedStock])
+
+  function chooseStock(stock: { name: string; code: string; market: string }) {
+    setName(stock.name)
+    setCode(stock.code)
+    setSelectedStock(true)
+    setStockResults([])
+    setPrice('')
+    setQuoteInfo(stock.name + ' · 종목코드 ' + stock.code + ' 선택 완료')
+  }
 
   async function fetchQuote() {
     if (!/^\\d{6}$/.test(code.trim())) { setNotice('먼저 6자리 종목코드를 입력해 주세요.'); return }
@@ -62,7 +95,7 @@ export default function PaperTrading({ token }: { token: string }) {
     const tradePrice = Number(price)
     const tradeQty = Math.floor(Number(quantity))
     if (!/^\\d{6}$/.test(cleanCode) || !cleanName || !Number.isFinite(tradePrice) || tradePrice <= 0 || !Number.isInteger(tradeQty) || tradeQty <= 0) {
-      setNotice('종목명, 6자리 종목코드, 양수 가격과 수량을 정확히 입력해 주세요.')
+      setNotice('종목명을 검색해 목록에서 선택하고, 가격과 수량을 확인해 주세요.')
       return
     }
     const existing = account.positions.find(p => p.code === cleanCode)
@@ -112,8 +145,12 @@ export default function PaperTrading({ token }: { token: string }) {
       <section className="panel"><div className="panel-heading"><div><h3>가상 주문</h3><span>MANUAL PAPER ORDER</span></div></div>
         <form className="paper-form" onSubmit={executeTrade}>
           <div className="paper-side"><button type="button" className={side === 'BUY' ? 'selected-buy' : ''} onClick={() => setSide('BUY')}>가상 매수</button><button type="button" className={side === 'SELL' ? 'selected-sell' : ''} onClick={() => setSide('SELL')}>가상 매도</button></div>
-          <label>종목명<input value={name} onChange={e => setName(e.target.value)} placeholder="예: 삼성전자" /></label>
-          <label>종목코드<input value={code} onChange={e => setCode(e.target.value)} inputMode="numeric" maxLength={6} placeholder="005930" /></label>
+          <div className="paper-stock-search">
+            <label>종목명<input value={name} onChange={e => { setName(e.target.value); setCode(''); setSelectedStock(false); setPrice(''); setQuoteInfo('종목을 선택해 주세요.') }} placeholder="종목명 입력 · 예: 삼성전자" autoComplete="off" /></label>
+            {stockSearchLoading && <p className="paper-search-status">KB증권 종목 목록 검색 중...</p>}
+            {stockResults.length > 0 && <div className="paper-stock-results">{stockResults.map(stock => <button type="button" key={stock.code} onClick={() => chooseStock(stock)}><b>{stock.name}</b><span>{stock.code}</span></button>)}</div>}
+            {selectedStock && <p className="paper-selected-stock">선택 종목: {name} ({code}) <button type="button" onClick={() => { setSelectedStock(false); setCode(''); setPrice(''); setName('') }}>변경</button></p>}
+          </div>
           <label>기준 가격 (원)<div className="paper-price-row"><input value={price} onChange={e => setPrice(e.target.value)} type="number" min="1" step="1" placeholder="현재가 조회 또는 직접 입력" /><button type="button" className="outline-button" onClick={fetchQuote} disabled={quoteLoading}>{quoteLoading ? "조회 중..." : "KB 현재가 조회"}</button></div></label><p className="paper-quote-info">{quoteInfo}</p>
           <label>수량 (주)<input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" min="1" step="1" /></label>
           <div className="paper-order-total">주문 금액 <b>{won((Number(price) || 0) * (Number(quantity) || 0))}</b></div>
