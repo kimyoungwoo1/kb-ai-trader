@@ -41,8 +41,18 @@ function decodeXml(value: string): string {
 }
 
 function readXmlTag(xml: string, tag: string): string {
-  const match = xml.match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + ">","i"));
+  const localTag = tag.includes(":") ? tag.split(":").pop()! : tag;
+  const escaped = localTag.replace(/[.*+?^{}()|[\]\\]/g, "\\$&");
+  const match = xml.match(new RegExp("<(?:[\\w.-]+:)?" + escaped + "\\b(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w.-]+:)?" + escaped + "\\s*>", "i"));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, "")) : "";
+}
+
+function readXmlLink(xml: string): string {
+  const match = xml.match(/<(?:[\\w.-]+:)?link\\b([^>]*?)>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?link\\s*>/i);
+  const selfClosing = xml.match(/<(?:[\\w.-]+:)?link\\b([^>]*?)\\/>/i);
+  const attrs = match?.[1] || selfClosing?.[1] || "";
+  const href = attrs.match(/\\bhref\\s*=\\s*["']([^"']+)["']/i)?.[1];
+  return (href || (match ? decodeXml(match[2].replace(/<[^>]+>/g, "")) : "")).trim();
 }
 
 export default {
@@ -384,16 +394,16 @@ export default {
       try {
         const response = await fetch("https://opendart.fss.or.kr/api/list.json?" + params.toString(), {
           headers: { "Accept": "application/json" },
-          redirect: "manual",
+          redirect: "follow",
           signal: AbortSignal.timeout(15000),
         });
-        if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get("Location") || "";
-          let safeDestination = "알 수 없는 주소";
-          try { const target = new URL(location, "https://opendart.fss.or.kr"); safeDestination = target.hostname + target.pathname; } catch {}
-          return json({ success: false, stage: "redirect", http_status: response.status, message: "OpenDART가 API 응답 대신 리다이렉트를 반환했습니다: " + safeDestination + ". 인증키 상태 또는 OpenDART 접속 경로를 확인해야 합니다." }, 502);
-        }
+        const contentType = response.headers.get("content-type") || "";
         if (!response.ok) return json({ success: false, stage: "http", http_status: response.status, message: "OpenDART HTTP 오류: " + response.status }, 502);
+        if (!contentType.toLowerCase().includes("json")) {
+          let safePath = "알 수 없는 응답 경로";
+          try { const finalUrl = new URL(response.url); safePath = finalUrl.hostname + finalUrl.pathname; } catch {}
+          return json({ success: false, stage: "non_json", http_status: response.status, message: "OpenDART가 JSON 대신 비JSON 응답을 반환했습니다. 최종 응답 경로: " + safePath }, 502);
+        }
         const result = await response.json() as {
           status?: string; message?: string; total_count?: number;
           list?: Array<{ corp_name?: string; stock_code?: string; report_nm?: string; rcept_dt?: string; rcept_no?: string; flr_nm?: string; rm?: string }>;
@@ -454,18 +464,20 @@ export default {
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.category, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<(?:item|entry)(?:\s[^>]*)?>([\s\S]*?)<\/(?:item|entry)>/gi)].slice(0, 60);
+          const matches = [...xml.matchAll(/<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?(?:item|entry)\\s*>/gi)].slice(0, 60);
           const parsedItems = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
-            const atomLink = item.match(/<link[^>]*href=["']([^"']+)["']/i)?.[1] || "";
-            const link = readXmlTag(item, "link") || atomLink;
-            const published = readXmlTag(item, "pubDate") || readXmlTag(item, "dc:date") || readXmlTag(item, "published") || readXmlTag(item, "updated");
+            const link = readXmlLink(item) || (() => {
+              const guid = readXmlTag(item, "guid") || readXmlTag(item, "id");
+              return /^https?:\\/\\//i.test(guid) ? guid : "";
+            })();
+            const published = readXmlTag(item, "pubDate") || readXmlTag(item, "published") || readXmlTag(item, "updated") || readXmlTag(item, "date");
             const parsed = published ? new Date(published) : null;
             const publishedMs = parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0;
             return { title, link, source: feed.source, published_at: publishedMs ? new Date(publishedMs).toISOString() : null, published_ms: publishedMs, query: feed.category, category: feed.category };
           });
-          const validItems = parsedItems.filter(item => item.title && /^https?:\/\//i.test(item.link));
+          const validItems = parsedItems.filter(item => item.title && /^https?:\\/\\//i.test(item.link));
           const items = validItems.filter(item => item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
           const newest = validItems.reduce((latest, item) => Math.max(latest, item.published_ms), 0);
           return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, raw_count: matches.length, valid_count: validItems.length, count: items.length, newest_published: newest ? new Date(newest).toISOString() : null, content_type: response.headers.get("content-type") || "", error: matches.length ? null : "RSS/Atom 항목을 찾지 못했습니다." } };
