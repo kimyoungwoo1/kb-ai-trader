@@ -120,6 +120,110 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/kb/holdings" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) {
+        return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
+      }
+
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: {
+              appKey: env.KB_APP_KEY,
+              appSecret: env.KB_APP_SECRET,
+              grantType: "client_credentials",
+            },
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) {
+        return json({
+          success: false,
+          stage: "token_network",
+          message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패",
+        }, 502);
+      }
+
+      let tokenResult: unknown;
+      try {
+        tokenResult = await tokenResponse.json();
+      } catch {
+        return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502);
+      }
+
+      const tokenBody = tokenResult && typeof tokenResult === "object"
+        ? (tokenResult as Record<string, unknown>).dataBody
+        : undefined;
+      const tokenData = tokenBody && typeof tokenBody === "object"
+        ? tokenBody as Record<string, unknown>
+        : {};
+      const accessToken = tokenData.access_token;
+
+      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
+        return json({
+          success: false,
+          stage: "authentication",
+          http_status: tokenResponse.status,
+          message: getKbErrorMessage(tokenResult),
+        }, 502);
+      }
+
+      let holdingsResponse: Response;
+      try {
+        holdingsResponse = await fetch(`${baseUrl}/api/v1/ssqm1801`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: { mkt_tm_ccd: "1", nxt_key: "", inq_clsf: "0", is_no: "" },
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch (error) {
+        return json({
+          success: false,
+          stage: "holdings_network",
+          message: error instanceof Error ? error.message.slice(0, 250) : "보유주식 API 연결 실패",
+        }, 502);
+      }
+
+      let holdingsResult: unknown;
+      try {
+        holdingsResult = await holdingsResponse.json();
+      } catch {
+        return json({
+          success: false,
+          stage: "holdings_response",
+          http_status: holdingsResponse.status,
+          message: "KB 보유주식 응답이 JSON이 아닙니다.",
+        }, 502);
+      }
+
+      if (!holdingsResponse.ok) {
+        return json({
+          success: false,
+          stage: "holdings",
+          http_status: holdingsResponse.status,
+          message: getKbErrorMessage(holdingsResult),
+        }, 502);
+      }
+
+      return json({
+        success: true,
+        api: "SSQM1801",
+        message: "보유주식 조회 요청이 성공했습니다.",
+        data: holdingsResult,
+        checked_at: new Date().toISOString(),
+      });
+    }
+
     return json({ success: false, message: "Not Found" }, 404);
   },
 };
