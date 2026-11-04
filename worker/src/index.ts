@@ -460,9 +460,9 @@ export default {
         const causeCode = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
         const rawDetail = error instanceof Error ? error.message : String(error);
         const safeDetail = rawDetail
-          .replace(/https?:\\/\\/[^\\s"'<>]+/gi, "[요청 주소 숨김]")
-          .replace(/(crtfc_key=)[^&\\s]+/gi, "$1[인증키 숨김]")
-          .replace(/([?&][^=]*(?:key|token|secret)[^=]*=)[^&\\s]+/gi, "$1[값 숨김]")
+          .replace(/https?:\/\/[^\s"'<>]+/gi, "[요청 주소 숨김]")
+          .replace(/(crtfc_key=)[^&\s]+/gi, "$1[인증키 숨김]")
+          .replace(/([?&][^=]*(?:key|token|secret)[^=]*=)[^&\s]+/gi, "$1[값 숨김]")
           .slice(0, 240);
         const errorMessage = errorName === "TimeoutError" || errorName === "AbortError"
           ? "OpenDART 요청 시간이 초과됐습니다."
