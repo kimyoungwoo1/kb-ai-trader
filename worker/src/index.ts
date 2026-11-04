@@ -382,9 +382,9 @@ export default {
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const code = String(input.code || "").trim();
       const exchange = String(input.exchange || "1");
-      if (!/^\\d{6}$/.test(code)) return json({ success: false, message: "종목코드는 6자리 숫자로 입력해 주세요." }, 400);
+      if (!/^\d{6}$/.test(code)) return json({ success: false, message: "종목코드는 6자리 숫자로 입력해 주세요." }, 400);
       if (!["0", "1", "2"].includes(exchange)) return json({ success: false, message: "거래소 구분은 0(통합), 1(KRX), 2(NXT)만 가능합니다." }, 400);
-      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
         tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
