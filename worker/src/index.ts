@@ -125,7 +125,7 @@ export default {
         return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
       }
 
-      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
         tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
