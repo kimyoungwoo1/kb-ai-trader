@@ -51,8 +51,10 @@ export default function PaperTrading({ token }: { token: string }) {
           body: JSON.stringify({ query }),
         })
         const result = await response.json()
-        setStockResults(response.ok && result.success ? result.stocks || [] : [])
+        const matches = response.ok && result.success ? result.stocks || [] : []
+        setStockResults(matches)
         if (!response.ok || !result.success) setQuoteInfo(result.message || '종목 검색에 실패했습니다.')
+        else setQuoteInfo(matches.length ? '검색 결과 ' + matches.length + '건 · 목록에서 종목을 선택하세요.' : '검색 결과가 없습니다. KB 종목 마스터 응답을 확인해야 합니다.')
       } catch { setQuoteInfo('종목 검색 서버에 연결하지 못했습니다.') }
       finally { setStockSearchLoading(false) }
     }, 350)
