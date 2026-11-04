@@ -54,7 +54,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings") && request.method === "POST") {
+    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -241,6 +241,57 @@ export default {
         data: holdingsResult,
         checked_at: new Date().toISOString(),
       });
+    }
+
+
+    if (url.pathname === "/api/kb/deposit" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) {
+        return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
+      }
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" },
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) {
+        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502);
+      }
+      let tokenResult: unknown;
+      try { tokenResult = await tokenResponse.json(); }
+      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
+      const tokenBody = tokenResult && typeof tokenResult === "object" ? (tokenResult as Record<string, unknown>).dataBody : undefined;
+      const tokenData = tokenBody && typeof tokenBody === "object" ? tokenBody as Record<string, unknown> : {};
+      const accessToken = tokenData.access_token;
+      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
+        return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
+      }
+      let depositResponse: Response;
+      try {
+        depositResponse = await fetch(`${baseUrl}/api/v1/ssqm0004`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: {},
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch (error) {
+        return json({ success: false, stage: "deposit_network", message: error instanceof Error ? error.message.slice(0, 250) : "예수금 API 연결 실패" }, 502);
+      }
+      let depositResult: unknown;
+      try { depositResult = await depositResponse.json(); }
+      catch { return json({ success: false, stage: "deposit_response", http_status: depositResponse.status, message: "KB 예수금 응답이 JSON이 아닙니다." }, 502); }
+      if (!depositResponse.ok) {
+        return json({ success: false, stage: "deposit", http_status: depositResponse.status, message: getKbErrorMessage(depositResult), data: depositResult }, 502);
+      }
+      return json({ success: true, api: "SSQM0004", message: "예수금내역 조회 요청이 성공했습니다.", data: depositResult, checked_at: new Date().toISOString() });
     }
 
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
