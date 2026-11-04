@@ -83,7 +83,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -373,6 +373,51 @@ export default {
     }
 
 
+
+
+    if (url.pathname === "/api/kb/quote" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
+      let input: { code?: string; exchange?: string };
+      try { input = await request.json() as { code?: string; exchange?: string }; }
+      catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      const code = String(input.code || "").trim();
+      const exchange = String(input.exchange || "1");
+      if (!/^\\d{6}$/.test(code)) return json({ success: false, message: "종목코드는 6자리 숫자로 입력해 주세요." }, 400);
+      if (!["0", "1", "2"].includes(exchange)) return json({ success: false, message: "거래소 구분은 0(통합), 1(KRX), 2(NXT)만 가능합니다." }, 400);
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) { return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502); }
+      let tokenResult: any;
+      try { tokenResult = await tokenResponse.json(); }
+      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
+      const accessToken = tokenResult?.dataBody?.access_token;
+      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
+      let quoteResponse: Response;
+      try {
+        quoteResponse = await fetch(`${baseUrl}/api/v1/ivu10140`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: exchange, shrt_cd: code } }),
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch (error) { return json({ success: false, stage: "quote_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 현재가 API 연결 실패" }, 502); }
+      let quoteResult: any;
+      try { quoteResult = await quoteResponse.json(); }
+      catch { return json({ success: false, stage: "quote_response", http_status: quoteResponse.status, message: "KB 현재가 응답이 JSON이 아닙니다." }, 502); }
+      const header = quoteResult?.dataHeader || {};
+      if (!quoteResponse.ok || (header.resultCode && !["0", "0000"].includes(String(header.resultCode)))) {
+        return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
+      }
+      const body = quoteResult?.dataBody || {};
+      return json({ success: true, api: "IVU10140", code, exchange, price: Number(String(body.now_prc ?? "0").replace(/,/g, "")) || null, name: body.is_nm || body.hts_kor_is_nm || "", change: body.cmpr ?? null, changeRate: body.cmpr_rt ?? null, volume: body.acml_vol ?? null, tradeValue: body.acml_tr_pbmn ?? null, quote: quoteResult, checked_at: new Date().toISOString() });
+    }
 
     if (url.pathname === "/api/market/disclosures" && request.method === "POST") {
       if (!env.DART_API_KEY) return json({ success: false, message: "DART_API_KEY Secret이 설정되지 않았습니다. OpenDART 인증키를 등록해 주세요." }, 503);
