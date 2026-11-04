@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import './styles.css'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number }
@@ -47,6 +47,8 @@ export default function App() {
     } catch { setMessage('계좌 조회 중 네트워크 오류가 발생했습니다.') }
     finally { setLoading(false) }
   }
+
+  useEffect(() => { if (token) refresh() }, [token])
 
   function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null) }
 
