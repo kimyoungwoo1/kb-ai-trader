@@ -3,6 +3,7 @@ export interface Env {
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
   DASHBOARD_API_KEY?: string;
+  ASSETS: Fetcher;
 }
 
 const corsHeaders = {
@@ -242,6 +243,7 @@ export default {
       });
     }
 
-    return json({ success: false, message: "Not Found" }, 404);
+    if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
+    return env.ASSETS.fetch(request);
   },
 };
