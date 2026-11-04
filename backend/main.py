@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,3 +117,102 @@ async def kb_auth_check():
         expires_in=data.get("expires_in"),
         checked_at=checked_at,
     )
+
+
+async def issue_kb_access_token(client: httpx.AsyncClient) -> str:
+    """Issue a short-lived token without persisting or returning it."""
+    if not KB_APP_KEY or not KB_APP_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="KB_APP_KEY 또는 KB_APP_SECRET 환경변수가 설정되지 않았습니다.",
+        )
+
+    token_payload = {
+        "dataHeader": {
+            "ipAddr": "127.0.0.1",
+            "macAddr": "00:00:00:00:00:00",
+        },
+        "dataBody": {
+            "appKey": KB_APP_KEY,
+            "appSecret": KB_APP_SECRET,
+            "grantType": "client_credentials",
+        },
+    }
+    token_response = await client.post(
+        f"{KB_BASE_URL}/oauth2/token",
+        content=json.dumps(token_payload, ensure_ascii=False),
+    )
+    try:
+        token_result = token_response.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="KB증권 토큰 응답을 JSON으로 해석할 수 없습니다.")
+
+    token_body = token_result.get("dataBody", {}) if isinstance(token_result, dict) else {}
+    access_token = token_body.get("access_token")
+    if token_response.status_code != 200 or not access_token:
+        token_header = token_result.get("dataHeader", {}) if isinstance(token_result, dict) else {}
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "KB증권 토큰 발급 실패: "
+                f"resultCode={token_header.get('resultCode', '미제공')}, "
+                f"processCode={token_header.get('processCode', '미제공')}, "
+                f"{token_header.get('processMessage', token_header.get('resultMessage', '응답 확인 필요'))}"
+            ),
+        )
+    return access_token
+
+
+@app.post("/api/kb/holdings")
+async def kb_holdings():
+    """Read domestic stock holdings. This endpoint cannot place orders."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            access_token = await issue_kb_access_token(client)
+            request_payload = {
+                "dataHeader": {
+                    "ipAddr": "127.0.0.1",
+                    "macAddr": "00:00:00:00:00:00",
+                },
+                "dataBody": {
+                    "mkt_tm_ccd": "1",
+                    "nxt_key": "",
+                    "inq_clsf": "0",
+                    "is_no": "",
+                },
+            }
+            response = await client.post(
+                f"{KB_BASE_URL}/api/v1/ssqm1801",
+                content=json.dumps(request_payload, ensure_ascii=False),
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="KB증권 보유주식 조회 응답 시간이 초과되었습니다.")
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="KB증권 API 서버에 연결하지 못했습니다.")
+
+    try:
+        result = response.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=502,
+            detail=f"KB증권 보유주식 조회 응답이 JSON이 아닙니다 (HTTP {response.status_code}).",
+        )
+
+    if response.status_code != 200:
+        header = result.get("dataHeader", {}) if isinstance(result, dict) else {}
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"KB증권 보유주식 조회 실패 (HTTP {response.status_code}, "
+                f"resultCode={header.get('resultCode', '미제공')}, "
+                f"processCode={header.get('processCode', '미제공')}). "
+                f"{header.get('processMessage', header.get('resultMessage', '응답 확인 필요'))}"
+            ),
+        )
+
+    # Return the broker's holdings response for field mapping. The OAuth token is never returned.
+    return {"success": True, "api": "SSQM1801", "data": result}
