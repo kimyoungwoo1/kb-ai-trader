@@ -16,7 +16,7 @@ function readState(): PaperState {
   return emptyState
 }
 
-export default function PaperTrading() {
+export default function PaperTrading({ token }: { token: string }) {
   const [account, setAccount] = useState<PaperState>(readState)
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
@@ -25,12 +25,35 @@ export default function PaperTrading() {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
   const [notice, setNotice] = useState('가상 계좌가 준비되었습니다. 실제 시세 API 연결 전까지 기준 가격은 직접 입력해야 합니다.')
   const [confirmReset, setConfirmReset] = useState(false)
+  const [quoteLoading, setQuoteLoading] = useState(false)
+  const [quoteInfo, setQuoteInfo] = useState('현재가 조회 전')
 
   const valuation = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.lastPrice, 0), [account.positions])
   const invested = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.averagePrice, 0), [account.positions])
   const total = account.cash + valuation
   const pnl = valuation - invested
   const persist = (next: PaperState) => { setAccount(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) }
+
+
+  async function fetchQuote() {
+    if (!/^\\d{6}$/.test(code.trim())) { setNotice('먼저 6자리 종목코드를 입력해 주세요.'); return }
+    setQuoteLoading(true)
+    setQuoteInfo('KB증권 현재가 조회 중...')
+    try {
+      const response = await fetch('https://kb-ai-trader.ksmsy1.workers.dev/api/kb/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ code: code.trim(), exchange: '1' }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success) { setQuoteInfo(result.message || '현재가 조회 실패'); return }
+      if (!result.price) { setQuoteInfo('현재가 필드를 확인할 수 없습니다. KB 원본 응답을 확인해야 합니다.'); return }
+      setPrice(String(result.price))
+      if (result.name) setName(result.name)
+      setQuoteInfo('KB증권 KRX 현재가 · ' + new Date(result.checked_at).toLocaleString('ko-KR') + (result.changeRate != null ? ' · 등락률 ' + result.changeRate + '%' : ''))
+    } catch { setQuoteInfo('현재가 API 서버 연결에 실패했습니다.') }
+    finally { setQuoteLoading(false) }
+  }
 
   function executeTrade(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -91,7 +114,7 @@ export default function PaperTrading() {
           <div className="paper-side"><button type="button" className={side === 'BUY' ? 'selected-buy' : ''} onClick={() => setSide('BUY')}>가상 매수</button><button type="button" className={side === 'SELL' ? 'selected-sell' : ''} onClick={() => setSide('SELL')}>가상 매도</button></div>
           <label>종목명<input value={name} onChange={e => setName(e.target.value)} placeholder="예: 삼성전자" /></label>
           <label>종목코드<input value={code} onChange={e => setCode(e.target.value)} inputMode="numeric" maxLength={6} placeholder="005930" /></label>
-          <label>기준 가격 (원)<input value={price} onChange={e => setPrice(e.target.value)} type="number" min="1" step="1" placeholder="직접 입력" /></label>
+          <label>기준 가격 (원)<div className="paper-price-row"><input value={price} onChange={e => setPrice(e.target.value)} type="number" min="1" step="1" placeholder="현재가 조회 또는 직접 입력" /><button type="button" className="outline-button" onClick={fetchQuote} disabled={quoteLoading}>{quoteLoading ? "조회 중..." : "KB 현재가 조회"}</button></div></label><p className="paper-quote-info">{quoteInfo}</p>
           <label>수량 (주)<input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" min="1" step="1" /></label>
           <div className="paper-order-total">주문 금액 <b>{won((Number(price) || 0) * (Number(quantity) || 0))}</b></div>
           <button className="paper-submit" type="submit">{side === 'BUY' ? '가상 매수 체결' : '가상 매도 체결'}</button>
