@@ -598,7 +598,7 @@ export default {
         const material = /(단일판매|공급계약|잠정.*실적|영업실적|실적.*발표|자기주식.*(취득|처분)|자사주|합병|분할|공개매수|주식.*소각|배당|투자판단관련|시설투자|유형자산.*취득|특허권|기술도입|주요사항보고서)/i.test(title);
         return { ...item, priority: highRisk ? "고영향 확인" : material ? "주요 공시" : "일반 공시" , priorityScore: highRisk ? 2 : material ? 1 : 0 };
       };
-      const watchTargets = [...researchHoldings.map(item => ({ name: item.name, code: item.code, type: "보유" })), ...researchWatchlist.map(value => ({ name: value, code: /^\\d{6}$/.test(value) ? value : "", type: "관심" }))];
+      const watchTargets = [...researchHoldings.map(item => ({ name: item.name, code: item.code, type: "보유" })), ...researchWatchlist.map(value => ({ name: value, code: /^\d{6}$/.test(value) ? value : "", type: "관심" }))];
       const classifiedDisclosures = suppliedDisclosures.map(classifyDisclosure).map(item => {
         const matched = watchTargets.some(target =>
           (target.code && item.stock_code && target.code === item.stock_code) ||
@@ -631,7 +631,7 @@ export default {
           ].join("\n");
           const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
             messages: [
-              { role: "system", content: "근거 중심의 보수적인 주식시장 분석가다. 제공된 뉴스만 근거로 사용한다." },
+              { role: "system", content: "근거 중심의 보수적인 한국 주식시장 분석가다. 제공된 언론 뉴스와 금융감독원 DART 공시, 사용자 보유·관심 종목 데이터만 근거로 사용한다. 공시 제목만으로 호재·악재를 확정하지 않는다." },
               { role: "user", content: prompt },
             ],
             max_tokens: 900,
@@ -656,7 +656,7 @@ export default {
         market_date_kst: todayKst,
         date_filter: "KST today 00:00 through checked_at",
         source: "언론사 공식 RSS (연합뉴스·뉴시스·한국경제·매일경제)",
-        message: articles.length ? "오늘 발행된 시장 뉴스를 수집했습니다." : "오늘 발행된 뉴스를 찾지 못했습니다. 공급원 상태를 확인해 주세요.",
+        message: articles.length || priorityDisclosures.length ? "시장 뉴스와 중요 DART 공시를 수집·분석했습니다." : "오늘 발행된 뉴스와 중요 공시를 찾지 못했습니다. 공급원 상태를 확인해 주세요.",
       });
     }
 
