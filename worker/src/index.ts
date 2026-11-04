@@ -384,13 +384,20 @@ export default {
       try {
         const response = await fetch("https://opendart.fss.or.kr/api/list.json?" + params.toString(), {
           headers: { "Accept": "application/json" },
+          redirect: "manual",
           signal: AbortSignal.timeout(15000),
         });
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("Location") || "";
+          let safeDestination = "알 수 없는 주소";
+          try { const target = new URL(location, "https://opendart.fss.or.kr"); safeDestination = target.hostname + target.pathname; } catch {}
+          return json({ success: false, stage: "redirect", http_status: response.status, message: "OpenDART가 API 응답 대신 리다이렉트를 반환했습니다: " + safeDestination + ". 인증키 상태 또는 OpenDART 접속 경로를 확인해야 합니다." }, 502);
+        }
+        if (!response.ok) return json({ success: false, stage: "http", http_status: response.status, message: "OpenDART HTTP 오류: " + response.status }, 502);
         const result = await response.json() as {
           status?: string; message?: string; total_count?: number;
           list?: Array<{ corp_name?: string; stock_code?: string; report_nm?: string; rcept_dt?: string; rcept_no?: string; flr_nm?: string; rm?: string }>;
         };
-        if (!response.ok) return json({ success: false, message: "OpenDART HTTP 오류: " + response.status }, 502);
         if (result.status !== "000" && result.status !== "013") {
           return json({ success: false, message: "OpenDART 오류 " + (result.status || "미상") + ": " + (result.message || "응답 확인 필요"), status: result.status }, 502);
         }
@@ -414,8 +421,8 @@ export default {
           source: "금융감독원 OpenDART 공시검색 API",
           message: disclosures.length ? "최근 3일 공시 " + disclosures.length + "건을 수집했습니다." : "조회 기간에 공시가 없습니다.",
         });
-      } catch (error) {
-        return json({ success: false, message: error instanceof Error ? error.message.slice(0, 250) : "OpenDART 요청 실패" }, 502);
+      } catch {
+        return json({ success: false, stage: "network", message: "OpenDART 요청 중 네트워크 오류가 발생했습니다. 인증키나 요청 URL은 보안상 화면에 표시하지 않습니다." }, 502);
       }
     }
 
@@ -447,22 +454,21 @@ export default {
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.category, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 40);
-          const items = matches.map(match => {
+          const matches = [...xml.matchAll(/<(?:item|entry)(?:\s[^>]*)?>([\s\S]*?)<\/(?:item|entry)>/gi)].slice(0, 60);
+          const parsedItems = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
-            const link = readXmlTag(item, "link") || (item.match(/<link[^>]*href=["']([^"']+)["']/i)?.[1] || "");
+            const atomLink = item.match(/<link[^>]*href=["']([^"']+)["']/i)?.[1] || "";
+            const link = readXmlTag(item, "link") || atomLink;
             const published = readXmlTag(item, "pubDate") || readXmlTag(item, "dc:date") || readXmlTag(item, "published") || readXmlTag(item, "updated");
-            const source = feed.source;
-            let publishedAt: string | null = null;
-            let publishedMs = 0;
-            if (published) {
-              const parsed = new Date(published);
-              if (!Number.isNaN(parsed.getTime())) { publishedAt = parsed.toISOString(); publishedMs = parsed.getTime(); }
-            }
-            return { title, link, source, published_at: publishedAt, published_ms: publishedMs, query: feed.category, category: feed.category };
-          }).filter(item => item.title && /^https?:\/\//i.test(item.link) && item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
-          return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, count: items.length, error: null } };
+            const parsed = published ? new Date(published) : null;
+            const publishedMs = parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0;
+            return { title, link, source: feed.source, published_at: publishedMs ? new Date(publishedMs).toISOString() : null, published_ms: publishedMs, query: feed.category, category: feed.category };
+          });
+          const validItems = parsedItems.filter(item => item.title && /^https?:\/\//i.test(item.link));
+          const items = validItems.filter(item => item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
+          const newest = validItems.reduce((latest, item) => Math.max(latest, item.published_ms), 0);
+          return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, raw_count: matches.length, valid_count: validItems.length, count: items.length, newest_published: newest ? new Date(newest).toISOString() : null, content_type: response.headers.get("content-type") || "", error: matches.length ? null : "RSS/Atom 항목을 찾지 못했습니다." } };
         } catch (error) {
           return { items: [], diagnostic: { source: feed.source, query: feed.category, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
