@@ -374,10 +374,12 @@ export default {
       for (const name of [...new Set(names)]) queries.push(name + " 주식");
       const feedResults = await Promise.all(queries.flatMap(query => [
         {
+          query,
           source: "Google News RSS",
           url: "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=ko&gl=KR&ceid=KR:ko",
         },
         {
+          query,
           source: "Bing News RSS",
           url: "https://www.bing.com/news/search?q=" + encodeURIComponent(query) + "&format=rss&setlang=ko-kr&cc=kr",
         },
