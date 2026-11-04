@@ -389,7 +389,7 @@ export default {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
             signal: AbortSignal.timeout(12000),
           });
-          if (!response.ok) return { items: [], diagnostic: { source: feed.source, query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
+          if (!response.ok) return { items: [], diagnostic: { source: feed.source, feed.query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
           const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 8);
           const items = matches.map(match => {
@@ -403,11 +403,11 @@ export default {
               const parsed = new Date(published);
               if (!Number.isNaN(parsed.getTime())) publishedAt = parsed.toISOString();
             }
-            return { title, link, source, published_at: publishedAt, query };
+            return { title, link, source, published_at: publishedAt, query: feed.query };
           }).filter(item => item.title && /^https?:\/\//i.test(item.link));
-          return { items, diagnostic: { source: feed.source, query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
+          return { items, diagnostic: { source: feed.source, feed.query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
         } catch (error) {
-          return { items: [], diagnostic: { source: feed.source, query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
+          return { items: [], diagnostic: { source: feed.source, feed.query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
       }));
       const feeds = feedResults.map(result => result.items);
