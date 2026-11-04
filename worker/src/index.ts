@@ -72,7 +72,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -363,64 +363,97 @@ export default {
 
 
 
-    if (url.pathname === "/api/news" && request.method === "POST") {
-      let input: { holdings?: unknown };
-      try { input = await request.json() as { holdings?: unknown }; }
-      catch { return json({ success: false, message: "요청 데이터 형식이 올바르지 않습니다." }, 400); }
-      const names = Array.isArray(input.holdings)
-        ? input.holdings.slice(0, 8).map((item: any) => String(item?.name || "").trim()).filter((name: string) => name && name !== "종목명 없음")
-        : [];
-      const queries = ["코스피 코스닥 증시 주식 시장"];
-      for (const name of [...new Set(names)]) queries.push(name + " 주식");
-      const feedResults = await Promise.all(queries.flatMap(query => [
-        {
-          query,
-          source: "Google News RSS",
-          url: "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=ko&gl=KR&ceid=KR:ko",
-        },
-        {
-          query,
-          source: "Bing News RSS",
-          url: "https://www.bing.com/news/search?q=" + encodeURIComponent(query) + "&format=rss&setlang=ko-kr&cc=kr",
-        },
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research") && request.method === "POST") {
+      const queries = [
+        { category: "국내 증시", query: "코스피 코스닥 증시 오늘 장 마감 전망" },
+        { category: "국내 증시", query: "한국 주식 시장 외국인 기관 수급 오늘" },
+        { category: "반도체·AI", query: "한국 반도체 AI 관련주 산업 뉴스" },
+        { category: "2차전지·자동차", query: "한국 2차전지 자동차 산업 주식 뉴스" },
+        { category: "바이오·헬스케어", query: "한국 바이오 제약 헬스케어 산업 뉴스" },
+        { category: "정책·공시", query: "한국 기업 실적 공시 정책 증시 뉴스" },
+        { category: "미국 증시", query: "미국 증시 나스닥 S&P500 오늘 시장" },
+        { category: "글로벌 매크로", query: "미국 금리 달러 환율 유가 경제 지표 오늘" },
+      ];
+      const now = new Date();
+      const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+      const year = kstNow.getUTCFullYear();
+      const month = kstNow.getUTCMonth() + 1;
+      const day = kstNow.getUTCDate();
+      const todayKst = year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+      const todayStartUtc = Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000;
+      const feedResults = await Promise.all(queries.flatMap(entry => [
+        { ...entry, source: "Google News", url: "https://news.google.com/rss/search?q=" + encodeURIComponent(entry.query) + "&hl=ko&gl=KR&ceid=KR:ko" },
+        { ...entry, source: "Bing News", url: "https://www.bing.com/news/search?q=" + encodeURIComponent(entry.query) + "&format=rss&setlang=ko-kr&cc=kr" },
       ]).map(async feed => {
         try {
           const response = await fetch(feed.url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
-            signal: AbortSignal.timeout(12000),
+            signal: AbortSignal.timeout(10000),
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 8);
+          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 12);
           const items = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
             const link = readXmlTag(item, "link");
             const published = readXmlTag(item, "pubDate");
-            const source = readXmlTag(item, "source") || readXmlTag(item, "News:Source") || feed.source.replace(" RSS", "");
+            const source = readXmlTag(item, "source") || feed.source;
             let publishedAt: string | null = null;
+            let publishedMs = 0;
             if (published) {
               const parsed = new Date(published);
-              if (!Number.isNaN(parsed.getTime())) publishedAt = parsed.toISOString();
+              if (!Number.isNaN(parsed.getTime())) { publishedAt = parsed.toISOString(); publishedMs = parsed.getTime(); }
             }
-            return { title, link, source, published_at: publishedAt, query: feed.query };
-          }).filter(item => item.title && /^https?:\/\//i.test(item.link));
-          return { items, diagnostic: { source: feed.source, query: feed.query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
+            return { title, link, source, published_at: publishedAt, published_ms: publishedMs, query: feed.query, category: feed.category };
+          }).filter(item => item.title && /^https?:\/\//i.test(item.link) && item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
+          return { items, diagnostic: { source: feed.source, query: feed.query, status: response.status, count: items.length, error: null } };
         } catch (error) {
           return { items: [], diagnostic: { source: feed.source, query: feed.query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
       }));
-      const feeds = feedResults.map(result => result.items);
-      const unique = new Map<string, typeof feeds[number][number]>();
-      for (const item of feeds.flat()) if (!unique.has(item.link)) unique.set(item.link, item);
-      const articles = [...unique.values()].sort((a, b) => (Date.parse(b.published_at || "") || 0) - (Date.parse(a.published_at || "") || 0)).slice(0, 35);
+      const unique = new Map<string, (typeof feedResults)[number]["items"][number]>();
+      for (const result of feedResults) for (const item of result.items) if (!unique.has(item.link)) unique.set(item.link, item);
+      const articles = [...unique.values()]
+        .sort((a, b) => b.published_ms - a.published_ms)
+        .slice(0, 30)
+        .map(({ published_ms, ...item }) => item);
+      let marketAnalysis = "";
+      let analysisError: string | null = null;
+      if (articles.length) {
+        try {
+          const prompt = [
+            "너는 한국 주식 단기 스윙 투자자를 돕는 시장 분석 보조자다.",
+            "아래는 한국 시간 오늘 발행된 뉴스 제목과 출처다. 제목에 없는 사실이나 주가·거래량·수급 수치를 절대 만들어내지 마라.",
+            "뉴스를 바탕으로 1) 시장 분위기 2) 긍정 요인 3) 부정·주의 요인 4) 주목 산업/테마 5) 추가 확인이 필요한 데이터 순서로 한국어 요약하라.",
+            "특정 종목의 매수를 단정하지 말고, 뉴스만으로 매수 결정을 내리지 말라고 명시하라.",
+            JSON.stringify(articles.map(item => ({ title: item.title, source: item.source, category: item.category, published_at: item.published_at }))),
+          ].join("\n");
+          const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
+            messages: [
+              { role: "system", content: "근거 중심의 보수적인 주식시장 분석가다. 제공된 뉴스만 근거로 사용한다." },
+              { role: "user", content: prompt },
+            ],
+            max_tokens: 900,
+            temperature: 0.2,
+          });
+          const output = result && typeof result === "object" ? (result as Record<string, unknown>).response : undefined;
+          marketAnalysis = typeof output === "string" ? output : JSON.stringify(result);
+        } catch (error) {
+          analysisError = error instanceof Error ? error.message.slice(0, 200) : "AI 뉴스 분석 실패";
+        }
+      }
       return json({
         success: true,
         articles,
+        market_analysis: marketAnalysis,
+        analysis_error: analysisError,
         diagnostics: feedResults.map(result => result.diagnostic),
-        checked_at: new Date().toISOString(),
-        source: "Google News RSS",
-        message: articles.length ? "뉴스를 불러왔습니다." : "뉴스 피드에서 기사를 받지 못했습니다. 아래 진단 정보를 확인해 주세요.",
+        checked_at: now.toISOString(),
+        market_date_kst: todayKst,
+        date_filter: "KST today 00:00 through checked_at",
+        source: "Google News + Bing News RSS",
+        message: articles.length ? "오늘 발행된 시장 뉴스를 수집했습니다." : "오늘 발행된 뉴스를 찾지 못했습니다. 공급원 상태를 확인해 주세요.",
       });
     }
 
