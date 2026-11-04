@@ -396,7 +396,7 @@ export default {
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemInstruction }] },
             contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.2, maxOutputTokens: 1400 },
+            generationConfig: { maxOutputTokens: 1400, thinkingConfig: { thinkingLevel: "medium" } },
           }),
           signal: AbortSignal.timeout(30000),
         }),
@@ -418,7 +418,9 @@ export default {
           gemini: {
             success: geminiResponse.ok && Boolean(geminiOutput),
             model: "gemini-3.8-flash",
-            analysis: geminiResponse.ok ? geminiOutput : (geminiData?.error?.message || "Gemini 분석 요청에 실패했습니다."),
+            analysis: geminiResponse.ok ? geminiOutput : `HTTP ${geminiResponse.status}: ${geminiData?.error?.message || "Gemini API가 상세 오류를 반환하지 않았습니다."}`,
+            error_code: geminiData?.error?.status || null,
+            http_status: geminiResponse.status,
           },
         },
         checked_at: new Date().toISOString(),
