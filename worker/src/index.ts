@@ -370,7 +370,7 @@ export default {
       const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
       const ymd = (date: Date) => date.getUTCFullYear() + String(date.getUTCMonth() + 1).padStart(2, "0") + String(date.getUTCDate()).padStart(2, "0");
       const endDate = ymd(kstNow);
-      const startDateObj = new Date(kstNow.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const startDateObj = new Date(kstNow.getTime() - 2 * 24 * 60 * 60 * 1000);
       const startDate = ymd(startDateObj);
       const params = new URLSearchParams({
         crtfc_key: env.DART_API_KEY,
