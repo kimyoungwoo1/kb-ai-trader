@@ -372,32 +372,40 @@ export default {
         : [];
       const queries = ["코스피 코스닥 증시 주식 시장"];
       for (const name of [...new Set(names)]) queries.push(name + " 주식");
-      const feedResults = await Promise.all(queries.map(async query => {
-        const feedUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=ko&gl=KR&ceid=KR:ko";
+      const feedResults = await Promise.all(queries.flatMap(query => [
+        {
+          source: "Google News RSS",
+          url: "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=ko&gl=KR&ceid=KR:ko",
+        },
+        {
+          source: "Bing News RSS",
+          url: "https://www.bing.com/news/search?q=" + encodeURIComponent(query) + "&format=rss&setlang=ko-kr&cc=kr",
+        },
+      ]).map(async feed => {
         try {
-          const response = await fetch(feedUrl, {
+          const response = await fetch(feed.url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
             signal: AbortSignal.timeout(12000),
           });
-          if (!response.ok) return { items: [], diagnostic: { query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
+          if (!response.ok) return { items: [], diagnostic: { source: feed.source, query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 8);
+          const matches = [...xml.matchAll(/<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi)].slice(0, 8);
           const items = matches.map(match => {
             const item = match[1];
-            const source = readXmlTag(item, "source");
             const title = readXmlTag(item, "title");
             const link = readXmlTag(item, "link");
             const published = readXmlTag(item, "pubDate");
+            const source = readXmlTag(item, "source") || readXmlTag(item, "News:Source") || feed.source.replace(" RSS", "");
             let publishedAt: string | null = null;
             if (published) {
               const parsed = new Date(published);
               if (!Number.isNaN(parsed.getTime())) publishedAt = parsed.toISOString();
             }
-            return { title, link, source: source || "Google News", published_at: publishedAt, query };
-          }).filter(item => item.title && /^https?:\/\//i.test(item.link));
-          return { items, diagnostic: { query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
+            return { title, link, source, published_at: publishedAt, query };
+          }).filter(item => item.title && /^https?:\\/\\//i.test(item.link));
+          return { items, diagnostic: { source: feed.source, query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
         } catch (error) {
-          return { items: [], diagnostic: { query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
+          return { items: [], diagnostic: { source: feed.source, query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
       }));
       const feeds = feedResults.map(result => result.items);
