@@ -90,3 +90,5 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .market-analysis{white-space:pre-wrap;line-height:1.8;font-size:11px;color:#d4deed;background:#0b1825;border:1px solid #28445d;border-radius:8px;padding:14px 15px;margin:10px 0 16px}.market-analysis-title{font-size:11px;font-weight:700;color:#8fc0ff;margin-bottom:8px}
 
 .disclosure-panel{margin:0 0 16px}.disclosure-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.disclosure-item{padding:12px 2px;border-top:1px solid #202d40;min-width:0}.disclosure-item a{display:block;color:#dce8f8;text-decoration:none;font-size:11px;line-height:1.6;font-weight:550}.disclosure-item a:hover{color:#8bb8ff;text-decoration:underline}@media(max-width:850px){.disclosure-list{grid-template-columns:1fr}}
+
+.watchlist-input{width:100%;resize:vertical;min-height:58px;padding:10px 12px;border:1px solid #2a3a52;border-radius:7px;background:#0b1320;color:#e8edf7;font:inherit;font-size:11px;line-height:1.6;outline:none}.watchlist-input:focus{border-color:#4d91ff}.watchlist-input::placeholder{color:#60738f}
