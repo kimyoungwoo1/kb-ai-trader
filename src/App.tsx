@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import './styles.css'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number }
@@ -12,7 +12,7 @@ export default function App() {
   const [message, setMessage] = useState('로그인 후 계좌 새로고침을 눌러주세요.')
   const [loading, setLoading] = useState(false)
 
-  async function login(event: React.FormEvent<HTMLFormElement>) {
+  async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError('')
     try {
       const response = await fetch(API + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
