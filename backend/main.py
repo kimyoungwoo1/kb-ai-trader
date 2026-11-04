@@ -54,7 +54,7 @@ async def kb_auth_check():
         )
 
     payload = {
-        "grant_type": "client_credentials",
+        "grantType": "client_credentials",
         "appKey": KB_APP_KEY,
         "appSecret": KB_APP_SECRET,
     }
