@@ -73,20 +73,32 @@ async def kb_auth_check():
 
     checked_at = datetime.now(timezone.utc).isoformat()
 
-    if response.status_code != 200:
-        # Do not expose request payload, credentials, or raw response body.
+    try:
+        response_data = response.json()
+    except ValueError:
         raise HTTPException(
             status_code=502,
-            detail=f"KB증권 토큰 발급 실패 (HTTP {response.status_code}). API 신청 권한과 인증정보를 확인하세요.",
+            detail=f"KB증권 인증 응답이 JSON이 아닙니다 (HTTP {response.status_code}).",
         )
 
-    try:
-        data = response.json()
-    except ValueError:
-        raise HTTPException(status_code=502, detail="KB증권 인증 응답을 JSON으로 해석하지 못했습니다.")
+    # The API specification wraps the result in dataHeader and dataBody.
+    header = response_data.get("dataHeader", {}) if isinstance(response_data, dict) else {}
+    data = response_data.get("dataBody", {}) if isinstance(response_data, dict) else {}
 
-    if not data.get("access_token"):
-        raise HTTPException(status_code=502, detail="인증 응답에 access_token이 없습니다.")
+    if response.status_code != 200 or not data.get("access_token"):
+        result_code = header.get("resultCode", "미제공")
+        result_message = header.get("resultMessage", "응답 본문 확인 필요")
+        process_code = header.get("processCode", "미제공")
+        process_message = header.get("processMessage", "")
+        # Never expose raw response bodies, credentials, or tokens.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"KB증권 토큰 발급 실패 (HTTP {response.status_code}, "
+                f"resultCode={result_code}, processCode={process_code}). "
+                f"{result_message} {process_message}".strip()
+            ),
+        )
 
     # Token is intentionally not persisted or returned in this first connectivity test.
     return AuthCheckResult(
