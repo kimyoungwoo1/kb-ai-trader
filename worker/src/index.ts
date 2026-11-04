@@ -390,16 +390,26 @@ export default {
           max_tokens: 1400,
           temperature: 0.2,
         }),
-        fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        (async () => {
+          const endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY!);
+          const body = JSON.stringify({
             systemInstruction: { parts: [{ text: systemInstruction }] },
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { maxOutputTokens: 1400, thinkingConfig: { thinkingLevel: "medium" } },
-          }),
-          signal: AbortSignal.timeout(30000),
-        }),
+          });
+          let response: Response | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+            response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body,
+              signal: AbortSignal.timeout(20000),
+            });
+            if (response.ok || ![408, 429, 500, 502, 503, 504].includes(response.status)) break;
+          }
+          return response!;
+        })(),
       ]);
       const cloudflareOutput = cloudflareResult && typeof cloudflareResult === "object"
         ? (cloudflareResult as Record<string, unknown>).response
