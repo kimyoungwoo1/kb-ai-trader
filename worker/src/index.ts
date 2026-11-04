@@ -381,7 +381,7 @@ export default {
           });
           if (!response.ok) return [];
           const xml = await response.text();
-          return [...xml.matchAll(/<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi)].slice(0, 8).map(match => {
+          return [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 8).map(match => {
             const item = match[1];
             const source = readXmlTag(item, "source");
             const title = readXmlTag(item, "title");
