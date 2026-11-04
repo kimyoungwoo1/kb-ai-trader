@@ -1,32 +1,35 @@
 export interface Env {
-  // KB Open API credentials will be added as Cloudflare Worker secrets.
   KB_APP_KEY?: string;
   KB_APP_SECRET?: string;
+  KB_BASE_URL?: string;
 }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
 const json = (data: unknown, status = 200): Response =>
-  Response.json(data, {
-    status,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
-  });
+  Response.json(data, { status, headers: corsHeaders });
+
+function getKbErrorMessage(result: unknown): string {
+  if (!result || typeof result !== "object") return "응답 형식을 확인할 수 없습니다.";
+  const header = (result as Record<string, unknown>).dataHeader;
+  if (!header || typeof header !== "object") return "KB증권 응답에 오류 정보가 없습니다.";
+  const h = header as Record<string, unknown>;
+  const code = h.resultCode ?? "미제공";
+  const processCode = h.processCode ?? "미제공";
+  const message = h.processMessage ?? h.resultMessage ?? "응답 확인 필요";
+  return `resultCode=${String(code)}, processCode=${String(processCode)}. ${String(message)}`;
+}
 
 export default {
-  async fetch(request: Request, _env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        },
-      });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
     if (url.pathname === "/api/health" && request.method === "GET") {
@@ -34,6 +37,85 @@ export default {
         success: true,
         service: "kb-ai-trader-api",
         status: "healthy",
+        checked_at: new Date().toISOString(),
+      });
+    }
+
+    if (url.pathname === "/api/kb/auth-check" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) {
+        return json({
+          success: false,
+          message: "Cloudflare Worker Secret KB_APP_KEY와 KB_APP_SECRET을 먼저 설정해야 합니다.",
+        }, 503);
+      }
+
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
+      const payload = {
+        dataHeader: {
+          ipAddr: "127.0.0.1",
+          macAddr: "00:00:00:00:00:00",
+        },
+        dataBody: {
+          appKey: env.KB_APP_KEY,
+          appSecret: env.KB_APP_SECRET,
+          grantType: "client_credentials",
+        },
+      };
+
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "네트워크 요청 실패";
+        return json({
+          success: false,
+          stage: "network",
+          message: "Cloudflare Worker에서 KB증권 인증 서버에 연결하지 못했습니다.",
+          detail: detail.slice(0, 300),
+          checked_at: new Date().toISOString(),
+        }, 502);
+      }
+
+      let result: unknown;
+      try {
+        result = await response.json();
+      } catch {
+        return json({
+          success: false,
+          stage: "response",
+          message: `KB증권 응답이 JSON 형식이 아닙니다. HTTP ${response.status}`,
+          checked_at: new Date().toISOString(),
+        }, 502);
+      }
+
+      const body = result && typeof result === "object"
+        ? (result as Record<string, unknown>).dataBody
+        : undefined;
+      const tokenData = body && typeof body === "object"
+        ? body as Record<string, unknown>
+        : {};
+      const accessToken = tokenData.access_token;
+
+      if (!response.ok || typeof accessToken !== "string" || accessToken.length === 0) {
+        return json({
+          success: false,
+          stage: "authentication",
+          http_status: response.status,
+          message: getKbErrorMessage(result),
+          checked_at: new Date().toISOString(),
+        }, 502);
+      }
+
+      // Never return or persist the access token or the app credentials.
+      return json({
+        success: true,
+        message: "KB증권 OAuth 인증에 성공했습니다.",
+        token_type: tokenData.token_type ?? "Bearer",
+        expires_in: tokenData.expires_in ?? null,
         checked_at: new Date().toISOString(),
       });
     }
