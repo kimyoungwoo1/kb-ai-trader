@@ -54,7 +54,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit") && request.method === "POST") {
+    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
