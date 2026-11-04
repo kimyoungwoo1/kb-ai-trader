@@ -28,6 +28,22 @@ function getKbErrorMessage(result: unknown): string {
   return `resultCode=${String(code)}, processCode=${String(processCode)}. ${String(message)}`;
 }
 
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .trim();
+}
+
+function readXmlTag(xml: string, tag: string): string {
+  const match = xml.match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + ">","i"));
+  return match ? decodeXml(match[1].replace(/<[^>]+>/g, "")) : "";
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -56,7 +72,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -345,6 +361,53 @@ export default {
       return json({ success: true, api: "SSQM2952", message: "계좌자산평가 조회 요청이 성공했습니다.", data: valuationResult, checked_at: new Date().toISOString() });
     }
 
+
+
+    if (url.pathname === "/api/news" && request.method === "POST") {
+      let input: { holdings?: unknown };
+      try { input = await request.json() as { holdings?: unknown }; }
+      catch { return json({ success: false, message: "요청 데이터 형식이 올바르지 않습니다." }, 400); }
+      const names = Array.isArray(input.holdings)
+        ? input.holdings.slice(0, 8).map((item: any) => String(item?.name || "").trim()).filter((name: string) => name && name !== "종목명 없음")
+        : [];
+      const queries = ["코스피 코스닥 증시 주식 시장"];
+      for (const name of [...new Set(names)]) queries.push(name + " 주식");
+      const feeds = await Promise.all(queries.map(async query => {
+        const feedUrl = "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=ko&gl=KR&ceid=KR:ko";
+        try {
+          const response = await fetch(feedUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 KB-AI-Trader/1.0", "Accept": "application/rss+xml, application/xml, text/xml" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!response.ok) return [];
+          const xml = await response.text();
+          return [...xml.matchAll(/<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi)].slice(0, 8).map(match => {
+            const item = match[1];
+            const source = readXmlTag(item, "source");
+            const title = readXmlTag(item, "title");
+            const link = readXmlTag(item, "link");
+            const published = readXmlTag(item, "pubDate");
+            return {
+              title,
+              link,
+              source: source || "Google News",
+              published_at: published ? new Date(published).toISOString() : null,
+              query,
+            };
+          }).filter(item => item.title && /^https:\/\//i.test(item.link));
+        } catch { return []; }
+      }));
+      const unique = new Map<string, typeof feeds[number][number]>();
+      for (const item of feeds.flat()) if (!unique.has(item.link)) unique.set(item.link, item);
+      const articles = [...unique.values()].sort((a, b) => (Date.parse(b.published_at || "") || 0) - (Date.parse(a.published_at || "") || 0)).slice(0, 35);
+      return json({
+        success: true,
+        articles,
+        checked_at: new Date().toISOString(),
+        source: "Google News RSS",
+        message: articles.length ? "뉴스를 불러왔습니다." : "뉴스 결과가 없습니다. 잠시 후 다시 시도해 주세요.",
+      });
+    }
 
     if (url.pathname === "/api/ai/compare" && request.method === "POST") {
       let input: { holdings?: unknown; accountSummary?: unknown };
