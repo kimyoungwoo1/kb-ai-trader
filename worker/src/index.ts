@@ -609,7 +609,7 @@ export default {
           (target.name && item.company && (item.company.includes(target.name) || target.name.includes(item.company)))
         )?.type || "" };
       }).sort((a, b) => b.priorityScore - a.priorityScore || Number(b.date) - Number(a.date));
-      const priorityDisclosures = classifiedDisclosures.filter(item => item.priorityScore >= 1 || item.matched).slice(0, 30);
+      const priorityDisclosures = classifiedDisclosures.slice(0, 30);
       const matchedDisclosures = classifiedDisclosures.filter(item => item.matched).slice(0, 20);
       const relevantHoldings = researchHoldings.map(item => ({ name: item.name, code: item.code, quantity: item.quantity, yieldRate: item.yieldRate }));
       let marketAnalysis = "";
@@ -655,7 +655,7 @@ export default {
         checked_at: now.toISOString(),
         market_date_kst: todayKst,
         date_filter: "KST today 00:00 through checked_at",
-        source: "언론사 공식 RSS (연합뉴스·뉴시스·한국경제·매일경제)",
+        source: "언론사 공식 RSS + 금융감독원 OpenDART",
         message: articles.length || priorityDisclosures.length ? "시장 뉴스와 중요 DART 공시를 수집·분석했습니다." : "오늘 발행된 뉴스와 중요 공시를 찾지 못했습니다. 공급원 상태를 확인해 주세요.",
       });
     }
