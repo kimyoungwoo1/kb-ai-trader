@@ -15,6 +15,9 @@ export default function App() {
   const [depositMessage, setDepositMessage] = useState('예수금 조회 전')
   const [message, setMessage] = useState('로그인 후 계좌 새로고침을 눌러주세요.')
   const [loading, setLoading] = useState(false)
+  const [aiAnalysis, setAiAnalysis] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiMessage, setAiMessage] = useState('계좌 데이터를 바탕으로 AI 포트폴리오 진단을 실행할 수 있습니다.')
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError('')
@@ -80,6 +83,23 @@ export default function App() {
     finally { setLoading(false) }
   }
 
+  async function runAiAnalysis() {
+    setAiLoading(true); setAiMessage('Cloudflare AI가 보유 종목을 분석하고 있습니다.'); setAiAnalysis('')
+    try {
+      const response = await fetch(API + '/api/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ holdings, accountSummary }),
+      })
+      const result = await response.json()
+      if (response.status === 401) { logout(); setError('세션이 만료되었습니다. 다시 로그인해 주세요.'); return }
+      if (!response.ok || !result.success) { setAiMessage(result.message || 'AI 분석에 실패했습니다.'); return }
+      setAiAnalysis(result.analysis || '분석 결과가 비어 있습니다.')
+      setAiMessage('분석 완료 · ' + new Date(result.checked_at).toLocaleString('ko-KR') + ' · ' + result.model)
+    } catch { setAiMessage('AI 분석 서버에 연결하지 못했습니다.') }
+    finally { setAiLoading(false) }
+  }
+
   useEffect(() => { if (token) refresh() }, [token])
 
   function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null); setAccountSummary(null) }
@@ -94,6 +114,7 @@ export default function App() {
         <article className="stat-card"><div className="stat-top">총 평가손익</div><div className={'stat-value ' + (accountSummary && accountSummary.profitLoss < 0 ? 'negative-value' : 'positive-value')}>{accountSummary ? (accountSummary.profitLoss > 0 ? '+' : '') + accountSummary.profitLoss.toLocaleString('ko-KR') + '원' : '-'}</div><div className="stat-foot">평가금액 - 매입금액 기준</div></article>
         <article className="stat-card"><div className="stat-top">전체 수익률</div><div className={'stat-value ' + (accountSummary && accountSummary.yieldRate < 0 ? 'negative-value' : 'positive-value')}>{accountSummary ? (accountSummary.yieldRate > 0 ? '+' : '') + accountSummary.yieldRate.toFixed(2) + '%' : '-'}</div><div className="stat-foot">KB증권 계좌자산평가 응답 기준</div></article>
       </div>
+      <section className="panel ai-panel"><div className="panel-heading"><div><h3>AI 포트폴리오 분석</h3><span>AI PORTFOLIO REVIEW · CLOUDFLARE WORKERS AI</span></div><button className="outline-button" onClick={runAiAnalysis} disabled={aiLoading || !holdings.length}>{aiLoading ? 'AI 분석 중...' : 'AI 분석 실행'}</button></div><p className="ai-message">{aiMessage}</p>{aiAnalysis ? <div className="ai-analysis">{aiAnalysis}</div> : <div className="ai-empty">현재 계좌의 보유 종목과 평가손익을 분석합니다. 실시간 시세·뉴스 분석은 다음 단계에서 연결합니다.</div>}</section>
       <section className="panel holdings-panel"><div className="panel-heading"><div><h3>주문 가능 현금</h3><span>ORDERABLE CASH · SSQM0004</span></div><span>{depositMessage}</span></div>{deposit ? <div className="cash-summary"><div className="cash-label">현금 기준 주문 가능 금액</div><div className="cash-value">{deposit.ordr_psbl_csh !== undefined ? Number(String(deposit.ordr_psbl_csh).replace(/^0+(?=\\d)/, '')).toLocaleString('ko-KR') + '원' : '응답 필드 확인 필요'}</div><div className="cash-foot">KB증권 예수금내역의 주문가능현금 필드 기준</div><details className="raw-details"><summary>원본 응답 확인</summary><div className="table-wrap"><table><thead><tr><th>응답 필드</th><th>값</th></tr></thead><tbody>{Object.entries(deposit).filter(([, value]) => value === null || ['string','number','boolean'].includes(typeof value)).map(([key, value]) => <tr key={key}><td>{key}</td><td>{String(value ?? '-')}</td></tr>)}</tbody></table></div></details></div> : <div className="empty-row">{depositMessage}</div>}</section>
       <section className="panel holdings-panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>POSITIONS</span></div></div><div className="table-wrap"><table><thead><tr><th>종목명</th><th>종목코드</th><th>보유 수량</th><th>주문 가능 수량</th><th>평균 매입가</th><th>현재가</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{holdings.length ? holdings.map(item => <tr key={item.code}><td>{item.name}</td><td>{item.code}</td><td>{item.quantity.toLocaleString()}주</td><td>{item.orderable.toLocaleString()}주</td><td>{item.averagePrice ? item.averagePrice.toLocaleString() + '원' : '-'}</td><td>{item.currentPrice ? item.currentPrice.toLocaleString() + '원' : '-'}</td><td>{item.valuation ? item.valuation.toLocaleString() + '원' : '-'}</td><td>{item.profitLoss !== undefined ? item.profitLoss.toLocaleString() + '원' : '-'}</td><td>{item.yieldRate !== undefined ? item.yieldRate.toFixed(2) + '%' : '-'}</td></tr>) : <tr><td colSpan={9} className="empty-row"><div><b>{message}</b><span>조회 결과가 여기에 표시됩니다.</span></div></td></tr>}</tbody></table></div></section><footer><span>KB AI TRADER · 계좌 조회 전용</span><span>REAL ORDER DISABLED</span></footer></div></main></div>
 }
