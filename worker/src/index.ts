@@ -391,6 +391,7 @@ export default {
         sort: "date",
         sort_mth: "desc",
       });
+      let dartStage = "connectivity_probe";
       try {
         const probeHost = async (target: string) => {
           try {
@@ -410,11 +411,13 @@ export default {
         if (!dartHostProbe.ok) {
           return json({ success: false, stage: "connectivity_probe", error_type: dartHostProbe.error_type, cause_code: dartHostProbe.cause_code, public_host_ok: publicHostProbe.ok, public_host_status: publicHostProbe.status || null, message: "Cloudflare Worker에서 OpenDART 호스트 연결 자체가 실패했습니다. 인증키 문제가 아닌 네트워크/TLS 연결 문제입니다." }, 502);
         }
+        dartStage = "api_fetch";
         const response = await fetch("https://opendart.fss.or.kr/api/list.json?" + params.toString(), {
           headers: { "Accept": "application/json" },
           redirect: "follow",
           signal: AbortSignal.timeout(15000),
         });
+        dartStage = "response_headers";
         const contentType = response.headers.get("content-type") || "";
         if (!response.ok) return json({ success: false, stage: "http", http_status: response.status, message: "OpenDART HTTP 오류: " + response.status }, 502);
         if (!contentType.toLowerCase().includes("json")) {
@@ -422,6 +425,7 @@ export default {
           try { const finalUrl = new URL(response.url); safePath = finalUrl.hostname + finalUrl.pathname; } catch {}
           return json({ success: false, stage: "non_json", http_status: response.status, message: "OpenDART가 JSON 대신 비JSON 응답을 반환했습니다. 최종 응답 경로: " + safePath }, 502);
         }
+        dartStage = "response_json";
         const result = await response.json() as {
           status?: string; message?: string; total_count?: number;
           list?: Array<{ corp_name?: string; stock_code?: string; report_nm?: string; rcept_dt?: string; rcept_no?: string; flr_nm?: string; rm?: string }>;
@@ -455,11 +459,11 @@ export default {
         const causeName = cause && typeof cause === "object" && "name" in cause ? String((cause as { name?: unknown }).name || "") : "";
         const causeCode = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
         const errorMessage = errorName === "TimeoutError" || errorName === "AbortError"
-          ? "OpenDART 연결 시간이 초과됐습니다."
+          ? "OpenDART 요청 시간이 초과됐습니다."
           : errorName === "TypeError"
-            ? "OpenDART 외부 연결 또는 TLS 단계에서 실패했습니다."
+            ? "OpenDART 요청 또는 응답 처리 중 TypeError가 발생했습니다."
             : "OpenDART 요청 처리 중 오류가 발생했습니다.";
-        return json({ success: false, stage: "network", error_type: errorName, cause_type: causeName || null, cause_code: causeCode || null, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
+        return json({ success: false, stage: dartStage, error_type: errorName, cause_type: causeName || null, cause_code: causeCode || null, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
       }
     }
 
