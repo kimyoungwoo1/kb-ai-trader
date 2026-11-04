@@ -3,6 +3,7 @@ export interface Env {
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
   DASHBOARD_API_KEY?: string;
+  GEMINI_API_KEY?: string;
   ASSETS: Fetcher;
   AI: Ai;
 }
@@ -55,7 +56,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/ai/analyze" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -345,7 +346,7 @@ export default {
     }
 
 
-    if (url.pathname === "/api/ai/analyze" && request.method === "POST") {
+    if (url.pathname === "/api/ai/compare" && request.method === "POST") {
       let input: { holdings?: unknown; accountSummary?: unknown };
       try { input = await request.json() as { holdings?: unknown; accountSummary?: unknown }; }
       catch { return json({ success: false, message: "요청 데이터 형식이 올바르지 않습니다." }, 400); }
@@ -378,32 +379,51 @@ export default {
         "보유 종목: " + JSON.stringify(holdings),
       ].join("\n");
 
-      try {
-        const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
+      if (!env.GEMINI_API_KEY) return json({ success: false, message: "GEMINI_API_KEY Secret이 설정되지 않았습니다." }, 503);
+      const systemInstruction = "너는 보수적인 한국 주식 포트폴리오 분석 보조자다. 근거 없는 확신과 허위 시세를 만들지 않는다. 두 모델의 비교를 위해 각 보유 종목에 대해 반드시 종목코드, 판단(긍정/중립/주의), 근거를 명시하고 데이터가 부족하면 중립으로 판단하라.";
+      const [cloudflareResult, geminiResponse] = await Promise.all([
+        env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
           messages: [
-            { role: "system", content: "너는 보수적인 한국 주식 포트폴리오 분석 보조자다. 근거 없는 확신과 허위 시세를 만들지 않는다." },
+            { role: "system", content: systemInstruction },
             { role: "user", content: prompt },
           ],
-          max_tokens: 1100,
+          max_tokens: 1400,
           temperature: 0.2,
-        });
-        const output = result && typeof result === "object"
-          ? (result as Record<string, unknown>).response
-          : undefined;
-        return json({
-          success: true,
-          model: "@cf/meta/llama-3.1-8b-instruct-fp8",
-          analysis: typeof output === "string" ? output : JSON.stringify(result),
-          checked_at: new Date().toISOString(),
-          data_scope: "현재 계좌 보유 데이터만 분석; 실시간 시세·뉴스 미포함",
-        });
-      } catch (error) {
-        return json({
-          success: false,
-          stage: "ai_inference",
-          message: error instanceof Error ? error.message.slice(0, 300) : "AI 분석 요청에 실패했습니다.",
-        }, 502);
-      }
+        }),
+        fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 1400 },
+          }),
+          signal: AbortSignal.timeout(30000),
+        }),
+      ]);
+      const cloudflareOutput = cloudflareResult && typeof cloudflareResult === "object"
+        ? (cloudflareResult as Record<string, unknown>).response
+        : undefined;
+      let geminiData: any = {};
+      try { geminiData = await geminiResponse.json(); } catch {}
+      const geminiOutput = geminiData?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || "").join("\n") || "";
+      return json({
+        success: true,
+        results: {
+          cloudflare: {
+            success: typeof cloudflareOutput === "string",
+            model: "@cf/meta/llama-3.1-8b-instruct-fp8",
+            analysis: typeof cloudflareOutput === "string" ? cloudflareOutput : JSON.stringify(cloudflareResult),
+          },
+          gemini: {
+            success: geminiResponse.ok && Boolean(geminiOutput),
+            model: "gemini-3.8-flash",
+            analysis: geminiResponse.ok ? geminiOutput : (geminiData?.error?.message || "Gemini 분석 요청에 실패했습니다."),
+          },
+        },
+        checked_at: new Date().toISOString(),
+        data_scope: "현재 계좌 보유 데이터만 분석; 실시간 시세·뉴스 미포함",
+      });
     }
 
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
