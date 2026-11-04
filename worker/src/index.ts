@@ -364,15 +364,17 @@ export default {
 
 
     if ((url.pathname === "/api/news" || url.pathname === "/api/market/research") && request.method === "POST") {
-      const queries = [
-        { category: "국내 증시", query: "코스피 코스닥 증시 오늘 장 마감 전망" },
-        { category: "국내 증시", query: "한국 주식 시장 외국인 기관 수급 오늘" },
-        { category: "반도체·AI", query: "한국 반도체 AI 관련주 산업 뉴스" },
-        { category: "2차전지·자동차", query: "한국 2차전지 자동차 산업 주식 뉴스" },
-        { category: "바이오·헬스케어", query: "한국 바이오 제약 헬스케어 산업 뉴스" },
-        { category: "정책·공시", query: "한국 기업 실적 공시 정책 증시 뉴스" },
-        { category: "미국 증시", query: "미국 증시 나스닥 S&P500 오늘 시장" },
-        { category: "글로벌 매크로", query: "미국 금리 달러 환율 유가 경제 지표 오늘" },
+      const feeds = [
+        { category: "국내 증시", source: "연합뉴스 마켓", url: "https://www.yna.co.kr/rss/market.xml" },
+        { category: "국내 증시", source: "한국경제 증권", url: "https://www.hankyung.com/feed/finance" },
+        { category: "국내 증시", source: "매일경제 증권", url: "https://www.mk.co.kr/rss/30000001/" },
+        { category: "경제·금융", source: "연합뉴스 경제", url: "https://www.yna.co.kr/rss/economy.xml" },
+        { category: "산업·기업", source: "연합뉴스 산업", url: "https://www.yna.co.kr/rss/industry.xml" },
+        { category: "산업·기업", source: "뉴시스 산업", url: "https://www.newsis.com/RSS/industry.xml" },
+        { category: "금융·시장", source: "뉴시스 금융", url: "https://www.newsis.com/RSS/bank.xml" },
+        { category: "바이오·헬스케어", source: "뉴시스 IT·바이오", url: "https://www.newsis.com/RSS/health.xml" },
+        { category: "글로벌 경제", source: "한국경제 국제", url: "https://www.hankyung.com/feed/international" },
+        { category: "기술·AI", source: "한국경제 IT", url: "https://www.hankyung.com/feed/it" },
       ];
       const now = new Date();
       const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -381,35 +383,32 @@ export default {
       const day = kstNow.getUTCDate();
       const todayKst = year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
       const todayStartUtc = Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000;
-      const feedResults = await Promise.all(queries.flatMap(entry => [
-        { ...entry, source: "Google News", url: "https://news.google.com/rss/search?q=" + encodeURIComponent(entry.query) + "&hl=ko&gl=KR&ceid=KR:ko" },
-        { ...entry, source: "Bing News", url: "https://www.bing.com/news/search?q=" + encodeURIComponent(entry.query) + "&format=rss&setlang=ko-kr&cc=kr" },
-      ]).map(async feed => {
+      const feedResults = await Promise.all(feeds.map(async feed => {
         try {
           const response = await fetch(feed.url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(15000),
           });
-          if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
+          if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.category, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 12);
+          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 40);
           const items = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
-            const link = readXmlTag(item, "link");
-            const published = readXmlTag(item, "pubDate");
-            const source = readXmlTag(item, "source") || feed.source;
+            const link = readXmlTag(item, "link") || (item.match(/<link[^>]*href=["']([^"']+)["']/i)?.[1] || "");
+            const published = readXmlTag(item, "pubDate") || readXmlTag(item, "dc:date") || readXmlTag(item, "published") || readXmlTag(item, "updated");
+            const source = feed.source;
             let publishedAt: string | null = null;
             let publishedMs = 0;
             if (published) {
               const parsed = new Date(published);
               if (!Number.isNaN(parsed.getTime())) { publishedAt = parsed.toISOString(); publishedMs = parsed.getTime(); }
             }
-            return { title, link, source, published_at: publishedAt, published_ms: publishedMs, query: feed.query, category: feed.category };
+            return { title, link, source, published_at: publishedAt, published_ms: publishedMs, query: feed.category, category: feed.category };
           }).filter(item => item.title && /^https?:\/\//i.test(item.link) && item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
-          return { items, diagnostic: { source: feed.source, query: feed.query, status: response.status, count: items.length, error: null } };
+          return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, count: items.length, error: null } };
         } catch (error) {
-          return { items: [], diagnostic: { source: feed.source, query: feed.query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
+          return { items: [], diagnostic: { source: feed.source, query: feed.category, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
         }
       }));
       const unique = new Map<string, (typeof feedResults)[number]["items"][number]>();
@@ -452,7 +451,7 @@ export default {
         checked_at: now.toISOString(),
         market_date_kst: todayKst,
         date_filter: "KST today 00:00 through checked_at",
-        source: "Google News + Bing News RSS",
+        source: "언론사 공식 RSS (연합뉴스·뉴시스·한국경제·매일경제)",
         message: articles.length ? "오늘 발행된 시장 뉴스를 수집했습니다." : "오늘 발행된 뉴스를 찾지 못했습니다. 공급원 상태를 확인해 주세요.",
       });
     }
