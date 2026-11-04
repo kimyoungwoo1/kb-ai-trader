@@ -53,18 +53,26 @@ async def kb_auth_check():
             detail="KB_APP_KEY 또는 KB_APP_SECRET 환경변수가 설정되지 않았습니다.",
         )
 
+    # Match the official KB API Explorer sample structure exactly.
     payload = {
-        "grantType": "client_credentials",
-        "appKey": KB_APP_KEY,
-        "appSecret": KB_APP_SECRET,
+        "dataHeader": {
+            "ipAddr": "127.0.0.1",
+            "macAddr": "00:00:00:00:00:00",
+        },
+        "dataBody": {
+            "appKey": KB_APP_KEY,
+            "appSecret": KB_APP_SECRET,
+            "grantType": "client_credentials",
+        },
     }
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
+            # KB's generated Python sample sends the JSON string as the
+            # request body and does not add custom headers.
             response = await client.post(
                 f"{KB_BASE_URL}/oauth2/token",
-                json=payload,
-                headers={"Content-Type": "application/json"},
+                content=__import__("json").dumps(payload, ensure_ascii=False),
             )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="KB증권 인증 서버 응답 시간이 초과되었습니다.")
