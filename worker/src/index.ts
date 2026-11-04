@@ -2,6 +2,7 @@ export interface Env {
   KB_APP_KEY?: string;
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
+  DASHBOARD_API_KEY?: string;
 }
 
 const corsHeaders = {
@@ -41,6 +42,23 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+      if (!env.DASHBOARD_API_KEY) return json({ success: false, message: "DASHBOARD_API_KEY Secret이 설정되지 않았습니다." }, 503);
+      let input: { password?: string };
+      try { input = await request.json() as { password?: string }; }
+      catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      if (typeof input.password !== "string" || input.password !== env.DASHBOARD_API_KEY) {
+        return json({ success: false, message: "비밀번호가 올바르지 않습니다." }, 401);
+      }
+      return json({ success: true, token: env.DASHBOARD_API_KEY });
+    }
+
+    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings") && request.method === "POST") {
+      const authorization = request.headers.get("Authorization") || "";
+      if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
+        return json({ success: false, message: "로그인이 필요합니다." }, 401);
+      }
+    }
     if (url.pathname === "/api/kb/auth-check" && request.method === "POST") {
       if (!env.KB_APP_KEY || !env.KB_APP_SECRET) {
         return json({
