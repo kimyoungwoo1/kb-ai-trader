@@ -69,7 +69,7 @@ export default function PaperTrading({ token }: { token: string }) {
   }
 
   async function fetchQuote() {
-    if (!/^\\d{6}$/.test(code.trim())) { setNotice('먼저 6자리 종목코드를 입력해 주세요.'); return }
+    if (!/^\d{6}$/.test(code.trim())) { setNotice('종목명을 검색한 뒤 목록에서 선택해 주세요.'); return }
     setQuoteLoading(true)
     setQuoteInfo('KB증권 현재가 조회 중...')
     try {
@@ -94,7 +94,7 @@ export default function PaperTrading({ token }: { token: string }) {
     const cleanName = name.trim()
     const tradePrice = Number(price)
     const tradeQty = Math.floor(Number(quantity))
-    if (!/^\\d{6}$/.test(cleanCode) || !cleanName || !Number.isFinite(tradePrice) || tradePrice <= 0 || !Number.isInteger(tradeQty) || tradeQty <= 0) {
+    if (!/^\d{6}$/.test(cleanCode) || !cleanName || !Number.isFinite(tradePrice) || tradePrice <= 0 || !Number.isInteger(tradeQty) || tradeQty <= 0) {
       setNotice('종목명을 검색해 목록에서 선택하고, 가격과 수량을 확인해 주세요.')
       return
     }
