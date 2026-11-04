@@ -294,6 +294,55 @@ export default {
       return json({ success: true, api: "SSQM0004", message: "예수금내역 조회 요청이 성공했습니다.", data: depositResult, checked_at: new Date().toISOString() });
     }
 
+
+    if (url.pathname === "/api/kb/valuation" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" },
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) {
+        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502);
+      }
+      let tokenResult: unknown;
+      try { tokenResult = await tokenResponse.json(); }
+      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
+      const tokenBody = tokenResult && typeof tokenResult === "object" ? (tokenResult as Record<string, unknown>).dataBody : undefined;
+      const tokenData = tokenBody && typeof tokenBody === "object" ? tokenBody as Record<string, unknown> : {};
+      const accessToken = tokenData.access_token;
+      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
+        return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
+      }
+      let valuationResponse: Response;
+      try {
+        valuationResponse = await fetch(`${baseUrl}/api/v1/ssqm2952`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+            dataBody: { excg_mktpr_ccd: "A" },
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch (error) {
+        return json({ success: false, stage: "valuation_network", message: error instanceof Error ? error.message.slice(0, 250) : "계좌자산평가 API 연결 실패" }, 502);
+      }
+      let valuationResult: unknown;
+      try { valuationResult = await valuationResponse.json(); }
+      catch { return json({ success: false, stage: "valuation_response", http_status: valuationResponse.status, message: "KB 계좌자산평가 응답이 JSON이 아닙니다." }, 502); }
+      if (!valuationResponse.ok) {
+        return json({ success: false, stage: "valuation", http_status: valuationResponse.status, message: getKbErrorMessage(valuationResult), data: valuationResult }, 502);
+      }
+      return json({ success: true, api: "SSQM2952", message: "계좌자산평가 조회 요청이 성공했습니다.", data: valuationResult, checked_at: new Date().toISOString() });
+    }
+
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
     return env.ASSETS.fetch(request);
   },
