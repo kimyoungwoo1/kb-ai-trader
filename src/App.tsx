@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Bell, BriefcaseBusiness,
+  Activity, ArrowUpRight, Bell, BriefcaseBusiness,
   CandlestickChart, ChevronDown, CircleHelp, Clock3, Command,
-  LayoutDashboard, LineChart, ListFilter, Search, Settings2,
-  ShieldCheck, Wallet, Wifi, WifiOff
+  LayoutDashboard, LineChart, ListFilter, Settings2,
+  ShieldCheck, Wallet, WifiOff
 } from 'lucide-react'
 
 type MenuKey = 'overview' | 'account' | 'holdings' | 'watchlist' | 'paper' | 'history'
@@ -15,13 +15,6 @@ const menu: { key: MenuKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'watchlist', label: '관심 종목', icon: ListFilter },
   { key: 'paper', label: '가상 트레이딩', icon: CandlestickChart },
   { key: 'history', label: '거래 기록', icon: Activity },
-]
-
-const chartData = [
-  { day: '월', value: 42 }, { day: '화', value: 48 }, { day: '수', value: 45 },
-  { day: '목', value: 57 }, { day: '금', value: 53 }, { day: '월', value: 63 },
-  { day: '화', value: 59 }, { day: '수', value: 72 }, { day: '목', value: 68 },
-  { day: '금', value: 79 }, { day: '월', value: 75 }, { day: '화', value: 88 },
 ]
 
 function App() {
