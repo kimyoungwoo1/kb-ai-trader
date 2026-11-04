@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number }
 type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number }
@@ -30,6 +30,7 @@ export default function PaperTrading({ token }: { token: string }) {
   const [stockResults, setStockResults] = useState<{ name: string; code: string; market: string }[]>([])
   const [stockSearchLoading, setStockSearchLoading] = useState(false)
   const [selectedStock, setSelectedStock] = useState(false)
+  const stockSearchRequest = useRef(0)
 
   const valuation = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.lastPrice, 0), [account.positions])
   const invested = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.averagePrice, 0), [account.positions])
@@ -41,7 +42,13 @@ export default function PaperTrading({ token }: { token: string }) {
 
   useEffect(() => {
     const query = name.trim()
-    if (selectedStock || query.length < 2) { setStockResults([]); return }
+    const requestId = ++stockSearchRequest.current
+    if (selectedStock || query.length < 2) {
+      setStockResults([])
+      setStockSearchLoading(false)
+      return
+    }
+    const controller = new AbortController()
     const timer = window.setTimeout(async () => {
       setStockSearchLoading(true)
       try {
@@ -49,16 +56,25 @@ export default function PaperTrading({ token }: { token: string }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
           body: JSON.stringify({ query }),
+          signal: controller.signal,
         })
         const result = await response.json()
+        if (requestId !== stockSearchRequest.current) return
         const matches = response.ok && result.success ? result.stocks || [] : []
         setStockResults(matches)
         if (!response.ok || !result.success) setQuoteInfo(result.message || '종목 검색에 실패했습니다.')
         else setQuoteInfo(matches.length ? '검색 결과 ' + matches.length + '건 · 목록에서 종목을 선택하세요.' : '검색 결과가 없습니다. KB 종목 마스터 응답을 확인해야 합니다.')
-      } catch { setQuoteInfo('종목 검색 서버에 연결하지 못했습니다.') }
-      finally { setStockSearchLoading(false) }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        if (requestId === stockSearchRequest.current) setQuoteInfo('종목 검색 서버에 연결하지 못했습니다.')
+      } finally {
+        if (requestId === stockSearchRequest.current) setStockSearchLoading(false)
+      }
     }, 350)
-    return () => window.clearTimeout(timer)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
   }, [name, token, selectedStock])
 
   function chooseStock(stock: { name: string; code: string; market: string }) {
