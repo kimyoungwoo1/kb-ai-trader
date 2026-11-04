@@ -131,7 +131,7 @@ export default function App() {
       if (!response.ok || !result.success) { setNewsMessage(result.message || '시장 뉴스 조회에 실패했습니다.'); return }
       setNews(result.articles || [])
       setMarketAnalysis(result.market_analysis || '')
-      setNewsDiagnostics(Array.isArray(result.diagnostics) ? result.diagnostics.map((item: any) => item.source + ' · ' + item.query + ': HTTP ' + item.status + ', 오늘 기사 ' + item.count + '건' + (item.error ? ' · ' + item.error : '')) : [])
+      setNewsDiagnostics(Array.isArray(result.diagnostics) ? result.diagnostics.map((item: any) => item.source + ' · ' + item.query + ': HTTP ' + item.status + ', 원본 ' + (item.raw_count ?? '-') + '건, 유효 ' + (item.valid_count ?? '-') + '건, 오늘 ' + item.count + '건' + (item.newest_published ? ', 최신 ' + new Date(item.newest_published).toLocaleString('ko-KR') : '') + (item.error ? ' · ' + item.error : '')) : [])
       setNewsMessage((result.message || '시장 뉴스 조회 완료') + ' · 기준일 ' + result.market_date_kst + ' (KST) · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
     } catch { setNewsMessage('뉴스 서버에 연결하지 못했습니다.') }
     finally { setNewsLoading(false) }
