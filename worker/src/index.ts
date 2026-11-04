@@ -4,6 +4,7 @@ export interface Env {
   KB_BASE_URL?: string;
   DASHBOARD_API_KEY?: string;
   GEMINI_API_KEY?: string;
+  DART_API_KEY?: string;
   ASSETS: Fetcher;
   AI: Ai;
 }
@@ -72,7 +73,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -362,6 +363,61 @@ export default {
     }
 
 
+
+    if (url.pathname === "/api/market/disclosures" && request.method === "POST") {
+      if (!env.DART_API_KEY) return json({ success: false, message: "DART_API_KEY Secret이 설정되지 않았습니다. OpenDART 인증키를 등록해 주세요." }, 503);
+      const now = new Date();
+      const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+      const ymd = (date: Date) => date.getUTCFullYear() + String(date.getUTCMonth() + 1).padStart(2, "0") + String(date.getUTCDate()).padStart(2, "0");
+      const endDate = ymd(kstNow);
+      const startDateObj = new Date(kstNow.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const startDate = ymd(startDateObj);
+      const params = new URLSearchParams({
+        crtfc_key: env.DART_API_KEY,
+        bgn_de: startDate,
+        end_de: endDate,
+        page_no: "1",
+        page_count: "100",
+        sort: "date",
+        sort_mth: "desc",
+      });
+      try {
+        const response = await fetch("https://opendart.fss.or.kr/api/list.json?" + params.toString(), {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(15000),
+        });
+        const result = await response.json() as {
+          status?: string; message?: string; total_count?: number;
+          list?: Array<{ corp_name?: string; stock_code?: string; report_nm?: string; rcept_dt?: string; rcept_no?: string; flr_nm?: string; rm?: string }>;
+        };
+        if (!response.ok) return json({ success: false, message: "OpenDART HTTP 오류: " + response.status }, 502);
+        if (result.status !== "000" && result.status !== "013") {
+          return json({ success: false, message: "OpenDART 오류 " + (result.status || "미상") + ": " + (result.message || "응답 확인 필요"), status: result.status }, 502);
+        }
+        const disclosures = (result.list || []).map(item => ({
+          company: item.corp_name || "회사명 없음",
+          stock_code: item.stock_code || "",
+          title: item.report_nm || "공시 제목 없음",
+          date: item.rcept_dt || "",
+          receipt_no: item.rcept_no || "",
+          reporter: item.flr_nm || "",
+          remark: item.rm || "",
+          link: item.rcept_no ? "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + item.rcept_no : "",
+          listed: Boolean(item.stock_code),
+        })).sort((a, b) => Number(b.date) - Number(a.date));
+        return json({
+          success: true,
+          disclosures,
+          total_count: result.total_count || disclosures.length,
+          date_range: startDate + " ~ " + endDate,
+          checked_at: now.toISOString(),
+          source: "금융감독원 OpenDART 공시검색 API",
+          message: disclosures.length ? "최근 3일 공시 " + disclosures.length + "건을 수집했습니다." : "조회 기간에 공시가 없습니다.",
+        });
+      } catch (error) {
+        return json({ success: false, message: error instanceof Error ? error.message.slice(0, 250) : "OpenDART 요청 실패" }, 502);
+      }
+    }
 
     if ((url.pathname === "/api/news" || url.pathname === "/api/market/research") && request.method === "POST") {
       const feeds = [
