@@ -416,17 +416,27 @@ export default {
       }
       let master: any;
       try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
-      const rows = master?.dataBody?.Record1 || master?.dataBody?.record1 || master?.dataBody?.output || [];
-      const stocks = (Array.isArray(rows) ? rows : []).filter((row: any) => {
-        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim().toLocaleLowerCase("ko-KR");
+      const body = master?.dataBody || {};
+      const candidates = [body.Record1, body.record1, body.Record, body.record, body.output, body.rows, body.list, body.items, body];
+      const rows: any[] = [];
+      for (const candidate of candidates) {
+        if (Array.isArray(candidate)) rows.push(...candidate);
+        else if (candidate && typeof candidate === "object" && (candidate.shrt_is_cd || candidate.shrt_cd || candidate.is_cd)) rows.push(candidate);
+      }
+      const seen = new Set<string>();
+      const stocks = rows.filter((row: any) => {
+        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || "").trim().toLocaleLowerCase("ko-KR");
         const code = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim();
-        return name.includes(query) && /^\d{6}$/.test(code);
+        const key = code + "|" + name;
+        if (!name.includes(query) || !/^\\d{6}$/.test(code) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
       }).slice(0, 20).map((row: any) => ({
-        name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim(),
+        name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || "").trim(),
         code: String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim(),
         market: String(row.mrkt_ccd || row.dl_mkt_ccd || ""),
       }));
-      return json({ success: true, stocks, count: stocks.length, cached: true });
+      return json({ success: true, stocks, count: stocks.length, cached: true, source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
