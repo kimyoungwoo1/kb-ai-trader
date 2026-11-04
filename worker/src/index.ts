@@ -392,7 +392,7 @@ export default {
           tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
+            body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
             signal: AbortSignal.timeout(15000),
           });
         } catch (error) { return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "KB 인증 서버 연결 실패" }, 502); }
@@ -404,7 +404,7 @@ export default {
         try {
           response = await fetch(`${baseUrl}/api/v1/siam4983`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            headers: { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" },
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: {} }),
             signal: AbortSignal.timeout(30000),
           });
@@ -416,7 +416,7 @@ export default {
       }
       let master: any;
       try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
-      const body = master?.dataBody || {};
+      const body = master?.dataBody || {};\n      const outputHeader = master?.dataHeader || {};\n      const businessError = String(body.o_clsf || outputHeader.o_clsf || "");\n      if (businessError && businessError !== "00" && businessError !== "0") return json({ success: false, message: String(body.o_msg || outputHeader.o_msg || "KB 종목 마스터 업무 오류"), kb_result: businessError, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}) }, 502);
       const candidates = [Array.isArray(body) ? body : null, body.Record1, body.record1, body.Record, body.record, body.output, body.rows, body.list, body.items, body];
       const rows: any[] = [];
       for (const candidate of candidates) {
@@ -436,7 +436,7 @@ export default {
         code: String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim(),
         market: String(row.mrkt_ccd || row.dl_mkt_ccd || ""),
       }));
-      return json({ success: true, stocks, count: stocks.length, cached: true, source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
+      return json({ success: true, stocks, count: stocks.length, cached: true, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}), source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
@@ -454,7 +454,7 @@ export default {
         tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
+          body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
           signal: AbortSignal.timeout(15000),
         });
       } catch (error) { return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502); }
@@ -467,7 +467,7 @@ export default {
       try {
         quoteResponse = await fetch(`${baseUrl}/api/v1/ivu10140`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          headers: { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: exchange, shrt_cd: code } }),
           signal: AbortSignal.timeout(20000),
         });
