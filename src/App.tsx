@@ -3,7 +3,7 @@ import './styles.css'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
-type NewsArticle = { title: string; link: string; source: string; published_at: string | null; query: string }
+type NewsArticle = { title: string; link: string; source: string; published_at: string | null; query: string; category?: string }
 const API = 'https://kb-ai-trader.ksmsy1.workers.dev'
 
 export default function App() {
@@ -24,6 +24,7 @@ export default function App() {
   const [newsLoading, setNewsLoading] = useState(false)
   const [newsMessage, setNewsMessage] = useState('뉴스를 불러오려면 뉴스 새로고침을 눌러주세요.')
   const [newsDiagnostics, setNewsDiagnostics] = useState<string[]>([])
+  const [marketAnalysis, setMarketAnalysis] = useState('')
   const [activePage, setActivePage] = useState<'dashboard' | 'news'>('dashboard')
 
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -112,23 +113,25 @@ export default function App() {
 
 
   async function loadNews() {
-    setNewsLoading(true); setNewsMessage('국내 증시와 보유 종목 관련 뉴스를 가져오고 있습니다.')
+    setNewsLoading(true)
+    setNewsMessage('오늘 국내외 시장 뉴스를 수집하고 AI가 분석하고 있습니다.')
+    setMarketAnalysis('')
     try {
-      const response = await fetch(API + '/api/news', {
+      const response = await fetch(API + '/api/market/research', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ holdings }),
+        body: JSON.stringify({}),
       })
       const result = await response.json()
       if (response.status === 401) { logout(); setError('세션이 만료되었습니다. 다시 로그인해 주세요.'); return }
-      if (!response.ok || !result.success) { setNewsMessage(result.message || '뉴스 조회에 실패했습니다.'); return }
+      if (!response.ok || !result.success) { setNewsMessage(result.message || '시장 뉴스 조회에 실패했습니다.'); return }
       setNews(result.articles || [])
-      setNewsDiagnostics(Array.isArray(result.diagnostics) ? result.diagnostics.map((item: any) => `${item.query}: HTTP ${item.status}, 기사 ${item.count}건${item.error ? ' · ' + item.error : ''}`) : [])
-      setNewsMessage((result.message || '뉴스 조회 완료') + ' · ' + new Date(result.checked_at).toLocaleString('ko-KR') + ' · ' + result.source)
+      setMarketAnalysis(result.market_analysis || '')
+      setNewsDiagnostics(Array.isArray(result.diagnostics) ? result.diagnostics.map((item: any) => item.source + ' · ' + item.query + ': HTTP ' + item.status + ', 오늘 기사 ' + item.count + '건' + (item.error ? ' · ' + item.error : '')) : [])
+      setNewsMessage((result.message || '시장 뉴스 조회 완료') + ' · 기준일 ' + result.market_date_kst + ' (KST) · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
     } catch { setNewsMessage('뉴스 서버에 연결하지 못했습니다.') }
     finally { setNewsLoading(false) }
   }
-
   useEffect(() => { if (token) refresh() }, [token])
 
   function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null); setAccountSummary(null) }
@@ -148,6 +151,6 @@ export default function App() {
       <section className="panel ai-panel"><div className="panel-heading"><div><h3>AI 분석 비교</h3><span>PARALLEL MODEL REVIEW · SAME ACCOUNT DATA</span></div><button className="outline-button" onClick={runAiAnalysis} disabled={aiLoading || !holdings.length}>{aiLoading ? '두 AI 분석 중...' : '두 AI 동시 분석'}</button></div><p className="ai-message">{aiMessage}</p><div className="ai-compare-grid"><article className="ai-result-card"><h4>Cloudflare AI <small>Llama 3.1 8B</small></h4>{cloudflareAnalysis ? <div className="ai-analysis">{cloudflareAnalysis}</div> : <div className="ai-empty">분석 결과 대기 중</div>}</article><article className="ai-result-card"><h4>Google Gemini <small>Gemini 3.8 Flash</small></h4>{geminiAnalysis ? <div className="ai-analysis">{geminiAnalysis}</div> : <div className="ai-empty">분석 결과 대기 중</div>}</article></div><div className="ai-consensus-note">공통 의견은 두 분석에서 동일 종목코드와 판단이 겹치는지 확인해 판단합니다. 현재는 보유 종목만 비교하며, 신규 종목 발굴은 시장 데이터 연결 후 추가합니다.</div></section>
 
       <section className="panel holdings-panel"><div className="panel-heading"><div><h3>주문 가능 현금</h3><span>ORDERABLE CASH · SSQM0004</span></div><span>{depositMessage}</span></div>{deposit ? <div className="cash-summary"><div className="cash-label">현금 기준 주문 가능 금액</div><div className="cash-value">{deposit.ordr_psbl_csh !== undefined ? Number(String(deposit.ordr_psbl_csh).replace(/^0+(?=\\d)/, '')).toLocaleString('ko-KR') + '원' : '응답 필드 확인 필요'}</div><div className="cash-foot">KB증권 예수금내역의 주문가능현금 필드 기준</div><details className="raw-details"><summary>원본 응답 확인</summary><div className="table-wrap"><table><thead><tr><th>응답 필드</th><th>값</th></tr></thead><tbody>{Object.entries(deposit).filter(([, value]) => value === null || ['string','number','boolean'].includes(typeof value)).map(([key, value]) => <tr key={key}><td>{key}</td><td>{String(value ?? '-')}</td></tr>)}</tbody></table></div></details></div> : <div className="empty-row">{depositMessage}</div>}</section>
-      <section className="panel holdings-panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>POSITIONS</span></div></div><div className="table-wrap"><table><thead><tr><th>종목명</th><th>종목코드</th><th>보유 수량</th><th>주문 가능 수량</th><th>평균 매입가</th><th>현재가</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{holdings.length ? holdings.map(item => <tr key={item.code}><td>{item.name}</td><td>{item.code}</td><td>{item.quantity.toLocaleString()}주</td><td>{item.orderable.toLocaleString()}주</td><td>{item.averagePrice ? item.averagePrice.toLocaleString() + '원' : '-'}</td><td>{item.currentPrice ? item.currentPrice.toLocaleString() + '원' : '-'}</td><td>{item.valuation ? item.valuation.toLocaleString() + '원' : '-'}</td><td>{item.profitLoss !== undefined ? item.profitLoss.toLocaleString() + '원' : '-'}</td><td>{item.yieldRate !== undefined ? item.yieldRate.toFixed(2) + '%' : '-'}</td></tr>) : <tr><td colSpan={9} className="empty-row"><div><b>{message}</b><span>조회 결과가 여기에 표시됩니다.</span></div></td></tr>}</tbody></table></div></section></> : <section className="news-page"><div className="page-heading"><div><div className="eyebrow">MARKET INTELLIGENCE</div><h1>시장 뉴스</h1><p>국내 증시 주요 뉴스와 현재 보유 종목 관련 뉴스를 확인합니다.</p></div><button className="outline-button" onClick={loadNews} disabled={newsLoading}>{newsLoading ? '뉴스 조회 중...' : '뉴스 새로고침'}</button></div><section className="panel news-panel"><div className="panel-heading"><div><h3>시장 · 보유 종목 뉴스</h3><span>MARKET & PORTFOLIO NEWS · GOOGLE NEWS RSS</span></div></div><p className="news-message">{newsMessage}</p>{newsDiagnostics.length > 0 && <div className="news-diagnostics">{newsDiagnostics.map((item, index) => <div key={index}>{item}</div>)}</div>}{news.length ? <div className="news-list">{news.map((item, index) => <article className="news-item" key={item.link + index}><div className="news-item-top"><span>{item.source}</span><span>{item.published_at ? new Date(item.published_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '시간 정보 없음'}</span></div><a href={item.link} target="_blank" rel="noreferrer">{item.title}</a><div className="news-query">검색: {item.query}</div></article>)}</div> : <div className="ai-empty">뉴스 새로고침을 누르면 국내 증시와 보유 종목 관련 기사를 불러옵니다.</div>}</section></section>}
+      <section className="panel holdings-panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>POSITIONS</span></div></div><div className="table-wrap"><table><thead><tr><th>종목명</th><th>종목코드</th><th>보유 수량</th><th>주문 가능 수량</th><th>평균 매입가</th><th>현재가</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{holdings.length ? holdings.map(item => <tr key={item.code}><td>{item.name}</td><td>{item.code}</td><td>{item.quantity.toLocaleString()}주</td><td>{item.orderable.toLocaleString()}주</td><td>{item.averagePrice ? item.averagePrice.toLocaleString() + '원' : '-'}</td><td>{item.currentPrice ? item.currentPrice.toLocaleString() + '원' : '-'}</td><td>{item.valuation ? item.valuation.toLocaleString() + '원' : '-'}</td><td>{item.profitLoss !== undefined ? item.profitLoss.toLocaleString() + '원' : '-'}</td><td>{item.yieldRate !== undefined ? item.yieldRate.toFixed(2) + '%' : '-'}</td></tr>) : <tr><td colSpan={9} className="empty-row"><div><b>{message}</b><span>조회 결과가 여기에 표시됩니다.</span></div></td></tr>}</tbody></table></div></section></> : <section className="news-page"><div className="page-heading"><div><div className="eyebrow">MARKET INTELLIGENCE</div><h1>시장 뉴스</h1><p>오늘 발행된 국내 증시·산업·글로벌 경제 뉴스를 분석합니다.</p></div><button className="outline-button" onClick={loadNews} disabled={newsLoading}>{newsLoading ? '뉴스 조회 중...' : '뉴스 새로고침'}</button></div><section className="panel news-panel"><div className="panel-heading"><div><h3>시장 · 보유 종목 뉴스</h3><span>MARKET-WIDE NEWS · GOOGLE + BING RSS · TODAY KST</span></div></div><p className="news-message">{newsMessage}</p>{marketAnalysis && <div className="market-analysis"><div className="market-analysis-title">AI 오늘의 시장 브리핑</div><div>{marketAnalysis}</div></div>}{newsDiagnostics.length > 0 && <div className="news-diagnostics">{newsDiagnostics.map((item, index) => <div key={index}>{item}</div>)}</div>}{news.length ? <div className="news-list">{news.map((item, index) => <article className="news-item" key={item.link + index}><div className="news-item-top"><span>{item.source}</span><span>{item.published_at ? new Date(item.published_at).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '시간 정보 없음'}</span></div><a href={item.link} target="_blank" rel="noreferrer">{item.title}</a><div className="news-query">검색: {item.query}</div></article>)}</div> : <div className="ai-empty">뉴스 새로고침을 누르면 오늘 발행된 국내외 시장·산업 뉴스를 수집하고 AI가 요약합니다.</div>}</section></section>}
       <footer><span>KB AI TRADER · 계좌 조회 전용</span><span>REAL ORDER DISABLED</span></footer></div></main></div>
 }
