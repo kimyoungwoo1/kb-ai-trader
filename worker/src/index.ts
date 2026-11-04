@@ -436,6 +436,16 @@ export default {
             return json({ success: false, stage: "redirect_without_location", http_status: response.status, message: "OpenDART가 이동 응답을 반환했지만 Location 헤더가 없습니다." }, 502);
           }
           const nextUrl = new URL(location, requestUrl);
+          if (nextUrl.pathname.toLowerCase().endsWith("/error.html")) {
+            return json({
+              success: false,
+              stage: "dart_error_page",
+              http_status: response.status,
+              redirect_host: nextUrl.hostname,
+              redirect_path: nextUrl.pathname,
+              message: "OpenDART API가 공시 데이터 대신 오류 페이지로 이동시켰습니다. 오류 페이지를 반복 호출하지 않고 중단했습니다. 인증키/IP 접근 제한 또는 OpenDART 측 요청 차단 여부를 별도로 확인해야 합니다."
+            }, 502);
+          }
           if (nextUrl.hostname !== "opendart.fss.or.kr") {
             return json({ success: false, stage: "redirect_blocked", http_status: response.status, redirect_host: nextUrl.hostname, redirect_path: nextUrl.pathname, message: "OpenDART가 다른 호스트로 이동을 요청해 보안상 중단했습니다. 인증키는 전달하지 않았습니다." }, 502);
           }
