@@ -420,7 +420,7 @@ export default {
       const stocks = (Array.isArray(rows) ? rows : []).filter((row: any) => {
         const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim().toLocaleLowerCase("ko-KR");
         const code = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim();
-        return name.includes(query) && /^\\d{6}$/.test(code);
+        return name.includes(query) && /^\d{6}$/.test(code);
       }).slice(0, 20).map((row: any) => ({
         name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || "").trim(),
         code: String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim(),
@@ -436,7 +436,7 @@ export default {
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const code = String(input.code || "").trim();
       const exchange = String(input.exchange || "1");
-      if (!/^\d{6}$/.test(code)) return json({ success: false, message: "종목코드는 6자리 숫자로 입력해 주세요." }, 400);
+        return name.includes(query) && /^\d{6}$/.test(code);
       if (!["0", "1", "2"].includes(exchange)) return json({ success: false, message: "거래소 구분은 0(통합), 1(KRX), 2(NXT)만 가능합니다." }, 400);
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
