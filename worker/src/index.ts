@@ -422,7 +422,7 @@ export default {
           }
           const safeCurrentUrl = currentUrl.origin + currentUrl.pathname;
           if (visitedUrls.has(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"))) {
-            return json({ success: false, stage: "redirect_loop", redirect_host: currentUrl.hostname, redirect_path: currentUrl.pathname, message: "OpenDART API가 동일 주소로 반복 이동시켜 요청을 중단했습니다." }, 502);
+            return json({ success: false, stage: "redirect_loop", redirect_status: response?.status || null, redirect_host: currentUrl.hostname, redirect_path: currentUrl.pathname, redirect_count: visitedUrls.size, message: "OpenDART API가 동일 주소로 반복 이동시켜 요청을 중단했습니다. 직전 HTTP 상태와 이동 경로를 확인해야 합니다." }, 502);
           }
           visitedUrls.add(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"));
           response = await fetch(requestUrl, {
