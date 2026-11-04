@@ -389,7 +389,7 @@ export default {
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi)].slice(0, 8);
+          const matches = [...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0, 8);
           const items = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
@@ -402,7 +402,7 @@ export default {
               if (!Number.isNaN(parsed.getTime())) publishedAt = parsed.toISOString();
             }
             return { title, link, source, published_at: publishedAt, query };
-          }).filter(item => item.title && /^https?:\\/\\//i.test(item.link));
+          }).filter(item => item.title && /^https?:\/\//i.test(item.link));
           return { items, diagnostic: { source: feed.source, query, status: response.status, count: items.length, error: matches.length && !items.length ? "RSS 항목은 있으나 제목 또는 링크 파싱 실패" : null } };
         } catch (error) {
           return { items: [], diagnostic: { source: feed.source, query, status: 0, count: 0, error: error instanceof Error ? error.message : "RSS 요청 실패" } };
