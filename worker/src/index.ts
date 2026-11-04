@@ -42,16 +42,16 @@ function decodeXml(value: string): string {
 
 function readXmlTag(xml: string, tag: string): string {
   const localTag = tag.includes(":") ? tag.split(":").pop()! : tag;
-  const escaped = localTag.replace(/[.*+?^{}()|[\]\\]/g, "\\$&");
+  const escaped = localTag.replace(/[.*+?^()|[\]\\]/g, "\\$&");
   const match = xml.match(new RegExp("<(?:[\\w.-]+:)?" + escaped + "\\b(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w.-]+:)?" + escaped + "\\s*>", "i"));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, "")) : "";
 }
 
 function readXmlLink(xml: string): string {
-  const match = xml.match(/<(?:[\\w.-]+:)?link\\b([^>]*?)>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?link\\s*>/i);
-  const selfClosing = xml.match(/<(?:[\\w.-]+:)?link\\b([^>]*?)\\/>/i);
+  const match = xml.match(/<(?:[\w.-]+:)?link\b([^>]*?)>([\s\S]*?)<\/(?:[\w.-]+:)?link\s*>/i);
+  const selfClosing = xml.match(/<(?:[\w.-]+:)?link\b([^>]*?)\/>/i);
   const attrs = match?.[1] || selfClosing?.[1] || "";
-  const href = attrs.match(/\\bhref\\s*=\\s*["']([^"']+)["']/i)?.[1];
+  const href = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
   return (href || (match ? decodeXml(match[2].replace(/<[^>]+>/g, "")) : "")).trim();
 }
 
@@ -464,20 +464,20 @@ export default {
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.category, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
-          const matches = [...xml.matchAll(/<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?(?:item|entry)\\s*>/gi)].slice(0, 60);
+          const matches = [...xml.matchAll(/<(?:[\w.-]+:)?(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?(?:item|entry)\s*>/gi)].slice(0, 60);
           const parsedItems = matches.map(match => {
             const item = match[1];
             const title = readXmlTag(item, "title");
             const link = readXmlLink(item) || (() => {
               const guid = readXmlTag(item, "guid") || readXmlTag(item, "id");
-              return /^https?:\\/\\//i.test(guid) ? guid : "";
+              return /^https?:\/\//i.test(guid) ? guid : "";
             })();
             const published = readXmlTag(item, "pubDate") || readXmlTag(item, "published") || readXmlTag(item, "updated") || readXmlTag(item, "date");
             const parsed = published ? new Date(published) : null;
             const publishedMs = parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0;
             return { title, link, source: feed.source, published_at: publishedMs ? new Date(publishedMs).toISOString() : null, published_ms: publishedMs, query: feed.category, category: feed.category };
           });
-          const validItems = parsedItems.filter(item => item.title && /^https?:\\/\\//i.test(item.link));
+          const validItems = parsedItems.filter(item => item.title && /^https?:\/\//i.test(item.link));
           const items = validItems.filter(item => item.published_ms >= todayStartUtc && item.published_ms <= now.getTime());
           const newest = validItems.reduce((latest, item) => Math.max(latest, item.published_ms), 0);
           return { items, diagnostic: { source: feed.source, query: feed.category, status: response.status, raw_count: matches.length, valid_count: validItems.length, count: items.length, newest_published: newest ? new Date(newest).toISOString() : null, content_type: response.headers.get("content-type") || "", error: matches.length ? null : "RSS/Atom 항목을 찾지 못했습니다." } };
