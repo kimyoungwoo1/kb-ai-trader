@@ -417,7 +417,7 @@ export default {
       let master: any;
       try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
       const body = master?.dataBody || {};
-      const candidates = [body.Record1, body.record1, body.Record, body.record, body.output, body.rows, body.list, body.items, body];
+      const candidates = [Array.isArray(body) ? body : null, body.Record1, body.record1, body.Record, body.record, body.output, body.rows, body.list, body.items, body];
       const rows: any[] = [];
       for (const candidate of candidates) {
         if (Array.isArray(candidate)) rows.push(...candidate);
