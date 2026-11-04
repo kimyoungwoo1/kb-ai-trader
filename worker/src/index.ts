@@ -426,7 +426,13 @@ export default {
           }
           visitedUrls.add(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"));
           response = await fetch(requestUrl, {
-            headers: { "Accept": "application/json" },
+            headers: {
+              "Accept": "application/json",
+              "User-Agent": "curl/8.5.0",
+              "Referer": "https://opendart.fss.or.kr/",
+              "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+              "Cache-Control": "no-cache",
+            },
             redirect: "manual",
             signal: AbortSignal.timeout(15000),
           });
