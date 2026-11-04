@@ -433,8 +433,15 @@ export default {
         });
       } catch (error) {
         const errorName = error instanceof Error ? error.name : "UnknownError";
-        const errorMessage = errorName === "TimeoutError" || errorName === "AbortError" ? "OpenDART 연결 시간이 초과됐습니다." : errorName === "TypeError" ? "OpenDART 외부 연결 또는 TLS 단계에서 실패했습니다." : "OpenDART 요청 처리 중 오류가 발생했습니다.";
-        return json({ success: false, stage: "network", error_type: errorName, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
+        const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+        const causeName = cause && typeof cause === "object" && "name" in cause ? String((cause as { name?: unknown }).name || "") : "";
+        const causeCode = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
+        const errorMessage = errorName === "TimeoutError" || errorName === "AbortError"
+          ? "OpenDART 연결 시간이 초과됐습니다."
+          : errorName === "TypeError"
+            ? "OpenDART 외부 연결 또는 TLS 단계에서 실패했습니다."
+            : "OpenDART 요청 처리 중 오류가 발생했습니다.";
+        return json({ success: false, stage: "network", error_type: errorName, cause_type: causeName || null, cause_code: causeCode || null, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
       }
     }
 
@@ -469,7 +476,7 @@ export default {
           const matches = [...xml.matchAll(/<(?:[\w.-]+:)?(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?(?:item|entry)\s*>/gi)].slice(0, 60);
           const parsedItems = matches.map(match => {
             const item = match[1];
-            const title = readXmlTag(item, "title");
+            const title = readXmlTag(item, "title") || readXmlTag(item, "description") || readXmlTag(item, "summary") || readXmlTag(item, "name");
             const link = readXmlLink(item) || (() => {
               const guid = readXmlTag(item, "guid") || readXmlTag(item, "id");
               return /^https?:\/\//i.test(guid) ? guid : "";
