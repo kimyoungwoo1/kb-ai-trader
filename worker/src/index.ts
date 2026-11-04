@@ -458,12 +458,18 @@ export default {
         const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
         const causeName = cause && typeof cause === "object" && "name" in cause ? String((cause as { name?: unknown }).name || "") : "";
         const causeCode = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
+        const rawDetail = error instanceof Error ? error.message : String(error);
+        const safeDetail = rawDetail
+          .replace(/https?:\\/\\/[^\\s"'<>]+/gi, "[요청 주소 숨김]")
+          .replace(/(crtfc_key=)[^&\\s]+/gi, "$1[인증키 숨김]")
+          .replace(/([?&][^=]*(?:key|token|secret)[^=]*=)[^&\\s]+/gi, "$1[값 숨김]")
+          .slice(0, 240);
         const errorMessage = errorName === "TimeoutError" || errorName === "AbortError"
           ? "OpenDART 요청 시간이 초과됐습니다."
           : errorName === "TypeError"
             ? "OpenDART 요청 또는 응답 처리 중 TypeError가 발생했습니다."
             : "OpenDART 요청 처리 중 오류가 발생했습니다.";
-        return json({ success: false, stage: dartStage, error_type: errorName, cause_type: causeName || null, cause_code: causeCode || null, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
+        return json({ success: false, stage: dartStage, error_type: errorName, cause_type: causeName || null, cause_code: causeCode || null, error_detail: safeDetail || null, message: errorMessage + " 인증키와 요청 URL은 보안상 표시하지 않습니다." }, 502);
       }
     }
 
