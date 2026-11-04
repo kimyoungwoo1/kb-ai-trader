@@ -4,6 +4,7 @@ export interface Env {
   KB_BASE_URL?: string;
   DASHBOARD_API_KEY?: string;
   ASSETS: Fetcher;
+  AI: Ai;
 }
 
 const corsHeaders = {
@@ -54,7 +55,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
+    if ((url.pathname === "/api/ai/analyze" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -341,6 +342,68 @@ export default {
         return json({ success: false, stage: "valuation", http_status: valuationResponse.status, message: getKbErrorMessage(valuationResult), data: valuationResult }, 502);
       }
       return json({ success: true, api: "SSQM2952", message: "계좌자산평가 조회 요청이 성공했습니다.", data: valuationResult, checked_at: new Date().toISOString() });
+    }
+
+
+    if (url.pathname === "/api/ai/analyze" && request.method === "POST") {
+      let input: { holdings?: unknown; accountSummary?: unknown };
+      try { input = await request.json() as { holdings?: unknown; accountSummary?: unknown }; }
+      catch { return json({ success: false, message: "요청 데이터 형식이 올바르지 않습니다." }, 400); }
+
+      if (!Array.isArray(input.holdings) || input.holdings.length > 50) {
+        return json({ success: false, message: "분석할 보유 종목 데이터가 올바르지 않습니다." }, 400);
+      }
+
+      const holdings = input.holdings.map((item: any) => ({
+        name: String(item?.name || "").slice(0, 80),
+        code: String(item?.code || "").slice(0, 20),
+        quantity: Number(item?.quantity) || 0,
+        averagePrice: Number(item?.averagePrice) || 0,
+        currentPrice: Number(item?.currentPrice) || 0,
+        valuation: Number(item?.valuation) || 0,
+        profitLoss: Number(item?.profitLoss) || 0,
+        yieldRate: Number(item?.yieldRate) || 0,
+      }));
+      const summary = input.accountSummary && typeof input.accountSummary === "object"
+        ? input.accountSummary as Record<string, unknown>
+        : {};
+
+      const prompt = [
+        "다음은 사용자의 실제 보유 종목 및 계좌 요약 데이터다. 한국어로 개인 투자자용 포트폴리오 진단을 작성하라.",
+        "제공된 숫자만 사용하고 현재 시세, 뉴스, 공시, 기업 실적을 알고 있는 것처럼 말하지 마라. 데이터에 없는 정보는 확인 불가라고 명시하라.",
+        "개별 종목별 손익 상태와 집중 위험을 설명하되 매수·매도 명령이 아니라 참고 의견으로 제시하라.",
+        "응답 형식: 1) 계좌 전체 진단 2) 종목별 점검 3) 리스크와 주의점 4) 다음에 확인할 데이터.",
+        "단기 스윙 관점으로 설명하되 실시간 시장 데이터가 없으므로 구체적인 신규 진입가·목표가·손절가는 만들지 마라.",
+        "계좌 요약: " + JSON.stringify(summary),
+        "보유 종목: " + JSON.stringify(holdings),
+      ].join("\n");
+
+      try {
+        const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
+          messages: [
+            { role: "system", content: "너는 보수적인 한국 주식 포트폴리오 분석 보조자다. 근거 없는 확신과 허위 시세를 만들지 않는다." },
+            { role: "user", content: prompt },
+          ],
+          max_tokens: 1100,
+          temperature: 0.2,
+        });
+        const output = result && typeof result === "object"
+          ? (result as Record<string, unknown>).response
+          : undefined;
+        return json({
+          success: true,
+          model: "@cf/meta/llama-3.1-8b-instruct-fp8",
+          analysis: typeof output === "string" ? output : JSON.stringify(result),
+          checked_at: new Date().toISOString(),
+          data_scope: "현재 계좌 보유 데이터만 분석; 실시간 시세·뉴스 미포함",
+        });
+      } catch (error) {
+        return json({
+          success: false,
+          stage: "ai_inference",
+          message: error instanceof Error ? error.message.slice(0, 300) : "AI 분석 요청에 실패했습니다.",
+        }, 502);
+      }
     }
 
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
