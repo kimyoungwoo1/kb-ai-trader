@@ -893,8 +893,8 @@ export default {
     }
 
     if (url.pathname === "/api/ai/compare" && request.method === "POST") {
-      let input: { holdings?: unknown; accountSummary?: unknown };
-      try { input = await request.json() as { holdings?: unknown; accountSummary?: unknown }; }
+      let input: { holdings?: unknown; accountSummary?: unknown; marketData?: unknown };
+      try { input = await request.json() as { holdings?: unknown; accountSummary?: unknown; marketData?: unknown }; }
       catch { return json({ success: false, message: "요청 데이터 형식이 올바르지 않습니다." }, 400); }
 
       if (!Array.isArray(input.holdings) || input.holdings.length > 50) {
@@ -915,14 +915,28 @@ export default {
         ? input.accountSummary as Record<string, unknown>
         : {};
 
+      const marketData = Array.isArray(input.marketData) ? input.marketData.slice(0, 10).map((item: any) => ({
+        code: String(item?.code || "").slice(0, 6),
+        name: String(item?.name || "").slice(0, 60),
+        price: Number.isFinite(Number(item?.price)) ? Number(item.price) : null,
+        changeRate: Number.isFinite(Number(item?.changeRate)) ? Number(item.changeRate) : null,
+        volume: Number.isFinite(Number(item?.volume)) ? Number(item.volume) : null,
+        investorDays: Array.isArray(item?.investorDays) ? item.investorDays.slice(0, 5).map((day: any) => ({
+          dt: String(day?.dt || "").slice(0, 8),
+          indv: Number(day?.indv) || 0,
+          fgnr: Number(day?.fgnr) || 0,
+          scrt: Number(day?.scrt) || 0,
+        })) : [],
+      })).filter((item: any) => /^\\d{6}$/.test(item.code)) : [];
       const prompt = [
         "다음은 사용자의 실제 보유 종목 및 계좌 요약 데이터다. 한국어로 개인 투자자용 포트폴리오 진단을 작성하라.",
-        "제공된 숫자만 사용하고 현재 시세, 뉴스, 공시, 기업 실적을 알고 있는 것처럼 말하지 마라. 데이터에 없는 정보는 확인 불가라고 명시하라.",
+        "제공된 숫자만 사용하라. 시장 데이터가 있다면 마지막 수집 당시의 스냅샷이며 실시간 시세가 아니고, 투자자 수급은 API 응답의 개인/외국인/증권 구분 수치이며 단위가 검증되지 않았다. 뉴스, 공시, 기업 실적을 아는 척하지 마라.",
         "개별 종목별 손익 상태와 집중 위험을 설명하되 매수·매도 명령이 아니라 참고 의견으로 제시하라.",
         "응답 형식: 1) 계좌 전체 진단 2) 종목별 점검 3) 리스크와 주의점 4) 다음에 확인할 데이터.",
-        "단기 스윙 관점으로 설명하되 실시간 시장 데이터가 없으므로 구체적인 신규 진입가·목표가·손절가는 만들지 마라.",
+        "단기 스윙 관점으로 시장·수급 데이터가 있는 종목과 없는 종목을 구분해 설명하라. 수급 수치만으로 매수 결정을 내리지 말고, 구체적 진입가·목표가·손절가는 임의로 만들지 마라.",
         "계좌 요약: " + JSON.stringify(summary),
         "보유 종목: " + JSON.stringify(holdings),
+        "시장 데이터 (사용자가 마지막으로 수집한 값, 미수집 종목은 누락): " + JSON.stringify(marketData),
       ].join("\n");
 
       if (!env.GEMINI_API_KEY) return json({ success: false, message: "GEMINI_API_KEY Secret이 설정되지 않았습니다." }, 503);
@@ -980,7 +994,7 @@ export default {
           },
         },
         checked_at: new Date().toISOString(),
-        data_scope: "현재 계좌 보유 데이터만 분석; 실시간 시세·뉴스 미포함",
+        data_scope: marketData.length ? "계좌 보유 데이터 + 마지막 수집 시장·수급 스냅샷; 실시간 데이터 아님" : "현재 계좌 보유 데이터만 분석; 시장 데이터 미수집",
       });
     }
 
