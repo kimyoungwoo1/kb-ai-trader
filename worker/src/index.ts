@@ -508,42 +508,69 @@ export default {
     }
 
     if (url.pathname === "/api/market/discover" && request.method === "POST") {
-      // Public market-wide ranking discovery (not an exhaustive full exchange scan).
-      const rankings = ["tradingValueDesc", "changeRateDescUpAll"];
+      // Public market ranking sources are unofficial: validate every response, and fail closed.
+      const selections = [
+        { label: "거래대금 상위", listingType: "tradingValueDesc", orderType: "priceTop" },
+        { label: "상승률 상위", listingType: "changeRateDescUpAll", orderType: "up" },
+      ];
       const found = new Map<string, { code: string; name: string; rankSource: string }>();
       const diagnostics: string[] = [];
-      for (const ranking of rankings) {
-        const endpoint = "https://m.stock.naver.com/api/stockSecurity/aggregate/domesticStock?type=listing&exchangeType=KRX&listingType="
-          + ranking + "&size=50&index=0";
-        try {
-          const response = await fetch(endpoint, {
-            headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0", Referer: "https://m.stock.naver.com/" },
-            signal: AbortSignal.timeout(12000),
-          });
-          if (!response.ok) { diagnostics.push(ranking + " HTTP " + response.status); continue; }
-          const payload = await response.json() as any;
-          const locate = (obj: any): any[] => {
-            for (const candidate of [obj?.items, obj?.data?.items, obj?.result?.items, obj?.result?.data?.items, obj?.stocks, obj?.data?.stocks, obj?.result?.stocks, obj?.result, obj?.data]) {
-              if (Array.isArray(candidate)) return candidate;
+      const extract = (value: any): any[] => {
+        for (const list of [
+          value?.items, value?.data?.items, value?.result?.items,
+          value?.result?.data?.items, value?.stocks, value?.data?.stocks,
+          value?.result?.stocks, value?.result?.data,
+          value?.result, value?.data,
+        ]) if (Array.isArray(list)) return list;
+        return [];
+      };
+      for (const selection of selections) {
+        const attempts = [
+          // V3 domestic listing (documented with exchangeType=consolidated).
+          "https://m.stock.naver.com/api/stockSecurity/individual-stocks/v3/domestic?listingType="
+            + selection.listingType + "&exchangeType=consolidated&index=0&size=20",
+          // Legacy market listing, separate known orderType names.
+          "https://m.stock.naver.com/api/domestic/market/stock/default?tradeType=KRX&marketType=ALL&orderType="
+            + selection.orderType + "&startIdx=0&pageSize=20",
+        ];
+        let matched = 0;
+        for (let attempt = 0; attempt < attempts.length; attempt++) {
+          try {
+            const response = await fetch(attempts[attempt], {
+              headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0", Referer: "https://m.stock.naver.com/" },
+              signal: AbortSignal.timeout(12000),
+            });
+            if (!response.ok) {
+              diagnostics.push(selection.label + " 경로" + (attempt + 1) + " HTTP " + response.status);
+              continue;
             }
-            return [];
-          };
-          const items = locate(payload);
-          diagnostics.push(ranking + ": " + items.length + "개");
-          for (const item of items) {
-            const rawCode = String(item?.itemCode ?? item?.code ?? item?.stockCode ?? item?.symbolCode ?? item?.stock?.code ?? "").replace(/^A(?=\d{6}$)/, "");
-            const name = String(item?.stockName ?? item?.itemName ?? item?.name ?? item?.korName ?? item?.stock?.name ?? "").trim();
-            if (!/^\d{6}$/.test(rawCode) || !name) continue;
-            if (!found.has(rawCode)) found.set(rawCode, { code: rawCode, name, rankSource: ranking });
+            const payload = await response.json() as any;
+            const items = extract(payload);
+            diagnostics.push(selection.label + " 경로" + (attempt + 1) + " 항목 " + items.length);
+            for (const item of items) {
+              const rawCode = String(item?.itemCode ?? item?.code ?? item?.stockCode ?? item?.symbolCode ?? item?.stock?.code ?? "").trim().replace(/^A(?=\d{6}$)/, "");
+              const name = String(item?.stockName ?? item?.itemName ?? item?.name ?? item?.korName ?? item?.stock?.name ?? "").trim();
+              if (!/^\d{6}$/.test(rawCode) || !name) continue;
+              if (!found.has(rawCode)) found.set(rawCode, { code: rawCode, name, rankSource: selection.label });
+              matched++;
+            }
+            if (matched > 0) break;
+            diagnostics.push(selection.label + " 경로" + (attempt + 1) + " 응답키: " + Object.keys(payload || {}).slice(0, 12).join(","));
+          } catch (error) {
+            diagnostics.push(selection.label + " 경로" + (attempt + 1) + ": " + (error instanceof Error ? error.message.slice(0, 100) : "조회 실패"));
           }
-        } catch (error) { diagnostics.push(ranking + ": " + (error instanceof Error ? error.message.slice(0, 100) : "조회 실패")); }
+        }
       }
       const candidates = [...found.values()].slice(0, 80);
-      if (!candidates.length) return json({ success: false, message: "시장 전체 순위 데이터가 조회되지 않았습니다. KB 정밀 조회를 시작하지 않습니다.", diagnostics }, 502);
-      return json({ success: true, candidates, count: candidates.length, checked_at: new Date().toISOString(),
-        source: "Naver Finance KRX 전체시장 거래대금·상승률 랭킹",
-        coverage: "전체 상장종목 전수조사가 아닌 시장 전반의 순위 상위 후보군",
-        diagnostics });
+      if (!candidates.length) return json({
+        success: false, message: "시장 순위 API에서 유효한 종목을 가져오지 못했습니다. 현재 시세 데이터는 유지합니다.", diagnostics,
+      }, 502);
+      return json({
+        success: true, candidates, count: candidates.length, checked_at: new Date().toISOString(),
+        source: "Naver Finance 국내 주식 공개 순위 데이터",
+        coverage: "시장 전체 전수검사가 아니라 공개 순위의 일부 상위 종목을 탐색",
+        diagnostics,
+      });
     }
 
     if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
