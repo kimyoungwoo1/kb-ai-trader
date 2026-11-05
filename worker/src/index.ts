@@ -83,7 +83,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -505,6 +505,45 @@ export default {
         message: rawPrice == null ? "조회는 성공했지만 현재가 필드를 찾지 못했습니다. dataBody 필드: " + Object.keys(body).join(",") : "",
         checked_at: new Date().toISOString(),
       });
+    }
+
+    if (url.pathname === "/api/market/discover" && request.method === "POST") {
+      // Public market-wide ranking discovery (not an exhaustive full exchange scan).
+      const rankings = ["tradingValueDesc", "changeRateDescUpAll"];
+      const found = new Map<string, { code: string; name: string; rankSource: string }>();
+      const diagnostics: string[] = [];
+      for (const ranking of rankings) {
+        const endpoint = "https://m.stock.naver.com/api/stockSecurity/aggregate/domesticStock?type=listing&exchangeType=KRX&listingType="
+          + ranking + "&size=50&index=0";
+        try {
+          const response = await fetch(endpoint, {
+            headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0", Referer: "https://m.stock.naver.com/" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!response.ok) { diagnostics.push(ranking + " HTTP " + response.status); continue; }
+          const payload = await response.json() as any;
+          const locate = (obj: any): any[] => {
+            for (const candidate of [obj?.items, obj?.data?.items, obj?.result?.items, obj?.result?.data?.items, obj?.stocks, obj?.data?.stocks, obj?.result?.stocks, obj?.result, obj?.data]) {
+              if (Array.isArray(candidate)) return candidate;
+            }
+            return [];
+          };
+          const items = locate(payload);
+          diagnostics.push(ranking + ": " + items.length + "개");
+          for (const item of items) {
+            const rawCode = String(item?.itemCode ?? item?.code ?? item?.stockCode ?? item?.symbolCode ?? item?.stock?.code ?? "").replace(/^A(?=\d{6}$)/, "");
+            const name = String(item?.stockName ?? item?.itemName ?? item?.name ?? item?.korName ?? item?.stock?.name ?? "").trim();
+            if (!/^\d{6}$/.test(rawCode) || !name) continue;
+            if (!found.has(rawCode)) found.set(rawCode, { code: rawCode, name, rankSource: ranking });
+          }
+        } catch (error) { diagnostics.push(ranking + ": " + (error instanceof Error ? error.message.slice(0, 100) : "조회 실패")); }
+      }
+      const candidates = [...found.values()].slice(0, 80);
+      if (!candidates.length) return json({ success: false, message: "시장 전체 순위 데이터가 조회되지 않았습니다. KB 정밀 조회를 시작하지 않습니다.", diagnostics }, 502);
+      return json({ success: true, candidates, count: candidates.length, checked_at: new Date().toISOString(),
+        source: "Naver Finance KRX 전체시장 거래대금·상승률 랭킹",
+        coverage: "전체 상장종목 전수조사가 아닌 시장 전반의 순위 상위 후보군",
+        diagnostics });
     }
 
     if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
