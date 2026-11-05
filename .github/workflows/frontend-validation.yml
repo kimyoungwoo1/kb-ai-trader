@@ -20,5 +20,5 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Typecheck and build
         run: npm run build
-      - name: Signal regression checks
-        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs
+      - name: Signal and trading-status regression checks
+        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs tests/autoStatus.test.mjs
