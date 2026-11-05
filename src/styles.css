@@ -128,3 +128,11 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .market-data-table details{margin:2px 0 8px;min-width:0}
 .market-data-table details summary{white-space:nowrap;cursor:pointer;color:#83b7ff;font-size:11px}
 .market-data-table .market-raw-data{width:100%;max-width:380px;max-height:260px;box-sizing:border-box;white-space:pre;overflow:auto;overflow-wrap:normal}
+
+
+.market-data-table td:nth-child(7){width:260px;white-space:normal}
+.market-investor-summary{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;font-size:10px;color:#91a5c2}
+.market-investor-summary small{grid-column:1/-1;color:#7187a5;font-size:9px}
+.market-investor-summary span{white-space:nowrap}
+.market-investor-summary b{color:#dce8f8;font-weight:600;font-variant-numeric:tabular-nums}
+.market-investor-error{font-size:9px;color:#e0a0a0;white-space:normal}
