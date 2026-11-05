@@ -508,61 +508,80 @@ export default {
     }
 
     if (url.pathname === "/api/market/discover" && request.method === "POST") {
-      // Officially accessible public web pages provide a broad *volume ranking*, not a whole-market scan.
-      // Do not trust page quotes for simulated orders; the KB quote endpoint verifies each selected stock.
-      const pages = [
-        { label: "코스피 거래량 상위", sosok: "0" },
-        { label: "코스닥 거래량 상위", sosok: "1" },
-      ];
-      const found = new Map<string, { code: string; name: string; rankSource: string }>();
+      // Derived whole-market flows, CC BY 4.0, K-Export Stars.
+      // Used only for candidate discovery. Trade simulation needs fresh KB quotes.
+      const endpoint = "https://raw.githubusercontent.com/james-brand/korea-market-data/main/data/foreign-flows-aggregates.csv";
       const diagnostics: string[] = [];
-      const decode = (name: string) => name.replace(/&amp;/g, "&").replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-        .replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, "").trim();
-      for (const page of pages) {
-        const url = "https://finance.naver.com/sise/sise_quant.naver?sosok=" + page.sosok;
-        try {
-          const response = await fetch(url, {
-            headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0", Referer: "https://finance.naver.com/" },
-            signal: AbortSignal.timeout(12000),
-          });
-          if (!response.ok) { diagnostics.push(page.label + " HTTP " + response.status); continue; }
-          const contentType = response.headers.get("content-type") || "";
-          const bytes = await response.arrayBuffer();
-          const charset = /charset\s*=\s*["']?([^;"'\s]+)/i.exec(contentType)?.[1]?.toLowerCase() || "";
-          const html = new TextDecoder(charset.includes("euc") || charset.includes("ks_c") ? "euc-kr" : "utf-8").decode(bytes);
-          if (!html.includes("item/main.naver?code=") && !html.includes("item/main.naver?code&#61;")) {
-            diagnostics.push(page.label + " 종목 링크 없음 · 차단/페이지 변경 가능성");
-            continue;
-          }
-          let parsed = 0;
-          const rows = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi) || [];
-          for (const row of rows) {
-            const match = row.match(/<a\b[^>]*href=["'][^"']*\/item\/main\.naver\?code=(\d{6})[^"']*["'][^>]*>([\s\S]*?)<\/a>/i);
-            if (!match) continue;
-            const code = match[1];
-            const name = decode(match[2]);
-            if (!name || /KODEX|TIGER|ACE |SOL |RISE |PLUS |ETF|ETN|레버리지|인버스|선물/i.test(name)) continue;
-            if (!found.has(code)) found.set(code, { code, name, rankSource: page.label });
-            parsed++;
-          }
-          diagnostics.push(page.label + ": " + parsed + "개 일반주 후보");
-        } catch (error) {
-          diagnostics.push(page.label + ": " + (error instanceof Error ? error.message.slice(0, 120) : "연결 실패"));
+      try {
+        const response = await fetch(endpoint, {
+          headers: { Accept: "text/csv", "User-Agent": "kb-ai-trader/0.1" },
+          signal: AbortSignal.timeout(15000),
+          cf: { cacheTtl: 300, cacheEverything: true },
+        });
+        if (!response.ok) return json({
+          success: false, message: "전체시장 수급 파일 다운로드 실패 · 기존 시세 유지",
+          diagnostics: ["GitHub 데이터 HTTP " + response.status],
+        }, 502);
+        const csv = await response.text();
+        const lines = csv.trim().split(/\r?\n/);
+        const banner = lines.find(line => line.startsWith("#")) || "";
+        const dateMatch = banner.match(/as of (\d{4}-\d{2}-\d{2})/i);
+        const asOf = dateMatch?.[1] || "";
+        const asOfMs = Date.parse(asOf + "T00:00:00+09:00");
+        const ageDays = (Date.now() - asOfMs) / 86400000;
+        if (!asOf || !Number.isFinite(asOfMs) || ageDays < -1 || ageDays > 5) {
+          return json({ success: false, message: "전체시장 수급 데이터 날짜가 없거나 오래되었습니다. 오래된 데이터로 매매 후보를 만들지 않습니다.",
+            diagnostics: ["자료 기준일 " + (asOf || "미확인"), "자료 경과일 " + (Number.isFinite(ageDays) ? ageDays.toFixed(1) : "미확인")] }, 502);
         }
+        const headings = lines.find(line => line.startsWith("ticker,"))?.split(",") || [];
+        const cols = ["ticker", "name_en", "market", "last_close", "f_1d_sh", "f_5d_val", "i_5d_sh"];
+        if (!cols.every(col => headings.includes(col))) {
+          return json({ success: false, message: "전체시장 수급 데이터 열 구조가 변경되었습니다.", diagnostics: ["열: " + headings.join(",")] }, 502);
+        }
+        const indexOf = (col: string) => headings.indexOf(col);
+        type Row = { code: string; name: string; market: string; f1: number; f5: number; i5: number; close: number };
+        const rows: Row[] = [];
+        for (const line of lines) {
+          if (!/^\d{6},/.test(line)) continue;
+          const fields = line.split(",");
+          const code = fields[indexOf("ticker")];
+          const name = fields[indexOf("name_en")];
+          const market = fields[indexOf("market")];
+          const close = Number(fields[indexOf("last_close")]);
+          const f1 = Number(fields[indexOf("f_1d_sh")]);
+          const f5 = Number(fields[indexOf("f_5d_val")]);
+          const i5 = Number(fields[indexOf("i_5d_sh")]);
+          if (!/^\d{6}$/.test(code) || !name || !["KOSPI", "KOSDAQ"].includes(market)
+            || !Number.isFinite(close) || close < 1000
+            || ![f1, f5, i5].every(Number.isFinite)) continue;
+          rows.push({ code, name, market, close, f1, f5, i5 });
+        }
+        if (rows.length < 1500) return json({
+          success: false, message: "전체시장 자료에서 유효 종목이 충분히 추출되지 않았습니다.", diagnostics: ["유효 종목 " + rows.length],
+        }, 502);
+        const found = new Map<string, { code: string; name: string; rankSource: string }>();
+        const add = (array: Row[], label: string, count: number) => {
+          for (const item of array.slice(0, count)) {
+            if (!found.has(item.code)) found.set(item.code, { code: item.code, name: item.name, rankSource: label });
+          }
+        };
+        add([...rows].sort((a, b) => b.f5 - a.f5), "외국인 5일 순매수", 40);
+        add([...rows].sort((a, b) => b.i5 - a.i5), "기관 5일 순매수", 30);
+        add([...rows].sort((a, b) => b.f1 - a.f1), "외국인 1일 순매수", 30);
+        const candidates = [...found.values()].slice(0, 80);
+        diagnostics.push("전체 유효 종목 " + rows.length, "수급 자료 기준일 " + asOf, "후보 " + candidates.length);
+        return json({
+          success: true, candidates, count: candidates.length, universe_count: rows.length, checked_at: new Date().toISOString(),
+          market_as_of: asOf,
+          source: "K-Export Stars / korea-market-data (CC BY 4.0), derived from KIS and KRX",
+          source_url: "https://github.com/james-brand/korea-market-data",
+          coverage: "코스피·코스닥 약 " + rows.length + "개 일반주 전체 수급 집계 → 상위 " + candidates.length + "개 후보 / KB증권 실시간에 가까운 시세 별도 검증",
+          diagnostics,
+        });
+      } catch (error) {
+        return json({ success: false, message: "전체시장 수급 파일 연결/파싱 실패 · 기존 시세 유지",
+          diagnostics: [error instanceof Error ? error.message.slice(0, 160) : "알 수 없는 오류"] }, 502);
       }
-      const candidates = [...found.values()].slice(0, 80);
-      if (!candidates.length) return json({
-        success: false,
-        message: "코스피·코스닥 거래량 상위 페이지에서 일반주 후보를 얻지 못했습니다. 기존 시세는 유지합니다.",
-        diagnostics,
-      }, 502);
-      return json({
-        success: true, candidates, count: candidates.length, checked_at: new Date().toISOString(),
-        source: "네이버페이 증권 코스피·코스닥 거래량 상위 공개 페이지",
-        coverage: "코스피·코스닥 거래량 상위 일반주 후보 탐색(전체 상장종목 전수검사 아님, 페이지의 갱신시각 미검증)",
-        diagnostics,
-      });
     }
 
     if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
