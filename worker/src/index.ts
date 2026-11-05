@@ -452,7 +452,8 @@ export default {
           market: String(row.mrkt_ccd || row.dl_mkt_ccd || row.mkt_clsf || ""),
         };
       });
-      return json({ success: true, stocks, count: stocks.length, cached: true, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}), source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
+      const diagnostic = rows.length ? "" : "KB 응답에 종목 레코드가 없습니다. response=" + Object.keys(master || {}).join(",") + " / dataBody=" + Object.keys(body || {}).join(",");
+      return json({ success: true, stocks, count: stocks.length, cached: true, message: diagnostic, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}), source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
