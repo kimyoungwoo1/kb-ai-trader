@@ -572,15 +572,31 @@ export default {
           else investorError = getKbErrorMessage(data);
         } catch (error) { investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
 
-        const rawPrice = quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price ?? null;
+        const toNumber = (value: unknown): number | null => {
+          if (value == null || String(value).trim() === "") return null;
+          const parsed = Number(String(value).replace(/,/g, "").trim());
+          return Number.isFinite(parsed) ? parsed : null;
+        };
+        const rawPrice = toNumber(quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price);
+        const previousClose = toNumber(quote?.bdy_cls_prc);
+        const change = rawPrice != null && previousClose != null
+          ? rawPrice - previousClose
+          : toNumber(quote?.cmpr ?? quote?.prdy_vrss);
+        const changeRate = toNumber(quote?.up_dwn_r_p2 ?? quote?.cmpr_rt ?? quote?.prdy_ctrt);
+        const volume = toNumber(quote?.acml_vlm ?? quote?.acml_vol);
+        const averagePrice = toNumber(quote?.wt_avr_prc);
+        const tradeValue = averagePrice != null && volume != null
+          ? Math.round(averagePrice * volume)
+          : null;
         results.push({
           code: stock.code,
           name: stock.name || quote?.is_nm || quote?.hts_kor_is_nm || stock.code,
-          price: rawPrice == null ? null : Number(String(rawPrice).replace(/,/g, "")) || null,
-          change: quote?.cmpr ?? quote?.prdy_vrss ?? null,
-          changeRate: quote?.cmpr_rt ?? quote?.prdy_ctrt ?? null,
-          volume: quote?.acml_vol ?? null,
-          tradeValue: quote?.acml_tr_pbmn ?? null,
+          price: rawPrice,
+          change,
+          changeRate,
+          volume,
+          tradeValue,
+          tradeValueEstimated: tradeValue != null,
           quote,
           investor,
           quoteError,
