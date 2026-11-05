@@ -927,7 +927,7 @@ export default {
           fgnr: Number(day?.fgnr) || 0,
           scrt: Number(day?.scrt) || 0,
         })) : [],
-      })).filter((item: any) => /^\\d{6}$/.test(item.code)) : [];
+      })).filter((item: any) => /^\d{6}$/.test(item.code)) : [];
       const prompt = [
         "다음은 사용자의 실제 보유 종목 및 계좌 요약 데이터다. 한국어로 개인 투자자용 포트폴리오 진단을 작성하라.",
         "제공된 숫자만 사용하라. 시장 데이터가 있다면 마지막 수집 당시의 스냅샷이며 실시간 시세가 아니고, 투자자 수급은 API 응답의 개인/외국인/증권 구분 수치이며 단위가 검증되지 않았다. 뉴스, 공시, 기업 실적을 아는 척하지 마라.",
