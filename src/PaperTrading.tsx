@@ -74,17 +74,15 @@ export default function PaperTrading({ token }: { token: string }) {
         }
       }
       if (prices.size) {
-        setAccount(previous => {
-          const next: PaperState = {
-            ...previous,
-            positions: previous.positions.map(position => {
-              const quote = prices.get(position.code)
-              return quote ? { ...position, lastPrice: quote.price, quoteUpdatedAt: quote.checkedAt } : position
-            }),
-          }
-          writePaperLedger(next)
-          return next
-        })
+        const current = readPaperLedger()
+        const next: PaperState = {
+          ...current,
+          positions: current.positions.map(position => {
+            const quote = prices.get(position.code)
+            return quote ? { ...position, lastPrice: quote.price, quoteUpdatedAt: quote.checkedAt } : position
+          }),
+        }
+        persist(next)
       }
       const completedAt = new Date().toLocaleString('ko-KR')
       setLastPositionRefresh(completedAt)
