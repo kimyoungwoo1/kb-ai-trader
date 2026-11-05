@@ -132,9 +132,14 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   })
   // Discard pending signals whose conditions disappeared, then update watch targets.
   const valid = new Map<string, TradeSignal>(signals.filter(s => s.status === '관찰 후보' && s.maxQuantity > 0 && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s] as [string, TradeSignal]))
-  // Only retain queue entries for symbols in the current verified batch. Older
-  // strategy signals must not survive the research-rule update.
-  pending = pending.filter(p => valid.has(p.code) && !ledgerPositions.some(position => position.code === p.code))
+  // A rotating batch can omit a watched symbol, but queued triggers expire after one day.
+  // Re-quoted watched symbols must still meet the current research criteria.
+  pending = pending.filter(p => {
+    const ageMs = now.getTime() - new Date(p.createdAt).getTime()
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 24 * 3600000) return false
+    if (ledgerPositions.some(position => position.code === p.code)) return false
+    return !signals.some(signal => signal.code === p.code) || valid.has(p.code)
+  })
   for (const signal of signals) {
     if (!valid.has(signal.code) || ledgerPositions.some(p => p.code === signal.code) || pending.some(p => p.code === signal.code) || alreadyTradedToday.has(signal.code)) continue
     pending.push({ code: signal.code, name: signal.name, trigger: signal.entryTrigger!, stop: signal.stopReference!, createdAt: now.toISOString() })
