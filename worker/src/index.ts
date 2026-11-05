@@ -483,11 +483,28 @@ export default {
       try { quoteResult = await quoteResponse.json(); }
       catch { return json({ success: false, stage: "quote_response", http_status: quoteResponse.status, message: "KB 현재가 응답이 JSON이 아닙니다." }, 502); }
       const header = quoteResult?.dataHeader || {};
-      if (!quoteResponse.ok || (header.resultCode && !["0", "0000"].includes(String(header.resultCode)))) {
+      const resultCode = String(header.resultCode ?? "");
+      if (!quoteResponse.ok || (resultCode && !["0", "0000", "200"].includes(resultCode))) {
         return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
       }
       const body = quoteResult?.dataBody || {};
-      return json({ success: true, api: "IVU10140", code, exchange, price: Number(String(body.now_prc ?? "0").replace(/,/g, "")) || null, name: body.is_nm || body.hts_kor_is_nm || "", change: body.cmpr ?? null, changeRate: body.cmpr_rt ?? null, volume: body.acml_vol ?? null, tradeValue: body.acml_tr_pbmn ?? null, quote: quoteResult, checked_at: new Date().toISOString() });
+      const rawPrice = body.now_prc ?? body.stck_prpr ?? body.cur_prc ?? body.current_price ?? body.price ?? body.last_price ?? body.prpr ?? null;
+      const price = rawPrice == null ? null : Number(String(rawPrice).replace(/,/g, ""));
+      return json({
+        success: true,
+        api: "IVU10140",
+        code,
+        exchange,
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        name: body.is_nm || body.hts_kor_is_nm || body.stck_nm || "",
+        change: body.cmpr ?? body.prdy_vrss ?? null,
+        changeRate: body.cmpr_rt ?? body.prdy_ctrt ?? null,
+        volume: body.acml_vol ?? body.acml_vol ?? null,
+        tradeValue: body.acml_tr_pbmn ?? null,
+        dataBodyKeys: Object.keys(body),
+        message: rawPrice == null ? "조회는 성공했지만 현재가 필드를 찾지 못했습니다. dataBody 필드: " + Object.keys(body).join(",") : "",
+        checked_at: new Date().toISOString(),
+      });
     }
 
     if (url.pathname === "/api/market/disclosures" && request.method === "POST") {
