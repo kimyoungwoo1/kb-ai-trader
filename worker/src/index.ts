@@ -581,6 +581,7 @@ export default {
           changeRate: quote?.cmpr_rt ?? quote?.prdy_ctrt ?? null,
           volume: quote?.acml_vol ?? null,
           tradeValue: quote?.acml_tr_pbmn ?? null,
+          quote,
           investor,
           quoteError,
           investorError,
