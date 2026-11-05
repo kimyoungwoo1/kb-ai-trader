@@ -109,3 +109,5 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 
 .paper-page .stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media(max-width:700px){.paper-page .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.market-raw-data{max-width:420px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px;background:#0b1220;border:1px solid #26364d;border-radius:6px;color:#a9bfdc;font-size:10px;line-height:1.5}.disclosure-panel details summary{cursor:pointer;color:#83b7ff;font-size:11px}.news-panel .table-wrap{overflow-x:auto}.news-panel table{min-width:760px}
