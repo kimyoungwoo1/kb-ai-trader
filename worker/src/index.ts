@@ -644,7 +644,7 @@ export default {
           const startDate = start.toISOString().slice(0, 10).replace(/-/g, "");
           const response = await fetch(`${baseUrl}/api/v1/ivu10430`, {
             method: "POST", headers,
-            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "1", trd_clsf: "1", acml_clsf: "1" } }),
+            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
             signal: AbortSignal.timeout(15000),
           });
           const data = await response.json() as any;
@@ -677,6 +677,13 @@ export default {
           volume,
           tradeValue,
           tradeValueEstimated: tradeValue != null,
+          previousVolume: toNumber(quote?.bdy_vlm),
+          openPrice: toNumber(quote?.opn_prc),
+          highPrice: toNumber(quote?.hgh_prc),
+          lowPrice: toNumber(quote?.lw_prc),
+          averagePrice,
+          investorUnit: "shares",
+          investorAccumulated: false,
           quote,
           investor,
           quoteError,
