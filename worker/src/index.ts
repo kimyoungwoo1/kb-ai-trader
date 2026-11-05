@@ -667,7 +667,7 @@ export default {
           : null;
         results.push({
           code: stock.code,
-          name: stock.name || quote?.is_nm || quote?.hts_kor_is_nm || stock.code,
+          name: quote?.is_nm || quote?.hts_kor_is_nm || stock.name || stock.code,
           price: rawPrice,
           change,
           changeRate,
