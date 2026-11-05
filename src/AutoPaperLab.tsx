@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { PAPER_EVENT, ledgerEquity, readPaperLedger } from './paperLedger'
 import { AUTO_STORAGE_KEY, autoStats, newAutoAccount, readAutoAccount, runAutoCycle, type AutoAccount } from './autoPaper'
 import type { TradeSignal } from './tradeSignals'
+import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
 
 type Quote = { code: string; name: string; price: number | null; quoteError?: string }
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
@@ -17,6 +18,8 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
   }, [])
   const [confirmReset, setConfirmReset] = useState(false)
   const metrics = useMemo(() => autoStats(account), [account])
+  const screening = useMemo(() => analyzeSignals(signals), [signals])
+  const performance = useMemo(() => analyzePerformance(account, ledger), [account, ledger])
   const save = (next: AutoAccount) => { localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next)); setAccount(next) }
   useEffect(() => {
     if (!checkedAt || !quotes.length) return
@@ -51,6 +54,24 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
     </div>
     <section className="auto-run-log"><h4>검사 실행 기록 <small>최근 30회 · 브라우저에 저장</small></h4>
       {(account.runs || []).length ? <div className="auto-run-items">{(account.runs || []).slice(0, 10).map(run => <details key={run.checkedAt} className="auto-run-item"><summary><time>{formatTime(run.processedAt)}</time> · {run.status} · {run.scanned}종목 / 후보 {run.candidates}건 / 체결 {run.filled}건</summary><p>{run.message}</p><p>시세 수집: {formatTime(run.checkedAt)}</p>{run.decisions.length ? <div className="auto-run-decisions">{run.decisions.map(decision => <div key={decision.code}><strong>{decision.name} ({decision.code}) · {decision.status}</strong><span>{decision.reason}</span></div>)}</div> : <p>분석된 종목이 없습니다.</p>}</details>)}</div> : <p className="ai-empty">아직 검사 기록이 없습니다. 자동 가상매매를 켠 상태에서 ‘시장 데이터 수집’을 다시 누르면 검사 결과가 기록됩니다.</p>}
+    </section>
+    <section className="auto-diagnostics">
+      <div className="auto-diagnostics-heading"><h4>매수 조건 진단</h4><span>최근 조회된 종목 기준 · 서로 겹치는 제외 사유</span></div>
+      <div className="auto-funnel"><div>검사 종목 <strong>{screening.inspected}</strong></div><div>관찰 후보 <strong>{screening.candidates}</strong></div><div>2점 이상 미통과 <strong>{screening.nearMisses}</strong></div><div>평균 점수 <strong>{screening.meanScore === null ? '-' : screening.meanScore.toFixed(1)}</strong></div></div>
+      {screening.inspected > 0 ? <div className="auto-diagnostic-list">{screening.breakdown.map(item => <div key={item.key} className="auto-diagnostic-row"><div><strong>{item.label}</strong><small>{item.description}</small></div><div className="auto-diagnostic-progress"><span style={{ width: (100 * item.count / screening.inspected) + '%' }} /></div><b>{item.count} / {screening.inspected}</b></div>)}</div> : <p className="ai-empty">시장 데이터를 수집하면 제외 조건의 빈도를 볼 수 있어.</p>}
+      <p className="news-query">진단은 지금 화면에 수집된 최대 10종목만 계산해. 여러 검사 회차의 통계와 섞지 않으며, 후보 조건을 자동 완화하지 않아.</p>
+    </section>
+    <section className="auto-diagnostics">
+      <div className="auto-diagnostics-heading"><h4>자동 가상매매 성과 검증</h4><span>전략 자동매도 기록만 · 수동매매 제외</span></div>
+      <div className="auto-funnel">
+        <div>완료 매매 <strong>{performance.closed}건</strong></div>
+        <div>전략 승률 <strong>{performance.winRate === null ? '-' : performance.winRate.toFixed(1) + '%'}</strong></div>
+        <div>평균 실현손익 <strong>{performance.averagePnl === null ? '-' : money(performance.averagePnl)}</strong></div>
+        <div>손익비율(PF) <strong>{performance.profitFactor === null ? '-' : performance.profitFactor.toFixed(2)}</strong></div>
+        <div>전략 실현손익 <strong>{money(performance.netPnl)}</strong></div>
+        <div>관측 최대 낙폭 <strong>{performance.maxDrawdown === null ? '-' : performance.maxDrawdown.toFixed(2) + '%'}</strong></div>
+      </div>
+      <p className="news-query">가상 수수료·세금·슬리피지 추정치를 반영한 전략 청산 기록 기준. 전체 가상잔고 수익률은 수동·자동 거래가 합쳐진 값이므로 전략 성과와 다를 수 있어. 최대 낙폭은 시장 시세 수집 시점만 기록하며, 아직 성과를 검증할 충분한 거래가 쌓이지 않았을 수 있어.</p>
     </section>
     <div className="auto-stats">
       <div><span>가상 총자산</span><strong>{money(currentEquity)}</strong></div>
