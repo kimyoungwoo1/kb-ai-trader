@@ -18,7 +18,9 @@
     "required": [
       "DASHBOARD_API_KEY",
       "KB_APP_KEY",
-      "KB_APP_SECRET"
+      "KB_APP_SECRET",
+      "GEMINI_API_KEY",
+      "DART_API_KEY"
     ]
   }
 }
