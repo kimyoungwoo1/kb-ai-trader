@@ -12,7 +12,7 @@ const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
 const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
-let token = '', accountId = '', switched = false
+let token = '', accountId = '', switched = false, rollbackVersion = ''
 const exec = (program,args,dir=cwd) => execFileSync(program,args,{cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']})
 const ensure = (ok,msg) => { if(!ok) throw Error(msg) }
 const parseJson = text => JSON.parse(text.slice(text.indexOf('{')))
@@ -56,8 +56,15 @@ async function main(){
   }
   // The API accepts the Worker name directly as worker_id. Avoid fetching unrelated account data.
   const workerId=encodeURIComponent(name)
+  const deployments=await api(root+'/workers/scripts/'+name+'/deployments')
+  const sorted=(deployments.deployments||[]).sort((a,b)=>Date.parse(b.created_on)-Date.parse(a.created_on))
+  const active=sorted[0]?.versions?.find(v=>v.percentage===100)
+  ensure(active?.version_id,'현재 운영 버전을 확인할 수 없어 중단했습니다.')
+  rollbackVersion=active.version_id
+  const live=await api(root+'/workers/workers/'+workerId+'/versions/'+rollbackVersion)
+  verifyVersion(live,'현재 운영 버전')
   const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
-  verifyVersion(old,'정상 롤백 버전')
+  verifyVersion(old,'Secret 상속 기준 버전')
   console.log('2/7 테스트 및 프런트엔드 빌드')
   exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs'])
   exec('npm',['run','build'])
@@ -95,7 +102,7 @@ async function main(){
     for(const hash of bucket){
       const f=assets.get(hash)
       ensure(f,'업로드 파일을 찾을 수 없음: '+hash)
-      form.append(hash,new Blob([f.data.toString('base64')],{type:f.type}),hash)
+      form.append(hash,new Blob([f.data.toString('base64')],{type:f.type}))
     }
     const result=await api(root+'/workers/assets/upload?base64=true',{
       method:'POST',body:form,authToken:session.jwt
@@ -141,11 +148,11 @@ try {await main()} catch(e){
     try{
       const r=await fetch('https://api.cloudflare.com/client/v4/accounts/'+accountId+'/workers/scripts/'+name+'/deployments',{
         method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-        body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:knownGood}]})
+        body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:rollbackVersion}]})
       })
       const result=await r.json()
-      console.error(r.ok&&result.success!==false?'정상 버전 복구 요청 성공':'자동 복구 실패 — Cloudflare에서 dafe0360으로 롤백하세요.')
-    }catch{console.error('자동 복구 실패 — Cloudflare에서 dafe0360으로 롤백하세요.')}
+      console.error(r.ok&&result.success!==false?'정상 버전 복구 요청 성공':'자동 복구 실패 — Cloudflare에서 이전 정상 버전으로 롤백하세요.')
+    }catch{console.error('자동 복구 실패 — Cloudflare에서 이전 정상 버전으로 롤백하세요.')}
   }else console.error('운영 트래픽은 변경되지 않았습니다.')
   process.exitCode=1
 }
