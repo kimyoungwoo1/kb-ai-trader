@@ -257,9 +257,23 @@ export default function App() {
       }
       const candidates = discovery.candidates.filter((item: any) => /^\d{6}$/.test(String(item.code)) && !/ETF|ETN|레버리지|인버스/.test(String(item.name)))
       if (!candidates.length) { setMarketDiscoveryInfo('사용 가능한 일반주 후보가 없습니다.'); return }
+      const auto = readAutoAccount()
+      // Always re-quote watched entries and auto positions; otherwise rotating 10-stock batches
+      // never revisit a signal on the next cycle and cannot simulate its trigger/stop.
+      const pinned = [...auto.positions, ...auto.pending]
+        .filter(item => /^\d{6}$/.test(item.code))
+        .filter((item, index, all) => all.findIndex(other => other.code === item.code) === index)
+        .slice(0, 10)
+        .map(item => ({ code: item.code, name: item.name }))
+      const selected = [...pinned]
       const offset = Number(sessionStorage.getItem('kb-market-scan-offset') || '0') || 0
-      const selected = Array.from({ length: Math.min(10, candidates.length) }, (_, index) => candidates[(offset + index) % candidates.length])
-      sessionStorage.setItem('kb-market-scan-offset', String((offset + selected.length) % candidates.length))
+      let traversed = 0
+      while (selected.length < 10 && traversed < candidates.length) {
+        const item = candidates[(offset + traversed) % candidates.length]
+        if (!selected.some(stock => stock.code === item.code)) selected.push({ code: item.code, name: item.name })
+        traversed++
+      }
+      sessionStorage.setItem('kb-market-scan-offset', String((offset + traversed) % candidates.length))
       const response = await fetch(API + '/api/market/investor-flow', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ stocks: selected.map((item: any) => ({ code: item.code, name: item.name })) }),
@@ -273,7 +287,7 @@ export default function App() {
       setMarketCheckedAt(result.checked_at || '')
       setSignalSnapshot([])
       setSignalCheckedAt('')
-      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + selected.length + '종목 · 다음 자동 실행에서 다른 후보 종목 검사 · ' + (discovery.diagnostics || []).join(' / '))
+      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + selected.length + '종목(보유·감시 ' + pinned.length + '종목 포함) · 다음 자동 실행에서 다른 후보 종목 검사 · ' + (discovery.diagnostics || []).join(' / '))
       setMarketDataMessage('공개 시장 수급 기반 후보 정밀 검사 완료 · ' + selected.length + '종목 · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
     } catch (error) {
       setMarketDiscoveryInfo('전체시장 수급 또는 KB API 연결 오류: ' + (error instanceof Error ? error.message : '요청 실패'))
