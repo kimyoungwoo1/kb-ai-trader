@@ -556,8 +556,11 @@ export default {
             || ![f1, f5, i5].every(Number.isFinite)) continue;
           rows.push({ code, name, market, close, f1, f5, i5 });
         }
-        if (rows.length < 1500) return json({
-          success: false, message: "전체시장 자료에서 유효 종목이 충분히 추출되지 않았습니다.", diagnostics: ["유효 종목 " + rows.length],
+        // This licensed dataset covers a subset of listed shares; do not require an invented 1,500-stock universe.
+        // Still reject malformed or severely incomplete snapshots.
+        if (rows.length < 1000) return json({
+          success: false, message: "수급 데이터의 유효 종목이 1,000개 미만이라 후보 탐색을 중단합니다.",
+          diagnostics: ["유효 종목 " + rows.length, "자료 기준일 " + asOf],
         }, 502);
         const found = new Map<string, { code: string; name: string; rankSource: string }>();
         const add = (array: Row[], label: string, count: number) => {
@@ -569,13 +572,13 @@ export default {
         add([...rows].sort((a, b) => b.i5 - a.i5), "기관 5일 순매수", 30);
         add([...rows].sort((a, b) => b.f1 - a.f1), "외국인 1일 순매수", 30);
         const candidates = [...found.values()].slice(0, 80);
-        diagnostics.push("전체 유효 종목 " + rows.length, "수급 자료 기준일 " + asOf, "후보 " + candidates.length);
+        diagnostics.push("공개 자료 내 유효 종목 " + rows.length, "수급 자료 기준일 " + asOf, "후보 " + candidates.length);
         return json({
           success: true, candidates, count: candidates.length, universe_count: rows.length, checked_at: new Date().toISOString(),
           market_as_of: asOf,
           source: "K-Export Stars / korea-market-data (CC BY 4.0), derived from KIS and KRX",
           source_url: "https://github.com/james-brand/korea-market-data",
-          coverage: "코스피·코스닥 약 " + rows.length + "개 일반주 전체 수급 집계 → 상위 " + candidates.length + "개 후보 / KB증권 실시간에 가까운 시세 별도 검증",
+          coverage: "공개 수급 데이터에 포함된 코스피·코스닥 " + rows.length + "종목(전 상장종목 아님) → 수급 기준 " + candidates.length + "개 후보 / KB증권 시세 별도 검증",
           diagnostics,
         });
       } catch (error) {
