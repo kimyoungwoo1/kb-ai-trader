@@ -3,6 +3,7 @@ import { PAPER_EVENT, ledgerEquity, readPaperLedger } from './paperLedger'
 import { AUTO_EVENT, newAutoAccount, readAutoAccount, writeAutoAccount, type AutoAccount } from './autoPaper'
 import type { TradeSignal } from './tradeSignals'
 import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
+import { getAutoHealth, todayActivity } from './autoStatus'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -12,15 +13,23 @@ const formatTime = (value?: string) => {
 }
 
 export default function AutoPaperLab({
-  signals, checkedAt, onStart,
+  signals, checkedAt, onStart, scanLoading = false, scanMessage = '',
 }: {
   signals: TradeSignal[]
   checkedAt: string
   onStart?: () => void
+  scanLoading?: boolean
+  scanMessage?: string
 }) {
   const [account, setAccount] = useState<AutoAccount>(readAutoAccount)
   const [ledger, setLedger] = useState(readPaperLedger)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [clock, setClock] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const sync = () => {
@@ -45,6 +54,9 @@ export default function AutoPaperLab({
   const lastRun = (account.runs || [])[0]
   const autoOwned = new Set(account.positions.map(item => item.code))
   const runCount = (account.runs || []).filter(item => item.status === '검사 완료').length
+  const health = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
+  const activity = todayActivity(account, new Date(clock))
+  const lastCompleted = (account.runs || []).find(item => item.status === '검사 완료')
 
   function toggle() {
     const enabled = !account.enabled
@@ -70,14 +82,30 @@ export default function AutoPaperLab({
           <p>현재 가상계좌의 자산과 거래 결과를 한눈에 확인하세요.</p>
         </div>
         <div className="auto-hero-actions">
-          <span className={'auto-state ' + (account.enabled ? 'auto-state-on' : 'auto-state-off')}>
+          <span role="status" aria-live="polite" className={'auto-state auto-state-' + health.tone}>
             <span className="auto-state-dot" />
-            {account.enabled ? '자동 검사 활성화' : '자동 검사 중지'}
+            {health.label}
           </span>
+          {account.enabled && health.inSession && <button type="button" className="outline-button" onClick={onStart} disabled={scanLoading || !onStart}>
+            {scanLoading ? '조회 중...' : '지금 검사'}
+          </button>}
           <button type="button" className="outline-button" onClick={toggle}>
             {account.enabled ? '자동매매 중지' : '자동매매 시작'}
           </button>
         </div>
+      </div>
+      <div className={'auto-health-panel auto-health-' + health.tone} role="status">
+        <div className="auto-health-copy">
+          <strong>{health.label}</strong>
+          <span>{health.detail}</span>
+        </div>
+        <span className="auto-health-frequency">정규장 · 약 5분 간격</span>
+      </div>
+      <div className="auto-health-grid">
+        <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
+        <div><span>오늘 검사 횟수</span><strong>{activity.checked.toLocaleString('ko-KR')}회</strong><small>완료 {activity.completed}회 · 보류 {activity.deferred}회{activity.partialHistory ? ' · 이전 기록 일부만 집계' : ''}</small></div>
+        <div><span>오늘 자동 체결</span><strong>{activity.filled.toLocaleString('ko-KR')}건</strong><small>모의 매수·매도 합계</small></div>
+        <div><span>최근 전략 판단</span><strong>{lastRun ? lastRun.status : '아직 없음'}</strong><small>{lastRun ? formatTime(lastRun.processedAt) : '첫 검사 후 기록됩니다'}</small></div>
       </div>
       <div className="auto-overview-grid">
         <article className="auto-overview-card auto-overview-primary">
@@ -99,8 +127,8 @@ export default function AutoPaperLab({
         </article>
       </div>
       <div className="auto-activity-line">
-        <span>{account.enabled ? '장중 새 시세를 5분 간격으로 검사합니다.' : '자동 실행이 중지되어 있습니다.'}</span>
-        <span>최근 검사 {lastRun ? formatTime(lastRun.processedAt) : '아직 없음'}</span>
+        <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
+        <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
       <p className="auto-operation-note">현재 자동 검사는 로그인한 브라우저가 열려 있을 때만 실행됩니다. 브라우저를 닫아도 실행되는 서버 자동매매는 아직 제공하지 않습니다. 실계좌 주문은 실행되지 않습니다.</p>
     </div>
