@@ -23,7 +23,7 @@ export default function PaperTrading({ token }: { token: string }) {
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('1')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
-  const [notice, setNotice] = useState('가상 계좌가 준비되었습니다. 실제 시세 API 연결 전까지 기준 가격은 직접 입력해야 합니다.')
+  const [notice, setNotice] = useState('가상 계좌가 준비되었습니다. 보유 종목 시세는 KB 현재가로 자동 갱신됩니다.')
   const [confirmReset, setConfirmReset] = useState(false)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteInfo, setQuoteInfo] = useState('종목명을 입력해 검색하세요.')
@@ -225,7 +225,7 @@ export default function PaperTrading({ token }: { token: string }) {
     <div className="stats-grid">
       <article className="stat-card"><div className="stat-top">가상 총자산</div><div className="stat-value">{won(total)}</div><div className="stat-foot">가상 예수금 + 보유 평가금액</div></article>
       <article className="stat-card"><div className="stat-top">가상 예수금</div><div className="stat-value">{won(account.cash)}</div><div className="stat-foot">가상 주문에 사용할 수 있는 금액</div></article>
-      <article className="stat-card"><div className="stat-top">보유 평가금액</div><div className="stat-value">{won(valuation)}</div><div className="stat-foot">마지막 입력 기준 가격</div></article>
+      <article className="stat-card"><div className="stat-top">보유 평가금액</div><div className="stat-value">{won(valuation)}</div><div className="stat-foot">KB 현재가 자동 갱신</div></article>
       <article className="stat-card"><div className="stat-top">평가손익</div><div className={'stat-value ' + (pnl < 0 ? 'negative-value' : 'positive-value')}>{pnl > 0 ? '+' : ''}{won(pnl)}</div><div className="stat-foot">매입 평균가 대비 평가손익 · 비용 미반영</div></article>
       <article className="stat-card"><div className="stat-top">실현손익</div><div className={'stat-value ' + (realizedPnl < 0 ? 'negative-value' : 'positive-value')}>{realizedPnl > 0 ? '+' : ''}{won(realizedPnl)}</div><div className="stat-foot">매도 체결로 확정된 손익</div></article>
       <article className="stat-card"><div className="stat-top">누적손익</div><div className={'stat-value ' + (totalPnl < 0 ? 'negative-value' : 'positive-value')}>{totalPnl > 0 ? '+' : ''}{won(totalPnl)}</div><div className="stat-foot">평가손익 + 실현손익 · 비용 미반영</div></article>
@@ -248,7 +248,7 @@ export default function PaperTrading({ token }: { token: string }) {
         </form>
       </section>
       <section className="panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>VIRTUAL POSITIONS</span><p className="paper-quote-info">{positionQuoteInfo}{lastPositionRefresh ? ' · 마지막 갱신 ' + lastPositionRefresh : ''}</p></div><button type="button" className="outline-button" onClick={() => void refreshPositionQuotes(false)} disabled={refreshingPositions || !account.positions.length}>{refreshingPositions ? '갱신 중...' : '현재가 일괄 갱신'}</button></div>
-        {account.positions.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>종목</th><th>수량</th><th>평균 매수가</th><th>평가 기준가 수정</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{account.positions.map(p => { const positionPnl = (p.lastPrice - p.averagePrice) * p.quantity; const cost = p.averagePrice * p.quantity; const rate = cost ? positionPnl / cost * 100 : 0; return <tr key={p.code}><td>{p.name}<small>{p.code}</small></td><td>{p.quantity.toLocaleString()}주</td><td>{Math.round(p.averagePrice).toLocaleString()}원</td><td><input aria-label={p.name + ' 평가 기준 가격'} type="number" min="1" defaultValue={p.lastPrice} onBlur={e => updateMark(p, e.target.value)} /></td><td>{won(p.lastPrice * p.quantity)}</td><td className={positionPnl >= 0 ? 'positive-value' : 'negative-value'}>{positionPnl > 0 ? '+' : ''}{won(positionPnl)}</td><td className={rate >= 0 ? 'positive-value' : 'negative-value'}>{rate > 0 ? '+' : ''}{rate.toFixed(2)}%</td></tr> })}</tbody></table></div> : <div className="ai-empty">아직 보유한 가상 종목이 없습니다. 왼쪽에서 가상 매수 주문을 입력하세요.</div>}
+        {account.positions.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>종목</th><th>수량</th><th>평균 매수가</th><th>평가 기준가 · 수동 수정 가능</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{account.positions.map(p => { const positionPnl = (p.lastPrice - p.averagePrice) * p.quantity; const cost = p.averagePrice * p.quantity; const rate = cost ? positionPnl / cost * 100 : 0; return <tr key={p.code}><td>{p.name}<small>{p.code}</small></td><td>{p.quantity.toLocaleString()}주</td><td>{Math.round(p.averagePrice).toLocaleString()}원</td><td><input aria-label={p.name + ' 평가 기준 가격'} type="number" min="1" defaultValue={p.lastPrice} onBlur={e => updateMark(p, e.target.value)} /></td><td>{won(p.lastPrice * p.quantity)}</td><td className={positionPnl >= 0 ? 'positive-value' : 'negative-value'}>{positionPnl > 0 ? '+' : ''}{won(positionPnl)}</td><td className={rate >= 0 ? 'positive-value' : 'negative-value'}>{rate > 0 ? '+' : ''}{rate.toFixed(2)}%</td></tr> })}</tbody></table></div> : <div className="ai-empty">아직 보유한 가상 종목이 없습니다. 왼쪽에서 가상 매수 주문을 입력하세요.</div>}
       </section>
     </div>
     <section className="panel"><div className="panel-heading"><div><h3>가상 체결 내역</h3><span>SIMULATED EXECUTIONS · {account.trades.length}건</span></div></div>
