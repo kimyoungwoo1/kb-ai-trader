@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PAPER_EVENT, ledgerEquity, readPaperLedger } from './paperLedger'
-import { AUTO_EVENT, autoStats, newAutoAccount, readAutoAccount, writeAutoAccount, type AutoAccount } from './autoPaper'
+import { AUTO_EVENT, newAutoAccount, readAutoAccount, writeAutoAccount, type AutoAccount } from './autoPaper'
 import type { TradeSignal } from './tradeSignals'
 import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
 
@@ -37,7 +37,7 @@ export default function AutoPaperLab({
     }
   }, [])
 
-  const metrics = useMemo(() => autoStats(account), [account])
+  const realizedPnl = useMemo(() => ledger.trades.reduce((sum, trade) => sum + (trade.realizedPnl || 0), 0), [ledger.trades])
   const screening = useMemo(() => analyzeSignals(signals), [signals])
   const performance = useMemo(() => analyzePerformance(account, ledger), [account, ledger])
   const currentEquity = ledgerEquity(ledger)
@@ -166,7 +166,7 @@ export default function AutoPaperLab({
             <div>승률 <strong>{performance.winRate === null ? '-' : performance.winRate.toFixed(1) + '%'}</strong></div>
             <div>전략 실현손익 <strong>{money(performance.netPnl)}</strong></div>
             <div>최대 낙폭 <strong>{performance.maxDrawdown === null ? '-' : performance.maxDrawdown.toFixed(2) + '%'}</strong></div>
-            <div>전체 계좌 실현손익 <strong>{money(metrics.realized)}</strong></div>
+            <div>전체 계좌 실현손익 <strong>{money(realizedPnl)}</strong></div>
           </div>
         </section>
         <section className="auto-run-log"><h4>최근 검사 실행 기록</h4>
