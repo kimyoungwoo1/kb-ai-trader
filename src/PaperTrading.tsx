@@ -1,20 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { PAPER_EVENT, freshLedger, readPaperLedger, writePaperLedger, type PaperLedger } from './paperLedger'
 
-type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number; quoteUpdatedAt?: string }
-type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number; realizedPnl?: number }
-type PaperState = { cash: number; positions: Position[]; trades: Trade[] }
+type Position = PaperLedger['positions'][number]
+type Trade = PaperLedger['trades'][number]
+type PaperState = PaperLedger
 const INITIAL_CASH = 1_000_000
-const STORAGE_KEY = 'kb-ai-trader-paper-v1'
-const emptyState: PaperState = { cash: INITIAL_CASH, positions: [], trades: [] }
+const emptyState: PaperState = freshLedger()
 const won = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
-
-function readState(): PaperState {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as PaperState | null
-    if (parsed && Number.isFinite(parsed.cash) && Array.isArray(parsed.positions) && Array.isArray(parsed.trades)) return parsed
-  } catch { /* use fresh account */ }
-  return emptyState
-}
+const readState = readPaperLedger
 
 export default function PaperTrading({ token }: { token: string }) {
   const [account, setAccount] = useState<PaperState>(readState)
@@ -44,7 +37,13 @@ export default function PaperTrading({ token }: { token: string }) {
   const pnl = valuation - invested
   const realizedPnl = useMemo(() => account.trades.reduce((sum, trade) => sum + (trade.realizedPnl || 0), 0), [account.trades])
   const totalPnl = pnl + realizedPnl
-  const persist = (next: PaperState) => { setAccount(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) }
+  const persist = (next: PaperState) => { setAccount(next); writePaperLedger(next) }
+  useEffect(() => {
+    const update = () => setAccount(readPaperLedger())
+    window.addEventListener(PAPER_EVENT, update)
+    window.addEventListener('storage', update)
+    return () => { window.removeEventListener(PAPER_EVENT, update); window.removeEventListener('storage', update) }
+  }, [])
 
   const refreshPositionQuotes = useCallback(async (silent = false) => {
     const snapshot = positionsRef.current
@@ -83,7 +82,7 @@ export default function PaperTrading({ token }: { token: string }) {
               return quote ? { ...position, lastPrice: quote.price, quoteUpdatedAt: quote.checkedAt } : position
             }),
           }
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+          writePaperLedger(next)
           return next
         })
       }
