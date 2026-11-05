@@ -130,5 +130,5 @@ export function generateTradeSignals(stocks: SignalInput[], maxPositionWon = 200
     if (entryTrigger !== null && maxQuantity === 0) reasons.push('종목당 20만원 한도에서 1주 매수 불가')
     return { code: stock.code, name: stock.name, status, score, price, volumeRatio, volumePaceEstimate,
       foreignToday, foreignPositiveDays, flowReliable, entryTrigger, stopReference, maxQuantity, reasons }
-  }).sort((a, b) => b.score - a.score).slice(0, 10)
+  }).sort((a, b) => b.score - a.score)
 }
