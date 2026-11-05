@@ -26,10 +26,14 @@ export type AutoRun = {
   scanned: number; candidates: number; filled: number; message: string
   decisions: { code: string; name: string; status: string; reason: string }[]
 }
+export type AutoDailyStats = {
+  date: string; checked: number; completed: number; deferred: number; filled: number
+}
 export type AutoAccount = {
   enabled: boolean; cash: number; positions: AutoPosition[]; pending: AutoPending[]
   fills: AutoFill[]; equityHistory: { at: string; value: number }[]
   lastCycle: string; lastMessage: string; runs: AutoRun[]
+  dailyStats?: AutoDailyStats
 }
 export const newAutoAccount = (): AutoAccount => ({
   enabled: false, cash: AUTO_INITIAL, positions: [], pending: [], fills: [],
@@ -62,6 +66,30 @@ export function autoStats(account: AutoAccount) {
   return { equity, realized, closed: sells.length, winRate: sells.length ? winners / sells.length * 100 : null,
     returnRate: (equity / AUTO_INITIAL - 1) * 100, maxDrawdown }
 }
+function dailyStatsAfterRun(account: AutoAccount, status: AutoRun['status'], filled: number, now: Date): AutoDailyStats {
+  const date = kstDate(now)
+  const previous = account.dailyStats?.date === date ? account.dailyStats : (() => {
+    // Preserve counts available from older localStorage accounts during migration.
+    const records = (account.runs || []).filter(item => {
+      const parsed = new Date(item.processedAt)
+      return Number.isFinite(parsed.getTime()) && kstDate(parsed) === date
+    })
+    return {
+      date,
+      checked: records.length,
+      completed: records.filter(item => item.status === '검사 완료').length,
+      deferred: records.filter(item => item.status === '실행 보류').length,
+      filled: records.reduce((total, item) => total + item.filled, 0),
+    }
+  })()
+  return {
+    date, checked: previous.checked + 1,
+    completed: previous.completed + (status === '검사 완료' ? 1 : 0),
+    deferred: previous.deferred + (status === '실행 보류' ? 1 : 0),
+    filled: previous.filled + filled,
+  }
+}
+
 export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quotes: {
   code: string; name: string; price: number | null; quoteError?: string
 }[], checkedAt: string, now = new Date()): AutoAccount {
@@ -82,6 +110,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
       candidates, filled, message, decisions,
     }
     return { ...account, lastCycle: checkedAt, lastMessage: message,
+      dailyStats: dailyStatsAfterRun(account, status, filled, now),
       runs: [run, ...(account.runs || [])].slice(0, 30) }
   }
   if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > 5 * 60000) {
@@ -186,7 +215,9 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     scanned: signals.length, candidates, filled: executed, message: summary, decisions }
   return { ...account, cash, positions, pending, fills: fills.slice(0, 1000),
     equityHistory: [...account.equityHistory, { at: checkedAt, value: equity }].slice(-1000),
-    lastCycle: checkedAt, lastMessage: summary, runs: [run, ...(account.runs || [])].slice(0, 30) }
+    lastCycle: checkedAt, lastMessage: summary,
+    dailyStats: dailyStatsAfterRun(account, '검사 완료', executed, now),
+    runs: [run, ...(account.runs || [])].slice(0, 30) }
 }
 export function readAutoAccount(): AutoAccount {
   try {
