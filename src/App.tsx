@@ -45,7 +45,7 @@ export default function App() {
   const [marketAnalysis, setMarketAnalysis] = useState('')
   const [marketStocks, setMarketStocks] = useState<MarketStock[]>([])
   const [marketCheckedAt, setMarketCheckedAt] = useState('')
-  const [marketDiscoveryInfo, setMarketDiscoveryInfo] = useState('시장 전체 탐색 전 · 코스피·코스닥 전 종목의 전일 마감 수급에서 후보를 선별합니다.')
+  const [marketDiscoveryInfo, setMarketDiscoveryInfo] = useState('수급 후보 탐색 전 · 코스피·코스닥 공개 데이터에 포함된 종목을 대상으로 선별합니다(전체 상장종목 전수 아님).')
   const marketScanRef = useRef(false)
   const marketScanRunner = useRef<() => Promise<void>>(async () => {})
   const [signalSnapshot, setSignalSnapshot] = useState<ReturnType<typeof generateTradeSignals>>([])
@@ -243,7 +243,7 @@ export default function App() {
     if (marketScanRef.current) return
     marketScanRef.current = true
     setMarketDataLoading(true)
-    setMarketDataMessage('코스피·코스닥 전체 종목 수급에서 후보를 선정하고 KB증권 시세로 검증 중...')
+    setMarketDataMessage('코스피·코스닥 공개 수급 데이터에서 후보를 선정하고 KB증권 시세로 검증 중...')
     try {
       const discoveryResponse = await fetch(API + '/api/market/discover', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
@@ -273,8 +273,8 @@ export default function App() {
       setMarketCheckedAt(result.checked_at || '')
       setSignalSnapshot([])
       setSignalCheckedAt('')
-      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 전체 검토 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + selected.length + '종목 · 다음 자동 실행에서 다른 후보 종목 검사 · ' + (discovery.diagnostics || []).join(' / '))
-      setMarketDataMessage('전체시장 수급 기반 후보 정밀 검사 완료 · ' + selected.length + '종목 · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
+      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + selected.length + '종목 · 다음 자동 실행에서 다른 후보 종목 검사 · ' + (discovery.diagnostics || []).join(' / '))
+      setMarketDataMessage('공개 시장 수급 기반 후보 정밀 검사 완료 · ' + selected.length + '종목 · ' + new Date(result.checked_at).toLocaleString('ko-KR'))
     } catch (error) {
       setMarketDiscoveryInfo('전체시장 수급 또는 KB API 연결 오류: ' + (error instanceof Error ? error.message : '요청 실패'))
       setMarketDataMessage('전체시장 수급 후보 탐색 실패 · 기존 데이터 유지')
