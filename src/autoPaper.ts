@@ -91,7 +91,11 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const ledgerPositions = ledger.positions.map(p => ({ ...p }))
   const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
   let cash = ledger.cash
-  let positions = account.positions.map(p => ({ ...p }))
+  // A manual sale/reset may have removed an automated position. Never sell phantom shares.
+  let positions = account.positions.filter(p => {
+    const shared = ledgerPositions.find(item => item.code === p.code)
+    return shared && shared.quantity >= p.quantity
+  }).map(p => ({ ...p }))
   let pending = account.pending.map(p => ({ ...p }))
   const fills = [...account.fills]
   const currentDate = kstDate(now)
@@ -135,7 +139,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   }
   // Require a *later* quote to cross the watch trigger. Never fill using the creating snapshot.
   for (const item of [...pending]) {
-    if (positions.length >= MAX_POSITIONS || sessionPnl <= -MAX_DAILY_LOSS) break
+    if (ledgerPositions.length >= MAX_POSITIONS || sessionPnl <= -MAX_DAILY_LOSS) break
     if (new Date(item.createdAt).getTime() >= checked.getTime()) continue
     if (alreadyTradedToday.has(item.code)) continue
     const mark = quoteMap.get(item.code)
