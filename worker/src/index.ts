@@ -514,12 +514,12 @@ export default {
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const stocks = (Array.isArray(input.stocks) ? input.stocks : [])
         .map(item => ({ code: String(item.code || "").trim(), name: String(item.name || "").trim() }))
-        .filter(item => /^\\d{6}$/.test(item.code))
+        .filter(item => /^\d{6}$/.test(item.code))
         .filter((item, index, all) => all.findIndex(other => other.code === item.code) === index)
         .slice(0, 10);
       if (!stocks.length) return json({ success: false, message: "종목코드 6자리인 보유 종목 또는 관심 종목을 1개 이상 전달해 주세요." }, 400);
 
-      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
         tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
