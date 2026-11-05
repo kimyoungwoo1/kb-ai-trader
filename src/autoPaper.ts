@@ -2,6 +2,7 @@ import type { TradeSignal } from './tradeSignals'
 import { readPaperLedger, writePaperLedger, type PaperTrade } from './paperLedger'
 
 export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
+export const AUTO_EVENT = 'kb-auto-account-changed'
 export const AUTO_INITIAL = 1_000_000
 const MAX_POSITION = 200_000
 const MAX_POSITIONS = 3
@@ -193,4 +194,10 @@ export function readAutoAccount(): AutoAccount {
     if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved, runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
   } catch { /* ignore invalid local data */ }
   return newAutoAccount()
+}
+
+/** Notify other parts of the same browser tab when an automatic paper cycle changes. */
+export function writeAutoAccount(next: AutoAccount): void {
+  localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next))
+  window.dispatchEvent(new CustomEvent(AUTO_EVENT))
 }
