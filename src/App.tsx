@@ -3,7 +3,8 @@ import './styles.css'
 import PaperTrading from './PaperTrading'
 import { generateTradeSignals } from './tradeSignals'
 import AutoPaperLab from './AutoPaperLab'
-import { readAutoAccount, runAutoCycle, writeAutoAccount } from './autoPaper'
+import { AUTO_EVENT, readAutoAccount, runAutoCycle, writeAutoAccount } from './autoPaper'
+import { getAutoHealth } from './autoStatus'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -65,6 +66,18 @@ export default function App() {
   const [disclosureMessage, setDisclosureMessage] = useState('공시 조회 전 · OpenDART 무료 인증키 필요')
   const [watchlistText, setWatchlistText] = useState(() => localStorage.getItem('kb-trader-watchlist') || '')
   const [activePage, setActivePage] = useState<'dashboard' | 'auto' | 'news' | 'paper'>('dashboard')
+  const [autoHeartbeat, setAutoHeartbeat] = useState(() => Date.now())
+  useEffect(() => {
+    const refreshStatus = () => setAutoHeartbeat(Date.now())
+    window.addEventListener(AUTO_EVENT, refreshStatus)
+    window.addEventListener('storage', refreshStatus)
+    const timer = window.setInterval(refreshStatus, 30_000)
+    return () => {
+      window.removeEventListener(AUTO_EVENT, refreshStatus)
+      window.removeEventListener('storage', refreshStatus)
+      window.clearInterval(timer)
+    }
+  }, [])
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError('')
@@ -420,10 +433,18 @@ export default function App() {
 
   function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null); setAccountSummary(null) }
 
+  const autoHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
+
   if (!token) return <main className="login-page"><form className="login-card" onSubmit={login}><div className="brand-mark">KB</div><h1>KB AI TRADER</h1><p>대시보드 비밀번호로 로그인하세요.</p><input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="대시보드 비밀번호" required /><button type="submit">로그인</button>{error && <p className="error">{error}</p>}</form></main>
 
   return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">KB</div><div><strong>KB AI TRADER</strong><span>SWING TERMINAL</span></div></div><nav className="nav-list"><button className={'nav-item ' + (activePage === 'dashboard' ? 'active' : '')} onClick={() => setActivePage('dashboard')}>계좌 대시보드</button><button className={'nav-item ' + (activePage === 'auto' ? 'active' : '')} onClick={() => setActivePage('auto')}>자동 가상매매</button><button className={'nav-item ' + (activePage === 'news' ? 'active' : '')} onClick={() => setActivePage('news')}>시장 뉴스</button><div className="nav-item">보유 종목</div><button className={'nav-item ' + (activePage === 'paper' ? 'active' : '')} onClick={() => setActivePage('paper')}>가상 트레이딩</button></nav><div className="sidebar-bottom"><div className="security-card">안전 모드 · 실주문 비활성화</div><button className="nav-item" onClick={logout}>로그아웃</button></div></aside>
-    <main className="main"><header className="topbar"><div className="breadcrumbs">WORKSPACE / <b>{activePage === 'dashboard' ? '계좌 현황' : activePage === 'news' ? '시장 뉴스' : activePage === 'auto' ? '자동 가상매매' : '가상 트레이딩'}</b></div><div className="connection">KB증권 계좌 연동</div></header><div className="content">{activePage === 'dashboard' && <section className="page-heading"><div><div className="eyebrow">PERSONAL TRADING SPACE</div><h1>계좌 현황</h1><p>KB증권 실계좌 보유 종목 조회</p></div><button className="outline-button" onClick={refresh} disabled={loading}>{loading ? '조회 중...' : '계좌 새로고침'}</button></section>}
+    <main className="main"><header className="topbar"><div className="breadcrumbs">WORKSPACE / <b>{activePage === 'dashboard' ? '계좌 현황' : activePage === 'news' ? '시장 뉴스' : activePage === 'auto' ? '자동 가상매매' : '가상 트레이딩'}</b></div><div className="top-actions">
+      <button type="button" className={'auto-global-status auto-global-status-' + autoHealth.tone}
+        onClick={() => setActivePage('auto')} title={autoHealth.detail}>
+        <span className="auto-state-dot" /> 자동 가상매매 · {autoHealth.label}
+      </button>
+      <div className="connection">KB증권 계좌 연동</div>
+    </div></header><div className="content">{activePage === 'dashboard' && <section className="page-heading"><div><div className="eyebrow">PERSONAL TRADING SPACE</div><h1>계좌 현황</h1><p>KB증권 실계좌 보유 종목 조회</p></div><button className="outline-button" onClick={refresh} disabled={loading}>{loading ? '조회 중...' : '계좌 새로고침'}</button></section>}
       {activePage === 'paper' ? <PaperTrading token={token} /> : activePage === 'auto'
         ? <AutoPaperLab
             signals={generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
