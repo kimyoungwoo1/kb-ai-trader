@@ -508,67 +508,56 @@ export default {
     }
 
     if (url.pathname === "/api/market/discover" && request.method === "POST") {
-      // Public market ranking sources are unofficial: validate every response, and fail closed.
-      const selections = [
-        { label: "거래대금 상위", listingType: "tradingValueDesc", orderType: "priceTop" },
-        { label: "상승률 상위", listingType: "changeRateDescUpAll", orderType: "up" },
+      // Officially accessible public web pages provide a broad *volume ranking*, not a whole-market scan.
+      // Do not trust page quotes for simulated orders; the KB quote endpoint verifies each selected stock.
+      const pages = [
+        { label: "코스피 거래량 상위", sosok: "0" },
+        { label: "코스닥 거래량 상위", sosok: "1" },
       ];
       const found = new Map<string, { code: string; name: string; rankSource: string }>();
       const diagnostics: string[] = [];
-      const extract = (value: any): any[] => {
-        for (const list of [
-          value?.items, value?.data?.items, value?.result?.items,
-          value?.result?.data?.items, value?.stocks, value?.data?.stocks,
-          value?.result?.stocks, value?.result?.data,
-          value?.result, value?.data,
-        ]) if (Array.isArray(list)) return list;
-        return [];
-      };
-      for (const selection of selections) {
-        const attempts = [
-          // V3 domestic listing (documented with exchangeType=consolidated).
-          "https://m.stock.naver.com/api/stockSecurity/individual-stocks/v3/domestic?listingType="
-            + selection.listingType + "&exchangeType=consolidated&index=0&size=20",
-          // Legacy market listing, separate known orderType names.
-          "https://m.stock.naver.com/api/domestic/market/stock/default?tradeType=KRX&marketType=ALL&orderType="
-            + selection.orderType + "&startIdx=0&pageSize=20",
-        ];
-        let matched = 0;
-        for (let attempt = 0; attempt < attempts.length; attempt++) {
-          try {
-            const response = await fetch(attempts[attempt], {
-              headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0", Referer: "https://m.stock.naver.com/" },
-              signal: AbortSignal.timeout(12000),
-            });
-            if (!response.ok) {
-              diagnostics.push(selection.label + " 경로" + (attempt + 1) + " HTTP " + response.status);
-              continue;
-            }
-            const payload = await response.json() as any;
-            const items = extract(payload);
-            diagnostics.push(selection.label + " 경로" + (attempt + 1) + " 항목 " + items.length);
-            for (const item of items) {
-              const rawCode = String(item?.itemCode ?? item?.code ?? item?.stockCode ?? item?.symbolCode ?? item?.stock?.code ?? "").trim().replace(/^A(?=\d{6}$)/, "");
-              const name = String(item?.stockName ?? item?.itemName ?? item?.name ?? item?.korName ?? item?.stock?.name ?? "").trim();
-              if (!/^\d{6}$/.test(rawCode) || !name) continue;
-              if (!found.has(rawCode)) found.set(rawCode, { code: rawCode, name, rankSource: selection.label });
-              matched++;
-            }
-            if (matched > 0) break;
-            diagnostics.push(selection.label + " 경로" + (attempt + 1) + " 응답키: " + Object.keys(payload || {}).slice(0, 12).join(","));
-          } catch (error) {
-            diagnostics.push(selection.label + " 경로" + (attempt + 1) + ": " + (error instanceof Error ? error.message.slice(0, 100) : "조회 실패"));
+      const decode = (name: string) => name.replace(/&amp;/g, "&").replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+        .replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, "").trim();
+      for (const page of pages) {
+        const url = "https://finance.naver.com/sise/sise_quant.naver?sosok=" + page.sosok;
+        try {
+          const response = await fetch(url, {
+            headers: { Accept: "text/html", "User-Agent": "Mozilla/5.0", Referer: "https://finance.naver.com/" },
+            signal: AbortSignal.timeout(12000),
+          });
+          if (!response.ok) { diagnostics.push(page.label + " HTTP " + response.status); continue; }
+          const html = await response.text();
+          if (!html.includes("item/main.naver?code=") && !html.includes("item/main.naver?code&#61;")) {
+            diagnostics.push(page.label + " 종목 링크 없음 · 차단/페이지 변경 가능성");
+            continue;
           }
+          let parsed = 0;
+          const rows = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi) || [];
+          for (const row of rows) {
+            const match = row.match(/<a\b[^>]*href=["'][^"']*\/item\/main\.naver\?code=(\d{6})[^"']*["'][^>]*>([\s\S]*?)<\/a>/i);
+            if (!match) continue;
+            const code = match[1];
+            const name = decode(match[2]);
+            if (!name || /KODEX|TIGER|ACE |SOL |RISE |PLUS |ETF|ETN|레버리지|인버스|선물/i.test(name)) continue;
+            if (!found.has(code)) found.set(code, { code, name, rankSource: page.label });
+            parsed++;
+          }
+          diagnostics.push(page.label + ": " + parsed + "개 일반주 후보");
+        } catch (error) {
+          diagnostics.push(page.label + ": " + (error instanceof Error ? error.message.slice(0, 120) : "연결 실패"));
         }
       }
       const candidates = [...found.values()].slice(0, 80);
       if (!candidates.length) return json({
-        success: false, message: "시장 순위 API에서 유효한 종목을 가져오지 못했습니다. 현재 시세 데이터는 유지합니다.", diagnostics,
+        success: false,
+        message: "코스피·코스닥 거래량 상위 페이지에서 일반주 후보를 얻지 못했습니다. 기존 시세는 유지합니다.",
+        diagnostics,
       }, 502);
       return json({
         success: true, candidates, count: candidates.length, checked_at: new Date().toISOString(),
-        source: "Naver Finance 국내 주식 공개 순위 데이터",
-        coverage: "시장 전체 전수검사가 아니라 공개 순위의 일부 상위 종목을 탐색",
+        source: "네이버페이 증권 코스피·코스닥 거래량 상위 공개 페이지",
+        coverage: "코스피·코스닥 거래량 상위 일반주 후보 탐색(전체 상장종목 전수검사 아님, 페이지의 갱신시각 미검증)",
         diagnostics,
       });
     }
