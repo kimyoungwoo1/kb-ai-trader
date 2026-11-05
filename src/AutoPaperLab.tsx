@@ -68,8 +68,18 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
       <div className="auto-diagnostics-heading"><h4>매수 조건 진단</h4><span>최근 조회된 종목 기준 · 서로 겹치는 제외 사유</span></div>
       <div className="auto-funnel"><div>검사 종목 <strong>{screening.inspected}</strong></div><div>관찰 후보 <strong>{screening.candidates}</strong></div><div>4점 이상 미통과 <strong>{screening.nearMisses}</strong></div><div>평균 점수 <strong>{screening.meanScore === null ? '-' : screening.meanScore.toFixed(1)}</strong></div></div>
       {screening.inspected > 0 ? <div className="auto-diagnostic-list">{screening.breakdown.map(item => <div key={item.key} className="auto-diagnostic-row"><div><strong>{item.label}</strong><small>{item.description}</small></div><div className="auto-diagnostic-progress"><span style={{ width: (100 * item.count / screening.inspected) + '%' }} /></div><b>{item.count} / {screening.inspected}</b></div>)}</div> : <p className="ai-empty">시장 데이터를 수집하면 제외 조건의 빈도를 볼 수 있어.</p>}
+      <details className="auto-run-item">
+        <summary>종목별 점수·매수 제외 사유 ({signals.length}종목)</summary>
+        <div className="auto-run-decisions">
+          {signals.map(signal => <div key={signal.code}>
+            <strong>{signal.name} ({signal.code}) · {signal.score}점 · {signal.status}</strong>
+            <span>{signal.reasons.join(' / ') || '확인된 신호 없음'}</span>
+            {signal.entryTrigger !== null && <span>진입 관찰가 {money(signal.entryTrigger)} · 최대 {signal.maxQuantity}주</span>}
+          </div>)}
+        </div>
+      </details>
       <p className="news-query">현재 매매 신호는 당일 등락률·시가 대비 흐름·평균체결가·당일 고저 범위·유동성 등 가격 기반 조건을 우선해. KB 수급은 비누적 일별 수량 응답 검증 통과 시에만 보조 근거로 사용하며, 장중 거래량 속도는 추정 참고값으로만 표시해.</p>
-      <p className="news-query">최근 정상 검사 {historical.runs}회 · 총 검사 건수 {historical.scanned}건(같은 종목 중복 포함) · 관찰 후보 {historical.candidates}건 · 후보 0건인 회차 {historical.zeroCandidateRuns}회. 상세 제외 사유 집계는 현재 조회된 최대 10종목 기준이며, 후보 조건을 자동 완화하지 않아.</p>
+      <p className="news-query">최근 정상 검사 {historical.runs}회 · 총 검사 건수 {historical.scanned}건(같은 종목 중복 포함) · 관찰 후보 {historical.candidates}건 · 후보 0건인 회차 {historical.zeroCandidateRuns}회. 상세 제외 사유 집계는 현재 조회된 최대 30종목 기준이며, 후보 조건을 자동 완화하지 않아.</p>
     </section>
     <section className="auto-diagnostics">
       <div className="auto-diagnostics-heading"><h4>자동 가상매매 성과 검증</h4><span>전략 자동매도 기록만 · 수동매매 제외</span></div>
