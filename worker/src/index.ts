@@ -414,10 +414,13 @@ export default {
           if (list.length && sampleItem === null) sampleItem = list[0];
           responseDiagnostics.push("keys=" + Object.keys(payload || {}).join(",") + ",items=" + list.length + ",itemKeys=" + (list.length && list[0] && typeof list[0] === "object" ? Object.keys(list[0]).join(",") : typeof list[0]));
           const parsed = list.map((item: any) => {
+            const itemUrl = String(item?.url ?? item?.link ?? item?.path ?? "");
             const rawCode = String(item?.code ?? item?.itemCode ?? item?.stockCode ?? item?.symbolCode ?? item?.ticker ?? item?.shortCode ?? item?.reutersCode ?? item?.stock?.code ?? item?.item?.code ?? "").trim();
-            const codeMatch = rawCode.match(/(?:^|[^0-9])(\\d{6})(?:$|[^0-9])/);
+            const codeMatch = rawCode.match(/(?:^|[^0-9])(\\d{6})(?:$|[^0-9])/) || itemUrl.match(/(?:^|\\/)(\\d{6})(?:\\/|$)/);
+            const rawName = item?.name ?? item?.stockName ?? item?.itemName ?? item?.korName ?? item?.localName ?? item?.title ?? item?.stock?.name ?? item?.item?.name ?? "";
+            const urlName = itemUrl.match(/\\/domestic\\/stock\\/\\d{6}\\/([^/?#]+)/)?.[1] || "";
             return {
-              name: String(item?.name ?? item?.stockName ?? item?.itemName ?? item?.korName ?? item?.localName ?? item?.title ?? item?.stock?.name ?? item?.item?.name ?? "").trim(),
+              name: String(rawName || decodeURIComponent(urlName.replace(/\\+/g, " "))).trim(),
               code: codeMatch?.[1] || "",
               market: String(item?.typeName ?? item?.marketName ?? item?.market ?? item?.marketType ?? ""),
             };
