@@ -136,3 +136,11 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .market-investor-summary span{white-space:nowrap}
 .market-investor-summary b{color:#dce8f8;font-weight:600;font-variant-numeric:tabular-nums}
 .market-investor-error{font-size:9px;color:#e0a0a0;white-space:normal}
+
+
+.market-flow-history{grid-column:1/-1;border-top:1px solid #26364d;padding-top:6px;margin-top:4px}
+.market-flow-history summary{font-size:10px;color:#8bb8ff;cursor:pointer}
+.market-flow-day{display:grid;grid-template-columns:40px repeat(3,minmax(0,1fr));gap:6px;padding:5px 0;border-bottom:1px solid #1e2c3e;font-size:9px;color:#a9bdd5}
+.market-flow-day small{font-size:9px;color:#8194ad}
+.market-flow-day span{white-space:nowrap;font-variant-numeric:tabular-nums}
+.market-data-table .market-flow-history{min-width:330px}
