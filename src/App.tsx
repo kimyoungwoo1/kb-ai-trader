@@ -169,12 +169,12 @@ export default function App() {
     try {
       const candidates = [
         ...holdings.map(item => ({ code: item.code, name: item.name })),
-        ...watchlistText.split(/[，,\\n;]/).map(value => value.trim()).filter(Boolean).map(value => /^\\d{6}$/.test(value) ? ({ code: value, name: value }) : ({ code: '', name: value })),
+        ...watchlistText.split(/[，,\n;]/).map(value => value.trim()).filter(Boolean).map(value => /^\d{6}$/.test(value) ? ({ code: value, name: value }) : ({ code: '', name: value })),
       ]
       const stocks: { code: string; name: string }[] = []
       for (const item of candidates) {
         if (stocks.length >= 10) break
-        if (item.code && /^\\d{6}$/.test(item.code)) {
+        if (item.code && /^\d{6}$/.test(item.code)) {
           if (!stocks.some(stock => stock.code === item.code)) stocks.push(item)
           continue
         }
