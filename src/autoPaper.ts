@@ -19,14 +19,19 @@ export type AutoFill = {
   id: string; at: string; code: string; name: string; side: 'BUY' | 'SELL'
   quantity: number; price: number; costs: number; pnl: number | null; reason: string
 }
+export type AutoRun = {
+  checkedAt: string; processedAt: string; status: '검사 완료' | '실행 보류'
+  scanned: number; candidates: number; filled: number; message: string
+  decisions: { code: string; name: string; status: string; reason: string }[]
+}
 export type AutoAccount = {
   enabled: boolean; cash: number; positions: AutoPosition[]; pending: AutoPending[]
   fills: AutoFill[]; equityHistory: { at: string; value: number }[]
-  lastCycle: string; lastMessage: string
+  lastCycle: string; lastMessage: string; runs: AutoRun[]
 }
 export const newAutoAccount = (): AutoAccount => ({
   enabled: false, cash: AUTO_INITIAL, positions: [], pending: [], fills: [],
-  equityHistory: [], lastCycle: '', lastMessage: '자동 가상매매는 기본적으로 꺼져 있습니다.',
+  equityHistory: [], lastCycle: '', lastMessage: '자동 가상매매는 기본적으로 꺼져 있습니다.', runs: [],
 })
 export const kstDate = (date: Date): string => new Date(date.getTime() + 9 * 3600000).toISOString().slice(0, 10)
 const inSession = (date: Date) => {
@@ -58,13 +63,29 @@ export function autoStats(account: AutoAccount) {
 export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quotes: {
   code: string; name: string; price: number | null; quoteError?: string
 }[], checkedAt: string, now = new Date()): AutoAccount {
-  if (!account.enabled) return account
+  if (!account.enabled || account.lastCycle === checkedAt) return account
   const checked = new Date(checkedAt)
-  if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > 5 * 60000) {
-    return { ...account, lastMessage: '5분 이내 수집한 시세만 가상 체결에 사용합니다. 시장 데이터를 다시 수집해 주세요.' }
+  const decisions = signals.map(signal => ({
+    code: signal.code,
+    name: signal.name,
+    status: signal.status,
+    reason: signal.status === '관찰 후보'
+      ? signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요'
+      : signal.reasons.join(' / ') || '진입 조건 미충족',
+  }))
+  const candidates = signals.filter(signal => signal.status === '관찰 후보' && signal.flowReliable && signal.maxQuantity > 0).length
+  const completeRun = (status: AutoRun['status'], message: string, filled = 0): AutoAccount => {
+    const run: AutoRun = {
+      checkedAt, processedAt: now.toISOString(), status, scanned: signals.length,
+      candidates, filled, message, decisions,
+    }
+    return { ...account, lastCycle: checkedAt, lastMessage: message,
+      runs: [run, ...(account.runs || [])].slice(0, 30) }
   }
-  if (!inSession(now)) return { ...account, lastMessage: '국내 주식 정규장 시간(평일 09:00~15:30 KST)에만 가상 체결합니다.' }
-  if (account.lastCycle === checkedAt) return account
+  if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > 5 * 60000) {
+    return completeRun('실행 보류', '시세 수집 후 5분 초과 또는 수집시각 오류 · 가상 체결 보류')
+  }
+  if (!inSession(now)) return completeRun('실행 보류', '정규장 외 시간 · 신호만 확인, 가상 체결 보류')
   const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
   let cash = account.cash
   let positions = account.positions.map(p => ({ ...p }))
@@ -126,14 +147,19 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     executed++
   }
   const equity = cash + positions.reduce((sum, p) => sum + p.last * p.quantity, 0)
+  const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
+    : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
+      : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료'
+  const run: AutoRun = { checkedAt, processedAt: now.toISOString(), status: '검사 완료',
+    scanned: signals.length, candidates, filled: executed, message: summary, decisions }
   return { ...account, cash, positions, pending, fills: fills.slice(0, 1000),
-    equityHistory: [...account.equityHistory, { at: checkedAt, value: equity }].slice(-1000), lastCycle: checkedAt,
-    lastMessage: executed ? '이번 수집 시세로 가상 체결 ' + executed + '건 처리' : '가상 체결 0건 · 신호/시세/리스크 조건 확인 완료' }
+    equityHistory: [...account.equityHistory, { at: checkedAt, value: equity }].slice(-1000),
+    lastCycle: checkedAt, lastMessage: summary, runs: [run, ...(account.runs || [])].slice(0, 30) }
 }
 export function readAutoAccount(): AutoAccount {
   try {
     const saved = JSON.parse(localStorage.getItem(AUTO_STORAGE_KEY) || 'null') as AutoAccount | null
-    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved }
+    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved, runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
   } catch { /* ignore invalid local data */ }
   return newAutoAccount()
 }
