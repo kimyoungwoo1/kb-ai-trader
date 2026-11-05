@@ -98,7 +98,7 @@ export default function PaperTrading({ token }: { token: string }) {
       })
       const result = await response.json()
       if (!response.ok || !result.success) { setQuoteInfo(result.message || '현재가 조회 실패'); return }
-      if (!result.price) { setQuoteInfo('현재가 필드를 확인할 수 없습니다. KB 원본 응답을 확인해야 합니다.'); return }
+      if (!result.price) { setQuoteInfo(result.message || '현재가 필드를 확인할 수 없습니다. KB 원본 응답을 확인해야 합니다.'); return }
       setPrice(String(result.price))
       if (result.name) setName(result.name)
       setQuoteInfo('KB증권 KRX 현재가 · ' + new Date(result.checked_at).toLocaleString('ko-KR') + (result.changeRate != null ? ' · 등락률 ' + result.changeRate + '%' : ''))
