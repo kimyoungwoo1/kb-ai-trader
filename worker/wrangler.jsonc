@@ -13,5 +13,12 @@
   },
   "ai": {
     "binding": "AI"
+  },
+  "secrets": {
+    "required": [
+      "DASHBOARD_API_KEY",
+      "KB_APP_KEY",
+      "KB_APP_SECRET"
+    ]
   }
 }
