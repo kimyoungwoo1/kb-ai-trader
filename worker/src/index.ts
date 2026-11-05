@@ -416,26 +416,42 @@ export default {
       }
       let master: any;
       try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
-      const body = master?.dataBody || {};\n      const outputHeader = master?.dataHeader || {};\n      const businessError = String(body.o_clsf || outputHeader.o_clsf || "");\n      if (businessError && businessError !== "00" && businessError !== "0") return json({ success: false, message: String(body.o_msg || outputHeader.o_msg || "KB 종목 마스터 업무 오류"), kb_result: businessError, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}) }, 502);
-      const candidates = [Array.isArray(body) ? body : null, body.Record1, body.record1, body.Record, body.record, body.output, body.rows, body.list, body.items, body];
+      const body = master?.dataBody || {};
+      const outputHeader = master?.dataHeader || {};
+      const businessError = String(body.o_clsf || outputHeader.o_clsf || "");
+      if (businessError && businessError !== "00" && businessError !== "0") return json({ success: false, message: String(body.o_msg || outputHeader.o_msg || "KB 종목 마스터 업무 오류"), kb_result: businessError, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}) }, 502);
       const rows: any[] = [];
-      for (const candidate of candidates) {
-        if (Array.isArray(candidate)) rows.push(...candidate);
-        else if (candidate && typeof candidate === "object" && (candidate.shrt_is_cd || candidate.shrt_cd || candidate.is_cd)) rows.push(candidate);
-      }
+      const visited = new Set<any>();
+      const collectRows = (value: any, depth = 0) => {
+        if (!value || typeof value !== "object" || depth > 8 || visited.has(value)) return;
+        visited.add(value);
+        if (Array.isArray(value)) {
+          for (const item of value) collectRows(item, depth + 1);
+          return;
+        }
+        const hasName = value.hngl_is_nm || value.is_nm || value.hts_kor_is_nm || value.kor_is_nm || value.kor_is_name;
+        const hasCode = value.shrt_is_cd || value.shrt_cd || value.is_cd || value.stnd_is_cd;
+        if (hasName && hasCode) rows.push(value);
+        for (const nested of Object.values(value)) collectRows(nested, depth + 1);
+      };
+      collectRows(body);
       const seen = new Set<string>();
       const stocks = rows.filter((row: any) => {
-        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || "").trim().toLocaleLowerCase("ko-KR");
-        const code = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim();
+        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || row.kor_is_name || "").trim().toLocaleLowerCase("ko-KR");
+        const rawCode = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || row.stnd_is_cd || "").trim();
+        const code = rawCode.length > 6 ? rawCode.slice(-6) : rawCode.padStart(6, "0");
         const key = code + "|" + name;
         if (!name.includes(query) || !/^\\d{6}$/.test(code) || seen.has(key)) return false;
         seen.add(key);
         return true;
-      }).slice(0, 20).map((row: any) => ({
-        name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || "").trim(),
-        code: String(row.shrt_is_cd || row.shrt_cd || row.is_cd || "").trim(),
-        market: String(row.mrkt_ccd || row.dl_mkt_ccd || ""),
-      }));
+      }).slice(0, 20).map((row: any) => {
+        const rawCode = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || row.stnd_is_cd || "").trim();
+        return {
+          name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || row.kor_is_name || "").trim(),
+          code: rawCode.length > 6 ? rawCode.slice(-6) : rawCode.padStart(6, "0"),
+          market: String(row.mrkt_ccd || row.dl_mkt_ccd || row.mkt_clsf || ""),
+        };
+      });
       return json({ success: true, stocks, count: stocks.length, cached: true, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}), source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
     }
 
