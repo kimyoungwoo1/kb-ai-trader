@@ -12,7 +12,7 @@ export type SignalInput = {
 export type TradeSignal = {
   code: string
   name: string
-  status: '관찰 후보' | '위험 주의' | '데이터 부족'
+  status: '관찰 후보' | '조건 미충족' | '위험 주의' | '데이터 부족'
   score: number
   price: number | null
   volumeRatio: number | null
@@ -72,11 +72,11 @@ export function generateTradeSignals(stocks: SignalInput[], maxPositionWon = 200
       }
     }
     const status: TradeSignal['status'] = !complete || stock.quoteError || stock.investorError
-      ? '데이터 부족' : score <= -1 ? '위험 주의' : '관찰 후보'
+      ? '데이터 부족' : score <= -1 ? '위험 주의' : score >= 3 && !repeatedFlow ? '관찰 후보' : '조건 미충족'
     const entryTrigger = status === '관찰 후보' && price !== null ? Math.ceil(price * 1.01) : null
     const stopReference = entryTrigger !== null ? Math.floor(entryTrigger * 0.97) : null
     const maxQuantity = entryTrigger !== null ? Math.floor(maxPositionWon / entryTrigger) : 0
-    if (entryTrigger !== null) reasons.push('기준가 +1% 재확인 전에는 진입하지 않음; 손절 참고 -3% (호가단위 미반영)')
+    if (entryTrigger !== null) reasons.push('진입·손절은 시뮬레이션 참고값이며, 실시간 호가단위·수수료·슬리피지 미반영')
     if (entryTrigger !== null && maxQuantity === 0) reasons.push('종목당 20만원 한도에서 1주 매수 불가')
     return {
       code: stock.code, name: stock.name, status, score, price, volumeRatio,
