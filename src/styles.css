@@ -106,3 +106,6 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .paper-stock-search{position:relative}.paper-search-status,.paper-selected-stock{margin:5px 0 0;color:#82a9d8;font-size:10px}.paper-stock-results{position:absolute;z-index:20;top:100%;left:0;right:0;max-height:230px;overflow:auto;background:#111b2a;border:1px solid #34445c;border-radius:8px;box-shadow:0 12px 30px #0008}.paper-stock-results button{display:flex;width:100%;justify-content:space-between;align-items:center;padding:10px 12px;background:transparent;border:0;border-bottom:1px solid #26354a;color:#e8eef8;text-align:left;cursor:pointer}.paper-stock-results button:hover{background:#1b2a40}.paper-stock-results button span{color:#8ea3bd;font-size:10px}.paper-selected-stock button{margin-left:8px;background:transparent;border:0;color:#9fc5ff;text-decoration:underline;cursor:pointer}
 
 .paper-stock-result-message{padding:10px 12px;color:#9db3ce;font-size:11px}.paper-stock-results{display:block!important;visibility:visible!important;opacity:1!important}
+
+.paper-page .stats-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:700px){.paper-page .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
