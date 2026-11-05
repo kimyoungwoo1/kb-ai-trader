@@ -389,6 +389,7 @@ export default {
       ];
       let lastError = "검색 서버 응답을 확인할 수 없습니다.";
       let responseDiagnostics: string[] = [];
+      let sampleItem: any = null;
       let stocks: { name: string; code: string; market: string }[] = [];
 
       const extractItems = (payload: any): any[] => {
@@ -410,7 +411,8 @@ export default {
           if (!response.ok) { lastError = "검색 서버 HTTP " + response.status; continue; }
           const payload = await response.json() as any;
           const list = extractItems(payload);
-          responseDiagnostics.push("keys=" + Object.keys(payload || {}).join(",") + ",items=" + list.length);
+          if (list.length && sampleItem === null) sampleItem = list[0];
+          responseDiagnostics.push("keys=" + Object.keys(payload || {}).join(",") + ",items=" + list.length + ",itemKeys=" + (list.length && list[0] && typeof list[0] === "object" ? Object.keys(list[0]).join(",") : typeof list[0]));
           const parsed = list.map((item: any) => {
             const rawCode = String(item?.code ?? item?.itemCode ?? item?.stockCode ?? item?.symbolCode ?? item?.ticker ?? item?.shortCode ?? item?.reutersCode ?? item?.stock?.code ?? item?.item?.code ?? "").trim();
             const codeMatch = rawCode.match(/(?:^|[^0-9])(\\d{6})(?:$|[^0-9])/);
@@ -437,7 +439,7 @@ export default {
         stocks: matched,
         count: matched.length,
         source: "Naver Finance autocomplete",
-        message: matched.length ? "" : lastError + " 응답 진단: " + (responseDiagnostics.join(" | ") || "응답 없음"),
+        message: matched.length ? "" : lastError + " 응답 진단: " + (responseDiagnostics.join(" | ") || "응답 없음") + (sampleItem === null ? "" : " 샘플: " + JSON.stringify(sampleItem).slice(0, 700)),
       });
     }
 
