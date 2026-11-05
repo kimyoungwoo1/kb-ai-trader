@@ -261,3 +261,28 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
   .auto-advanced>summary span{display:none}
   .auto-advanced-inner{padding:15px}
 }
+
+
+/* Automatic scan health — clear operational feedback, independent from trade results. */
+.auto-state-ok{border-color:#2a684f;background:#112c23;color:#76dfb1}
+.auto-state-working{border-color:#315c90;background:#152a44;color:#98c6ff}
+.auto-state-idle{border-color:#454f62;background:#1e2836;color:#bdc7d6}
+.auto-state-warning{border-color:#836031;background:#33271a;color:#f0bf73}
+.auto-state-off{border-color:#63482c;background:#2b221b;color:#dbc19c}
+.auto-health-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;border-radius:10px;border:1px solid #32445d;background:#111d2d;margin-bottom:12px}
+.auto-health-ok{background:#0f2722;border-color:#29684e}
+.auto-health-working{background:#11253b;border-color:#315f91}
+.auto-health-idle{background:#1b2532;border-color:#344155}
+.auto-health-warning{background:#31251a;border-color:#70532c}
+.auto-health-off{background:#23242b;border-color:#4a4551}
+.auto-health-copy{display:grid;gap:4px;min-width:0}
+.auto-health-copy strong{color:#ebf3fd;font-size:13px}
+.auto-health-copy span{color:#b3c1d6;font-size:10px;line-height:1.6;overflow-wrap:anywhere}
+.auto-health-frequency{font-size:10px;color:#9fb3cf;white-space:nowrap}
+.auto-health-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:15px}
+.auto-health-grid>div{min-width:0;border:1px solid #2a3c52;background:#0d1827;border-radius:9px;padding:13px;display:flex;flex-direction:column;gap:8px}
+.auto-health-grid>div>span{color:#91a9c7;font-size:10px}
+.auto-health-grid>div>strong{color:#e5effd;font-size:14px;line-height:1.35;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.auto-health-grid>div>small{color:#8298b6;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+@media(max-width:1050px){.auto-health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.auto-health-panel{align-items:flex-start;flex-direction:column;gap:8px}.auto-health-grid{gap:8px}.auto-health-grid>div{padding:11px}.auto-health-grid>div>strong{font-size:12px}}
