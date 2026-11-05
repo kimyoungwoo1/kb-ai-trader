@@ -186,3 +186,8 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-run-decisions strong{font-size:10px;color:#d2dff0}
 .auto-run-decisions span{font-size:10px;color:#90a5c0;line-height:1.6;overflow-wrap:anywhere}
 @media(max-width:900px){.auto-monitor{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+.market-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.market-actions .outline-button{white-space:nowrap}
+@media(max-width:700px){.market-actions{justify-content:stretch}.market-actions .outline-button{flex:1}}
