@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number }
+type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number; quoteUpdatedAt?: string }
 type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number; realizedPnl?: number }
 type PaperState = { cash: number; positions: Position[]; trades: Trade[] }
 const INITIAL_CASH = 1_000_000
@@ -31,6 +31,12 @@ export default function PaperTrading({ token }: { token: string }) {
   const [stockSearchLoading, setStockSearchLoading] = useState(false)
   const [selectedStock, setSelectedStock] = useState(false)
   const stockSearchRequest = useRef(0)
+  const quoteRefreshLock = useRef(false)
+  const positionsRef = useRef(account.positions)
+  positionsRef.current = account.positions
+  const [refreshingPositions, setRefreshingPositions] = useState(false)
+  const [positionQuoteInfo, setPositionQuoteInfo] = useState('보유 종목 시세는 60초마다 자동 갱신됩니다.')
+  const [lastPositionRefresh, setLastPositionRefresh] = useState('')
 
   const valuation = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.lastPrice, 0), [account.positions])
   const invested = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.averagePrice, 0), [account.positions])
@@ -39,6 +45,64 @@ export default function PaperTrading({ token }: { token: string }) {
   const realizedPnl = useMemo(() => account.trades.reduce((sum, trade) => sum + (trade.realizedPnl || 0), 0), [account.trades])
   const totalPnl = pnl + realizedPnl
   const persist = (next: PaperState) => { setAccount(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) }
+
+  const refreshPositionQuotes = useCallback(async (silent = false) => {
+    const snapshot = positionsRef.current
+    if (!snapshot.length || quoteRefreshLock.current) return
+    quoteRefreshLock.current = true
+    setRefreshingPositions(true)
+    if (!silent) setPositionQuoteInfo('보유 종목 현재가를 조회하고 있습니다...')
+    let updated = 0
+    const failures: string[] = []
+    const prices = new Map<string, { price: number; checkedAt: string }>()
+    try {
+      for (const position of snapshot) {
+        try {
+          const response = await fetch('https://kb-ai-trader.ksmsy1.workers.dev/api/kb/quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ code: position.code, exchange: '1' }),
+          })
+          const result = await response.json()
+          if (!response.ok || !result.success || !Number.isFinite(Number(result.price)) || Number(result.price) <= 0) {
+            failures.push(position.name + ': ' + (result.message || '현재가 조회 실패'))
+            continue
+          }
+          prices.set(position.code, { price: Number(result.price), checkedAt: result.checked_at || new Date().toISOString() })
+          updated++
+        } catch (error) {
+          failures.push(position.name + ': ' + (error instanceof Error ? error.message : '연결 실패'))
+        }
+      }
+      if (prices.size) {
+        setAccount(previous => {
+          const next: PaperState = {
+            ...previous,
+            positions: previous.positions.map(position => {
+              const quote = prices.get(position.code)
+              return quote ? { ...position, lastPrice: quote.price, quoteUpdatedAt: quote.checkedAt } : position
+            }),
+          }
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+          return next
+        })
+      }
+      const completedAt = new Date().toLocaleString('ko-KR')
+      setLastPositionRefresh(completedAt)
+      if (failures.length) setPositionQuoteInfo(updated + '개 종목 갱신, ' + failures.length + '개 실패 · 실패 종목은 기존 가격 유지')
+      else setPositionQuoteInfo(updated + '개 종목 현재가 갱신 완료')
+    } finally {
+      quoteRefreshLock.current = false
+      setRefreshingPositions(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!account.positions.length) return
+    void refreshPositionQuotes(true)
+    const timer = window.setInterval(() => { void refreshPositionQuotes(true) }, 60000)
+    return () => window.clearInterval(timer)
+  }, [account.positions.length, refreshPositionQuotes])
 
 
 
@@ -156,8 +220,8 @@ export default function PaperTrading({ token }: { token: string }) {
   }
 
   return <section className="paper-page">
-    <div className="page-heading"><div><div className="eyebrow">PAPER TRADING · NO REAL ORDERS</div><h1>가상 트레이딩</h1><p>초기 자금 100만 원 · 브라우저 로컬 저장 · 실계좌와 완전 분리</p></div><button className="outline-button" onClick={() => setConfirmReset(true)}>계좌 초기화</button></div>
-    <div className="paper-warning"><b>가상 거래 전용</b><span>매수·매도는 실제 주문이 아닌 가상 체결입니다. KB 현재가 조회 또는 직접 입력한 가격을 기준으로 계산하며, 보유 종목의 평가 가격은 마지막 체결가 또는 수동 수정 가격을 사용합니다.</span></div>
+    <div className="page-heading"><div><div className="eyebrow">PAPER TRADING · NO REAL ORDERS</div><h1>가상 트레이딩</h1><p>초기 자금 100만 원 · 보유 종목 시세 60초 자동 갱신 · 브라우저 로컬 저장 · 실계좌와 완전 분리</p></div><button className="outline-button" onClick={() => setConfirmReset(true)}>계좌 초기화</button></div>
+    <div className="paper-warning"><b>가상 거래 전용</b><span>매수·매도는 실제 주문이 아닌 가상 체결입니다. KB 현재가 조회 또는 직접 입력한 가격을 기준으로 계산하며, 보유 종목 평가 가격은 KB 현재가를 60초마다 자동 갱신하며, 조회 실패 시 기존 가격을 유지합니다.</span></div>
     <div className="stats-grid">
       <article className="stat-card"><div className="stat-top">가상 총자산</div><div className="stat-value">{won(total)}</div><div className="stat-foot">가상 예수금 + 보유 평가금액</div></article>
       <article className="stat-card"><div className="stat-top">가상 예수금</div><div className="stat-value">{won(account.cash)}</div><div className="stat-foot">가상 주문에 사용할 수 있는 금액</div></article>
@@ -183,7 +247,7 @@ export default function PaperTrading({ token }: { token: string }) {
           <p className="paper-notice">{notice}</p>
         </form>
       </section>
-      <section className="panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>VIRTUAL POSITIONS</span></div></div>
+      <section className="panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>VIRTUAL POSITIONS</span><p className="paper-quote-info">{positionQuoteInfo}{lastPositionRefresh ? ' · 마지막 갱신 ' + lastPositionRefresh : ''}</p></div><button type="button" className="outline-button" onClick={() => void refreshPositionQuotes(false)} disabled={refreshingPositions || !account.positions.length}>{refreshingPositions ? '갱신 중...' : '현재가 일괄 갱신'}</button></div>
         {account.positions.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>종목</th><th>수량</th><th>평균 매수가</th><th>평가 기준가 수정</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{account.positions.map(p => { const positionPnl = (p.lastPrice - p.averagePrice) * p.quantity; const cost = p.averagePrice * p.quantity; const rate = cost ? positionPnl / cost * 100 : 0; return <tr key={p.code}><td>{p.name}<small>{p.code}</small></td><td>{p.quantity.toLocaleString()}주</td><td>{Math.round(p.averagePrice).toLocaleString()}원</td><td><input aria-label={p.name + ' 평가 기준 가격'} type="number" min="1" defaultValue={p.lastPrice} onBlur={e => updateMark(p, e.target.value)} /></td><td>{won(p.lastPrice * p.quantity)}</td><td className={positionPnl >= 0 ? 'positive-value' : 'negative-value'}>{positionPnl > 0 ? '+' : ''}{won(positionPnl)}</td><td className={rate >= 0 ? 'positive-value' : 'negative-value'}>{rate > 0 ? '+' : ''}{rate.toFixed(2)}%</td></tr> })}</tbody></table></div> : <div className="ai-empty">아직 보유한 가상 종목이 없습니다. 왼쪽에서 가상 매수 주문을 입력하세요.</div>}
       </section>
     </div>
