@@ -51,3 +51,13 @@ test('position allocation never exceeds 200000 won at signal trigger', () => {
   assert.ok(signal.entryTrigger !== null)
   assert.ok(signal.maxQuantity * signal.entryTrigger <= 200000)
 })
+
+
+test('research signal generator retains all 30 scanned symbols', () => {
+  const stocks = Array.from({ length: 30 }, (_, i) => ({
+    ...quote, code: String(100000 + i), name: 'TEST-' + i,
+  }))
+  const signals = generateTradeSignals(stocks, 200000, at)
+  assert.equal(signals.length, 30)
+  assert.equal(new Set(signals.map(signal => signal.code)).size, 30)
+})
