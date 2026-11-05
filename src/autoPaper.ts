@@ -131,10 +131,10 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     return false
   })
   // Discard pending signals whose conditions disappeared, then update watch targets.
-  const valid = new Map<string, TradeSignal>(signals.filter(s => s.status === '관찰 후보' && s.flowReliable && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s] as [string, TradeSignal]))
-  // Do not discard a queued signal merely because a rotating market batch omitted its symbol.
-  pending = pending.filter(p => !ledgerPositions.some(position => position.code === p.code)
-    && (!signals.some(signal => signal.code === p.code) || valid.has(p.code)))
+  const valid = new Map<string, TradeSignal>(signals.filter(s => s.status === '관찰 후보' && s.maxQuantity > 0 && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s] as [string, TradeSignal]))
+  // Only retain queue entries for symbols in the current verified batch. Older
+  // strategy signals must not survive the research-rule update.
+  pending = pending.filter(p => valid.has(p.code) && !ledgerPositions.some(position => position.code === p.code))
   for (const signal of signals) {
     if (!valid.has(signal.code) || ledgerPositions.some(p => p.code === signal.code) || pending.some(p => p.code === signal.code) || alreadyTradedToday.has(signal.code)) continue
     pending.push({ code: signal.code, name: signal.name, trigger: signal.entryTrigger!, stop: signal.stopReference!, createdAt: now.toISOString() })
