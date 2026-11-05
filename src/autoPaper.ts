@@ -1,4 +1,5 @@
 import type { TradeSignal } from './tradeSignals'
+import { readPaperLedger, writePaperLedger, type PaperTrade } from './paperLedger'
 
 export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
 export const AUTO_INITIAL = 1_000_000
@@ -86,8 +87,10 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     return completeRun('실행 보류', '시세 수집 후 5분 초과 또는 수집시각 오류 · 가상 체결 보류')
   }
   if (!inSession(now)) return completeRun('실행 보류', '정규장 외 시간 · 신호만 확인, 가상 체결 보류')
+  const ledger = readPaperLedger()
+  const ledgerPositions = ledger.positions.map(p => ({ ...p }))
   const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
-  let cash = account.cash
+  let cash = ledger.cash
   let positions = account.positions.map(p => ({ ...p }))
   let pending = account.pending.map(p => ({ ...p }))
   const fills = [...account.fills]
@@ -110,6 +113,12 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     const costs = won(proceeds * SELL_COST)
     const pnl = proceeds - costs - p.entry * p.quantity - p.buyCost
     cash += proceeds - costs
+    const idx = ledgerPositions.findIndex(item => item.code === p.code)
+    if (idx >= 0) {
+      const existing = ledgerPositions[idx]
+      if (existing.quantity <= p.quantity) ledgerPositions.splice(idx, 1)
+      else ledgerPositions[idx] = { ...existing, quantity: existing.quantity - p.quantity, lastPrice: mark }
+    }
     sessionPnl += pnl
     fills.unshift({ id: now.toISOString() + '-sell-' + p.code, at: now.toISOString(), code: p.code, name: p.name, side: 'SELL',
       quantity: p.quantity, price: sellPrice, costs, pnl, reason })
@@ -119,9 +128,9 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   })
   // Discard pending signals whose conditions disappeared, then update watch targets.
   const valid = new Map<string, TradeSignal>(signals.filter(s => s.status === '관찰 후보' && s.flowReliable && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s] as [string, TradeSignal]))
-  pending = pending.filter(p => valid.has(p.code) && !positions.some(position => position.code === p.code))
+  pending = pending.filter(p => valid.has(p.code) && !ledgerPositions.some(position => position.code === p.code))
   for (const signal of signals) {
-    if (!valid.has(signal.code) || positions.some(p => p.code === signal.code) || pending.some(p => p.code === signal.code) || alreadyTradedToday.has(signal.code)) continue
+    if (!valid.has(signal.code) || ledgerPositions.some(p => p.code === signal.code) || pending.some(p => p.code === signal.code) || alreadyTradedToday.has(signal.code)) continue
     pending.push({ code: signal.code, name: signal.name, trigger: signal.entryTrigger!, stop: signal.stopReference!, createdAt: now.toISOString() })
   }
   // Require a *later* quote to cross the watch trigger. Never fill using the creating snapshot.
@@ -138,6 +147,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     const fee = won(cost * BUY_FEE)
     if (cost + fee > cash) continue
     cash -= cost + fee
+    ledgerPositions.push({ code: item.code, name: item.name, quantity, averagePrice: fillPrice, lastPrice: mark })
     positions.push({ code: item.code, name: item.name, quantity, entry: fillPrice, last: mark,
       stop: Math.min(item.stop, won(fillPrice * 0.97)), target: won(fillPrice * 1.06), openedAt: now.toISOString(), buyCost: fee })
     fills.unshift({ id: now.toISOString() + '-buy-' + item.code, at: now.toISOString(), code: item.code, name: item.name,
@@ -146,7 +156,17 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     alreadyTradedToday.add(item.code)
     executed++
   }
-  const equity = cash + positions.reduce((sum, p) => sum + p.last * p.quantity, 0)
+  const autoOrders = fills.slice(0, Math.max(0, fills.length - account.fills.length)).map(f => ({
+    id: f.id, time: f.at, side: f.side, code: f.code, name: f.name,
+    quantity: f.quantity, price: f.price, amount: f.quantity * f.price,
+    realizedPnl: f.pnl === null ? undefined : f.pnl, source: 'auto' as const, costs: f.costs, reason: f.reason,
+  } satisfies PaperTrade))
+  for (const position of ledgerPositions) {
+    const updatedQuote = quoteMap.get(position.code)
+    if (updatedQuote !== undefined) position.lastPrice = updatedQuote
+  }
+  writePaperLedger({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
+  const equity = cash + ledgerPositions.reduce((sum, p) => sum + p.lastPrice * p.quantity, 0)
   const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
     : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
       : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료'
