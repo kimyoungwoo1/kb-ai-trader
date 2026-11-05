@@ -144,3 +144,15 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .market-flow-day small{font-size:9px;color:#8194ad}
 .market-flow-day span{white-space:nowrap;font-variant-numeric:tabular-nums}
 .market-data-table .market-flow-history{min-width:330px}
+
+
+.signal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:12px}
+.signal-card{border:1px solid #27374e;border-radius:9px;background:#0e1827;padding:14px;min-width:0}
+.signal-top{display:flex;justify-content:space-between;align-items:center;gap:10px;color:#e5effd;font-size:12px}
+.signal-top small{color:#8298b6;font-size:10px;font-weight:400}
+.signal-top>span{flex-shrink:0;font-size:10px;color:#9bc5fd}
+.signal-stats{display:grid;grid-template-columns:1fr;gap:5px;padding:10px 0;border-bottom:1px solid #223149;margin-top:7px}
+.signal-stats span{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#8b9eb8}
+.signal-stats b{color:#cbd9ee;font-variant-numeric:tabular-nums}
+.signal-card p{font-size:10px;color:#b8c9e0;line-height:1.7;white-space:normal;margin:12px 0}
+.signal-card ul{padding-left:18px;margin:0;color:#8da3be;font-size:10px;line-height:1.8}
