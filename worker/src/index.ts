@@ -83,7 +83,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -505,6 +505,88 @@ export default {
         message: rawPrice == null ? "조회는 성공했지만 현재가 필드를 찾지 못했습니다. dataBody 필드: " + Object.keys(body).join(",") : "",
         checked_at: new Date().toISOString(),
       });
+    }
+
+    if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
+      let input: { stocks?: { code?: string; name?: string }[] };
+      try { input = await request.json() as { stocks?: { code?: string; name?: string }[] }; }
+      catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      const stocks = (Array.isArray(input.stocks) ? input.stocks : [])
+        .map(item => ({ code: String(item.code || "").trim(), name: String(item.name || "").trim() }))
+        .filter(item => /^\\d{6}$/.test(item.code))
+        .filter((item, index, all) => all.findIndex(other => other.code === item.code) === index)
+        .slice(0, 10);
+      if (!stocks.length) return json({ success: false, message: "종목코드 6자리인 보유 종목 또는 관심 종목을 1개 이상 전달해 주세요." }, 400);
+
+      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\\/$/, "");
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (error) {
+        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 200) : "KB 토큰 서버 연결 실패" }, 502);
+      }
+      let tokenResult: any;
+      try { tokenResult = await tokenResponse.json(); }
+      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
+      const accessToken = tokenResult?.dataBody?.access_token;
+      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
+        return json({ success: false, stage: "authentication", message: getKbErrorMessage(tokenResult) }, 502);
+      }
+
+      const results = [];
+      for (const stock of stocks) {
+        const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
+        let quote: any = null;
+        let investor: any = null;
+        let quoteError = "";
+        let investorError = "";
+        try {
+          const response = await fetch(`${baseUrl}/api/v1/ivu10140`, {
+            method: "POST", headers,
+            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const data = await response.json() as any;
+          if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
+          else quoteError = getKbErrorMessage(data);
+        } catch (error) { quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
+
+        try {
+          const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
+          const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
+          const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+          const startDate = start.toISOString().slice(0, 10).replace(/-/g, "");
+          const response = await fetch(`${baseUrl}/api/v1/ivu10430`, {
+            method: "POST", headers,
+            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "1", trd_clsf: "1", acml_clsf: "1" } }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const data = await response.json() as any;
+          if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
+          else investorError = getKbErrorMessage(data);
+        } catch (error) { investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
+
+        const rawPrice = quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price ?? null;
+        results.push({
+          code: stock.code,
+          name: stock.name || quote?.is_nm || quote?.hts_kor_is_nm || stock.code,
+          price: rawPrice == null ? null : Number(String(rawPrice).replace(/,/g, "")) || null,
+          change: quote?.cmpr ?? quote?.prdy_vrss ?? null,
+          changeRate: quote?.cmpr_rt ?? quote?.prdy_ctrt ?? null,
+          volume: quote?.acml_vol ?? null,
+          tradeValue: quote?.acml_tr_pbmn ?? null,
+          investor,
+          quoteError,
+          investorError,
+        });
+      }
+      return json({ success: true, api: ["IVU10140", "IVU10430"], requested: stocks.length, results, checked_at: new Date().toISOString(), period: "최근 7일" });
     }
 
     if (url.pathname === "/api/market/disclosures" && request.method === "POST") {
