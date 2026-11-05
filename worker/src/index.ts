@@ -382,12 +382,25 @@ export default {
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const query = String(input.query || "").trim();
       if (query.length < 2) return json({ success: true, stocks: [] });
+
       const urls = [
         "https://m.stock.naver.com/front-api/search/autoComplete?query=" + encodeURIComponent(query) + "&target=stock,index,marketindicator,coin,ipo",
         "https://ac.stock.naver.com/ac?q=" + encodeURIComponent(query) + "&target=stock,index,marketindicator,coin,ipo&st=111",
       ];
-      let payload: any = null;
       let lastError = "검색 서버 응답을 확인할 수 없습니다.";
+      let responseDiagnostics: string[] = [];
+      let stocks: { name: string; code: string; market: string }[] = [];
+
+      const extractItems = (payload: any): any[] => {
+        const possible = [
+          payload?.result?.items, payload?.items, payload?.data?.items,
+          payload?.result?.stocks, payload?.data?.result?.items,
+          payload?.result, payload?.data,
+        ];
+        for (const value of possible) if (Array.isArray(value)) return value;
+        return [];
+      };
+
       for (const endpoint of urls) {
         try {
           const response = await fetch(endpoint, {
@@ -395,24 +408,37 @@ export default {
             signal: AbortSignal.timeout(12000),
           });
           if (!response.ok) { lastError = "검색 서버 HTTP " + response.status; continue; }
-          const candidate = await response.json() as any;
-          if (candidate?.result?.items || candidate?.items || candidate?.data?.items) { payload = candidate; break; }
-          lastError = "검색 응답에 items 목록이 없습니다. 응답 필드: " + Object.keys(candidate || {}).join(",");
+          const payload = await response.json() as any;
+          const list = extractItems(payload);
+          responseDiagnostics.push("keys=" + Object.keys(payload || {}).join(",") + ",items=" + list.length);
+          const parsed = list.map((item: any) => {
+            const rawCode = String(item?.code ?? item?.itemCode ?? item?.stockCode ?? item?.symbolCode ?? item?.ticker ?? item?.shortCode ?? item?.reutersCode ?? item?.stock?.code ?? item?.item?.code ?? "").trim();
+            const codeMatch = rawCode.match(/(?:^|[^0-9])(\\d{6})(?:$|[^0-9])/);
+            return {
+              name: String(item?.name ?? item?.stockName ?? item?.itemName ?? item?.korName ?? item?.localName ?? item?.title ?? item?.stock?.name ?? item?.item?.name ?? "").trim(),
+              code: codeMatch?.[1] || "",
+              market: String(item?.typeName ?? item?.marketName ?? item?.market ?? item?.marketType ?? ""),
+            };
+          }).filter((item: any) => item.name && /^\\d{6}$/.test(item.code));
+          for (const item of parsed) {
+            if (!stocks.some(existing => existing.code === item.code)) stocks.push(item);
+          }
+          // 첫 API가 항목을 반환했더라도 국내 종목코드를 찾지 못하면 두 번째 API도 확인한다.
+          if (stocks.length) break;
+          lastError = "응답 항목은 있으나 종목명/6자리 코드 필드를 찾지 못했습니다.";
         } catch (error) {
           lastError = error instanceof Error ? error.message.slice(0, 160) : "검색 서버 연결 실패";
         }
       }
-      if (!payload) return json({ success: false, stocks: [], message: lastError }, 502);
-      const candidates = payload?.result?.items || payload?.items || payload?.data?.items || [];
-      const list: any[] = Array.isArray(candidates) ? candidates : [];
-      const stocks = list.map((item: any) => ({
-        name: String(item?.name || item?.stockName || item?.itemName || item?.korName || "").trim(),
-        code: String(item?.code || item?.itemCode || item?.stockCode || item?.reutersCode?.split(".")[0] || "").trim(),
-        market: String(item?.typeName || item?.marketName || item?.market || ""),
-      })).filter((item: any) => item.name && /^\\d{6}$/.test(item.code))
-        .filter((item: any, index: number, all: any[]) => all.findIndex((other: any) => other.code === item.code) === index)
-        .slice(0, 15);
-      return json({ success: true, stocks, count: stocks.length, source: "Naver Finance autocomplete", message: stocks.length ? "" : "검색 응답은 받았지만 종목코드 형식의 국내주식 결과가 없습니다. 응답 항목 수: " + list.length });
+
+      const matched = stocks.filter(item => item.name.includes(query) || item.code.includes(query)).slice(0, 15);
+      return json({
+        success: true,
+        stocks: matched,
+        count: matched.length,
+        source: "Naver Finance autocomplete",
+        message: matched.length ? "" : lastError + " 응답 진단: " + (responseDiagnostics.join(" | ") || "응답 없음"),
+      });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
