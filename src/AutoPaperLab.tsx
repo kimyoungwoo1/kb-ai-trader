@@ -26,6 +26,8 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
     if (!account.enabled && checkedAt) next.lastCycle = checkedAt
     save(next)
   }
+  const lastRun = (account.runs || [])[0]
+  const formatTime = (value: string) => value ? new Date(value).toLocaleString('ko-KR') : '기록 없음'
   const currentEquity = metrics.equity
   return <section className="panel disclosure-panel auto-lab">
     <div className="panel-heading"><div><h3>자동 가상매매 검증</h3><span>ISOLATED PAPER ACCOUNT · REAL ORDER DISABLED</span></div>
@@ -33,6 +35,15 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
     </div>
     <p className="news-message">{account.lastMessage} · 실행 시점: 시장 뉴스 페이지에서 새 시장 데이터를 수집할 때 · 백그라운드 자동 실행 없음</p>
     <p className="news-query">초기 100만원 · 종목당 최대 20만원 · 최대 3종목 · 실현손익 기준 당일 -1만원 이후 신규 진입 중단 · 가상 익절 +6% / 손절 -3% · 15일 보유 제한. 수수료 및 슬리피지는 예시 가정치이며 매매 성과를 보장하지 않습니다.</p>
+    <div className="auto-monitor">
+      <div><span>엔진 설정</span><strong>{account.enabled ? '활성화 · 새 수집 대기' : '중지됨'}</strong></div>
+      <div><span>최근 검사 시각</span><strong>{lastRun ? formatTime(lastRun.processedAt) : '아직 검사 없음'}</strong></div>
+      <div><span>최근 검사 결과</span><strong>{lastRun ? lastRun.status : '미실행'}</strong></div>
+      <div><span>최근 검사 종목 / 후보 / 가상 체결</span><strong>{lastRun ? lastRun.scanned + '종목 / ' + lastRun.candidates + '건 / ' + lastRun.filled + '건' : '—'}</strong></div>
+    </div>
+    <section className="auto-run-log"><h4>검사 실행 기록 <small>최근 30회 · 브라우저에 저장</small></h4>
+      {(account.runs || []).length ? <div className="auto-run-items">{(account.runs || []).slice(0, 10).map(run => <details key={run.checkedAt} className="auto-run-item"><summary><time>{formatTime(run.processedAt)}</time> · {run.status} · {run.scanned}종목 / 후보 {run.candidates}건 / 체결 {run.filled}건</summary><p>{run.message}</p><p>시세 수집: {formatTime(run.checkedAt)}</p>{run.decisions.length ? <div className="auto-run-decisions">{run.decisions.map(decision => <div key={decision.code}><strong>{decision.name} ({decision.code}) · {decision.status}</strong><span>{decision.reason}</span></div>)}</div> : <p>분석된 종목이 없습니다.</p>}</details>)}</div> : <p className="ai-empty">아직 검사 기록이 없습니다. 자동 가상매매를 켠 상태에서 ‘시장 데이터 수집’을 다시 누르면 검사 결과가 기록됩니다.</p>}
+    </section>
     <div className="auto-stats">
       <div><span>가상 총자산</span><strong>{money(currentEquity)}</strong></div>
       <div><span>누적 수익률</span><strong>{metrics.returnRate.toFixed(2)}%</strong></div>
