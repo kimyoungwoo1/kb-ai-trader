@@ -416,15 +416,15 @@ export default {
           const parsed = list.map((item: any) => {
             const itemUrl = String(item?.url ?? item?.link ?? item?.path ?? "");
             const rawCode = String(item?.code ?? item?.itemCode ?? item?.stockCode ?? item?.symbolCode ?? item?.ticker ?? item?.shortCode ?? item?.reutersCode ?? item?.stock?.code ?? item?.item?.code ?? "").trim();
-            const codeMatch = rawCode.match(/(?:^|[^0-9])(\\d{6})(?:$|[^0-9])/) || itemUrl.match(/(?:^|\\/)(\\d{6})(?:\\/|$)/);
+            const codeMatch = rawCode.match(/(?:^|[^0-9])(\d{6})(?:$|[^0-9])/) || itemUrl.match(/(?:^|\/)(\d{6})(?:\/|$)/);
             const rawName = item?.name ?? item?.stockName ?? item?.itemName ?? item?.korName ?? item?.localName ?? item?.title ?? item?.stock?.name ?? item?.item?.name ?? "";
-            const urlName = itemUrl.match(/\\/domestic\\/stock\\/\\d{6}\\/([^/?#]+)/)?.[1] || "";
+            const urlName = itemUrl.match(/\/domestic\/stock\/\d{6}\/([^/?#]+)/)?.[1] || "";
             return {
               name: String(rawName || decodeURIComponent(urlName.replace(/\\+/g, " "))).trim(),
               code: codeMatch?.[1] || "",
               market: String(item?.typeName ?? item?.marketName ?? item?.market ?? item?.marketType ?? ""),
             };
-          }).filter((item: any) => item.name && /^\\d{6}$/.test(item.code));
+          }).filter((item: any) => item.name && /^\d{6}$/.test(item.code));
           for (const item of parsed) {
             if (!stocks.some(existing => existing.code === item.code)) stocks.push(item);
           }
