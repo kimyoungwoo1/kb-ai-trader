@@ -527,7 +527,10 @@ export default {
             signal: AbortSignal.timeout(12000),
           });
           if (!response.ok) { diagnostics.push(page.label + " HTTP " + response.status); continue; }
-          const html = await response.text();
+          const contentType = response.headers.get("content-type") || "";
+          const bytes = await response.arrayBuffer();
+          const charset = /charset\s*=\s*["']?([^;"'\s]+)/i.exec(contentType)?.[1]?.toLowerCase() || "";
+          const html = new TextDecoder(charset.includes("euc") || charset.includes("ks_c") ? "euc-kr" : "utf-8").decode(bytes);
           if (!html.includes("item/main.naver?code=") && !html.includes("item/main.naver?code&#61;")) {
             diagnostics.push(page.label + " 종목 링크 없음 · 차단/페이지 변경 가능성");
             continue;
