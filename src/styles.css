@@ -209,3 +209,55 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-diagnostic-progress{height:7px;background:#202f43;border-radius:4px;overflow:hidden}
 .auto-diagnostic-progress span{display:block;height:100%;background:#548cd0;border-radius:4px}
 @media(max-width:750px){.auto-funnel{grid-template-columns:repeat(2,minmax(0,1fr))}.auto-diagnostic-row{grid-template-columns:minmax(0,1fr) 50px}.auto-diagnostic-progress{display:none}}
+
+
+/* Portfolio-first automatic paper trading dashboard */
+.auto-dashboard{display:grid;gap:16px}
+.auto-hero{padding:22px 24px}
+.auto-hero-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:22px}
+.auto-hero-heading h2{font-size:22px;letter-spacing:-.5px;margin:7px 0 5px;color:#e8effa}
+.auto-hero-heading p{margin:0;color:#94a6c0;font-size:11px;line-height:1.7}
+.auto-hero-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.auto-state{display:inline-flex;align-items:center;gap:7px;border-radius:20px;border:1px solid #3e4658;padding:7px 10px;color:#b3bece;font-size:10px;white-space:nowrap}
+.auto-state-on{border-color:#265542;background:#132b24;color:#73d9a8}
+.auto-state-off{border-color:#63482c;background:#2b221b;color:#dbc19c}
+.auto-state-dot{height:6px;width:6px;border-radius:50%;background:currentColor}
+.auto-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.auto-overview-card{display:flex;flex-direction:column;gap:10px;min-width:0;border:1px solid #2c3b53;border-radius:10px;padding:17px;background:#0e1725}
+.auto-overview-primary{border-color:#385b89;background:linear-gradient(135deg,#1a3252,#101b2d)}
+.auto-overview-card>span{font-size:11px;color:#94a9c4}
+.auto-overview-card strong{font-size:21px;line-height:1.25;letter-spacing:-.6px;color:#e9f0fd;overflow-wrap:anywhere}
+.auto-overview-card small{font-size:9px;color:#8296b2;line-height:1.5}
+.auto-activity-line{display:flex;justify-content:space-between;gap:14px;border-top:1px solid #28354a;padding-top:15px;margin-top:19px;color:#a6b8d0;font-size:10px}
+.auto-operation-note{margin:10px 0 0;color:#778ba5;font-size:9px;line-height:1.7}
+.auto-main-panel{padding:21px 23px}
+.auto-main-panel .panel-heading{margin-bottom:10px}
+.auto-main-panel .paper-table td{vertical-align:middle}
+.auto-main-panel .paper-table td:first-child strong{display:block;color:#dce8f8;font-size:11px}
+.auto-advanced{padding:0!important;overflow:hidden}
+.auto-advanced>summary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:17px 23px;cursor:pointer;list-style:none;color:#c7d8ed}
+.auto-advanced>summary::-webkit-details-marker{display:none}
+.auto-advanced>summary strong{font-size:12px}
+.auto-advanced>summary span{font-size:10px;color:#8195ae}
+.auto-advanced>summary:after{content:'+';color:#8eacd3;font-size:18px}
+.auto-advanced[open]>summary:after{content:'−'}
+.auto-advanced-inner{border-top:1px solid #29384d;padding:19px 23px 22px}
+.auto-advanced-inner>.news-query{font-size:10px;line-height:1.7;margin:0 0 15px}
+.auto-advanced .auto-diagnostics{margin:18px 0}
+.auto-advanced .auto-run-log{margin:18px 0}
+.auto-advanced .auto-actions{margin-top:18px}
+.news-advanced{border:1px solid #28384e;border-radius:9px;background:#111b2a;margin:0 0 15px}
+.news-advanced>summary{cursor:pointer;padding:15px 17px;color:#9cb6d7;font-size:11px;font-weight:600}
+.news-advanced>.panel{margin:0;border:0;border-top:1px solid #28384e;border-radius:0}
+@media(max-width:1050px){.auto-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){
+  .auto-hero{padding:17px}.auto-hero-heading{display:grid}
+  .auto-hero-actions{justify-content:flex-start}
+  .auto-overview-grid{gap:8px}
+  .auto-overview-card{padding:12px}.auto-overview-card strong{font-size:17px}
+  .auto-activity-line{flex-direction:column;gap:6px}
+  .auto-main-panel{padding:17px}
+  .auto-advanced>summary{padding:15px 17px;align-items:flex-start}
+  .auto-advanced>summary span{display:none}
+  .auto-advanced-inner{padding:15px}
+}
