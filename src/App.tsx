@@ -69,57 +69,108 @@ export default function App() {
   }
 
   async function refresh() {
-    setLoading(true); setMessage('KB증권 계좌 조회 중...')
-    try {
-      const response = await fetch(API + '/api/kb/holdings', { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
-      const result = await response.json()
-      if (response.status === 401) { logout(); setError('세션이 만료되었습니다. 다시 로그인해 주세요.'); return }
-      if (!response.ok || !result.success) { setMessage(result.message || '조회 실패'); return }
-      const rows = result.data?.dataBody?.Record1 || []
-      setHoldings(rows.map((row: any) => ({ name: row.is_nm || '종목명 없음', code: row.is_no || '', quantity: Number(row.gnrl_q || 0), orderable: Number(row.ordr_psbl_q || 0) })))
-      const valuationResponse = await fetch(API + '/api/kb/valuation', { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
-      const valuationResult = await valuationResponse.json()
-      if (valuationResponse.ok && valuationResult.success) {
-        const valuationBody = valuationResult.data?.dataBody || {}
-        const valuationHeader = valuationResult.data?.dataHeader || {}
-        const summarySource = { ...valuationHeader, ...valuationBody }
-        const numericField = (value: unknown) => Number(String(value ?? '0').replace(/,/g, '')) || 0
-        setAccountSummary({
-          purchaseAmount: numericField(summarySource.byng_amt_sum),
-          valuationAmount: numericField(summarySource.val_amt_sum),
-          profitLoss: numericField(summarySource.val_pl_sum),
-          yieldRate: numericField(summarySource.val_yld_sum),
+    setLoading(true)
+    setMessage('KB증권 계좌 조회 중...')
+    setDepositMessage('예수금 조회 중...')
+    // Query independently: failure of holdings or valuation must not skip cash.
+    // Do not expose API tokens, account identifiers, or raw response bodies.
+    const failures: string[] = []
+    let sessionExpired = false
+    const requestAccount = async (endpoint: 'holdings' | 'valuation' | 'deposit', label: string): Promise<any | null> => {
+      try {
+        const response = await fetch(API + '/api/kb/' + endpoint, {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token },
+          signal: AbortSignal.timeout(45000),
         })
-        const valuationRows = valuationBody.Record1 || []
-        if (valuationRows.length) {
-          setHoldings(valuationRows.map((row: any) => ({
-            name: row.is_nm || '종목명 없음',
-            code: row.is_cd || '',
-            quantity: Number(row.hld_q || row.ec_q || 0),
-            orderable: Number(row.ordr_psbl_q || 0),
-            averagePrice: Number(row.byng_avr_prc || 0),
-            currentPrice: Number(row.now_prc || 0),
-            valuation: Number(row.val_amt || 0),
-            profitLoss: Number(row.val_pl || 0),
-            yieldRate: Number(row.val_yld || 0),
-          })))
+        if (response.status === 401) {
+          sessionExpired = true
+          failures.push(label + ': 로그인 세션 만료 (HTTP 401)')
+          return null
         }
-      } else {
-        setAccountSummary(null)
+        const raw = await response.text()
+        let result: any
+        try { result = JSON.parse(raw) }
+        catch {
+          failures.push(label + ': 응답 형식 오류 (HTTP ' + response.status + ', JSON 아님)')
+          return null
+        }
+        if (!response.ok || !result.success) {
+          const reason = String(result.message || 'API 조회 실패').slice(0, 180)
+          failures.push(label + ': ' + reason + ' (HTTP ' + response.status + (result.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')')
+          return null
+        }
+        return result
+      } catch (error) {
+        const reason = error instanceof Error ? error.name + ': ' + error.message : '원인 미확인'
+        failures.push(label + ': 요청 실패 (' + reason.slice(0, 150) + ')')
+        return null
       }
-      const depositResponse = await fetch(API + '/api/kb/deposit', { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
-      const depositResult = await depositResponse.json()
-      if (depositResponse.status === 401) { logout(); setError('세션이 만료되었습니다. 다시 로그인해 주세요.'); return }
-      if (depositResponse.ok && depositResult.success) {
-        setDeposit(depositResult.data?.dataBody || {})
-        setDepositMessage('예수금 조회 성공 · ' + new Date().toLocaleString('ko-KR'))
-      } else {
-        setDeposit(null)
-        setDepositMessage(depositResult.message || '예수금 조회 실패')
+    }
+    try {
+      const holdingsResult = await requestAccount('holdings', '보유 종목')
+      if (holdingsResult) {
+        const rows = holdingsResult.data?.dataBody?.Record1
+        if (Array.isArray(rows)) {
+          setHoldings(rows.map((row: any) => ({
+            name: row.is_nm || '종목명 없음', code: row.is_no || '',
+            quantity: Number(row.gnrl_q || 0), orderable: Number(row.ordr_psbl_q || 0),
+          })))
+        } else {
+          failures.push('보유 종목: 응답 Record1 형식 확인 필요')
+        }
       }
-      setMessage('마지막 조회: ' + new Date().toLocaleString('ko-KR'))
-    } catch { setMessage('계좌 조회 중 네트워크 오류가 발생했습니다.') }
-    finally { setLoading(false) }
+
+      if (!sessionExpired) {
+        const valuationResult = await requestAccount('valuation', '계좌 평가')
+        if (valuationResult) {
+          const valuationBody = valuationResult.data?.dataBody || {}
+          const valuationHeader = valuationResult.data?.dataHeader || {}
+          const summarySource = { ...valuationHeader, ...valuationBody }
+          const numericField = (value: unknown) => Number(String(value ?? '0').replace(/,/g, '')) || 0
+          setAccountSummary({
+            purchaseAmount: numericField(summarySource.byng_amt_sum),
+            valuationAmount: numericField(summarySource.val_amt_sum),
+            profitLoss: numericField(summarySource.val_pl_sum),
+            yieldRate: numericField(summarySource.val_yld_sum),
+          })
+          const valuationRows = valuationBody.Record1
+          if (Array.isArray(valuationRows) && valuationRows.length) {
+            setHoldings(valuationRows.map((row: any) => ({
+              name: row.is_nm || '종목명 없음',
+              code: row.is_cd || '',
+              quantity: Number(row.hld_q || row.ec_q || 0),
+              orderable: Number(row.ordr_psbl_q || 0),
+              averagePrice: Number(row.byng_avr_prc || 0),
+              currentPrice: Number(row.now_prc || 0),
+              valuation: Number(row.val_amt || 0),
+              profitLoss: Number(row.val_pl || 0),
+              yieldRate: Number(row.val_yld || 0),
+            })))
+          }
+        } else {
+          setAccountSummary(null)
+        }
+      }
+
+      if (!sessionExpired) {
+        const depositResult = await requestAccount('deposit', '예수금')
+        if (depositResult) {
+          setDeposit(depositResult.data?.dataBody || {})
+          setDepositMessage('예수금 조회 성공 · ' + new Date().toLocaleString('ko-KR'))
+        } else {
+          setDeposit(null)
+          setDepositMessage(failures.filter(item => item.startsWith('예수금:')).join(' / ') || '예수금 조회 실패')
+        }
+      }
+      if (sessionExpired) {
+        logout()
+        setError('세션이 만료되었습니다. 다시 로그인해 주세요.')
+        return
+      }
+      setMessage(failures.length ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function runAiAnalysis() {
