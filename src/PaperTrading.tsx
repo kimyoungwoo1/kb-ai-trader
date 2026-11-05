@@ -102,8 +102,10 @@ export default function PaperTrading({ token }: { token: string }) {
       setPrice(String(result.price))
       if (result.name) setName(result.name)
       setQuoteInfo('KB증권 KRX 현재가 · ' + new Date(result.checked_at).toLocaleString('ko-KR') + (result.changeRate != null ? ' · 등락률 ' + result.changeRate + '%' : ''))
-    } catch { setQuoteInfo('현재가 API 서버 연결에 실패했습니다.') }
-    finally { setQuoteLoading(false) }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      setQuoteInfo('현재가 조회 요청 실패: ' + detail.slice(0, 180))
+    } finally { setQuoteLoading(false) }
   }
 
   function executeTrade(event: React.FormEvent<HTMLFormElement>) {
