@@ -377,83 +377,37 @@ export default {
 
 
     if (url.pathname === "/api/kb/search-stocks" && request.method === "POST") {
-      if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB API 인증 정보가 설정되지 않았습니다." }, 503);
       let input: { query?: string };
       try { input = await request.json() as { query?: string }; }
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
-      const query = String(input.query || "").trim().toLocaleLowerCase("ko-KR");
+      const query = String(input.query || "").trim();
       if (query.length < 2) return json({ success: true, stocks: [] });
-      const cacheKey = new Request("https://kb-ai-trader-cache.local/kb-stock-master-v2");
-      let masterResponse = await caches.default.match(cacheKey);
-      if (!masterResponse) {
-        const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-        let tokenResponse: Response;
-        try {
-          tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
-            signal: AbortSignal.timeout(15000),
-          });
-        } catch (error) { return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "KB 인증 서버 연결 실패" }, 502); }
-        let tokenResult: any;
-        try { tokenResult = await tokenResponse.json(); } catch { return json({ success: false, message: "KB 인증 응답 오류" }, 502); }
-        const accessToken = tokenResult?.dataBody?.access_token;
-        if (!tokenResponse.ok || !accessToken) return json({ success: false, message: getKbErrorMessage(tokenResult) }, 502);
-        let response: Response;
-        try {
-          response = await fetch(`${baseUrl}/api/v1/siam4983`, {
-            method: "POST",
-            headers: { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: {} }),
-            signal: AbortSignal.timeout(30000),
-          });
-        } catch (error) { return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "종목 마스터 조회 실패" }, 502); }
-        if (!response.ok) return json({ success: false, message: "KB 종목 마스터 조회 실패 (HTTP " + response.status + ")" }, 502);
-        const raw = await response.text();
-        try { masterResponse = new Response(raw, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=21600" } }); await caches.default.put(cacheKey, masterResponse.clone()); }
-        catch { masterResponse = new Response(raw); }
+      const endpoint = new URL("https://m.stock.naver.com/front-api/search/autoComplete");
+      endpoint.searchParams.set("query", query);
+      endpoint.searchParams.set("target", "stock");
+      let response: Response;
+      try {
+        response = await fetch(endpoint.toString(), {
+          headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(12000),
+        });
+      } catch (error) {
+        return json({ success: false, message: error instanceof Error ? error.message.slice(0, 200) : "국내 종목 검색 서버 연결 실패" }, 502);
       }
-      let master: any;
-      try { master = await masterResponse.json(); } catch { return json({ success: false, message: "종목 마스터 데이터 형식 오류" }, 502); }
-      const body = master?.dataBody || {};
-      const outputHeader = master?.dataHeader || {};
-      const businessError = String(body.o_clsf || outputHeader.o_clsf || "");
-      if (businessError && businessError !== "00" && businessError !== "0") return json({ success: false, message: String(body.o_msg || outputHeader.o_msg || "KB 종목 마스터 업무 오류"), kb_result: businessError, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}) }, 502);
-      const rows: any[] = [];
-      const visited = new Set<any>();
-      const collectRows = (value: any, depth = 0) => {
-        if (!value || typeof value !== "object" || depth > 8 || visited.has(value)) return;
-        visited.add(value);
-        if (Array.isArray(value)) {
-          for (const item of value) collectRows(item, depth + 1);
-          return;
-        }
-        const hasName = value.hngl_is_nm || value.is_nm || value.hts_kor_is_nm || value.kor_is_nm || value.kor_is_name;
-        const hasCode = value.shrt_is_cd || value.shrt_cd || value.is_cd || value.stnd_is_cd;
-        if (hasName && hasCode) rows.push(value);
-        for (const nested of Object.values(value)) collectRows(nested, depth + 1);
-      };
-      collectRows(body);
-      const seen = new Set<string>();
-      const stocks = rows.filter((row: any) => {
-        const name = String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || row.kor_is_name || "").trim().toLocaleLowerCase("ko-KR");
-        const rawCode = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || row.stnd_is_cd || "").trim();
-        const code = rawCode.length > 6 ? rawCode.slice(-6) : rawCode.padStart(6, "0");
-        const key = code + "|" + name;
-        if (!name.includes(query) || !/^\\d{6}$/.test(code) || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }).slice(0, 20).map((row: any) => {
-        const rawCode = String(row.shrt_is_cd || row.shrt_cd || row.is_cd || row.stnd_is_cd || "").trim();
-        return {
-          name: String(row.hngl_is_nm || row.is_nm || row.hts_kor_is_nm || row.kor_is_nm || row.kor_is_name || "").trim(),
-          code: rawCode.length > 6 ? rawCode.slice(-6) : rawCode.padStart(6, "0"),
-          market: String(row.mrkt_ccd || row.dl_mkt_ccd || row.mkt_clsf || ""),
-        };
-      });
-      const diagnostic = rows.length ? "" : "KB 응답에 종목 레코드가 없습니다. response=" + Object.keys(master || {}).join(",") + " / dataBody=" + Object.keys(body || {}).join(",");
-      return json({ success: true, stocks, count: stocks.length, cached: true, message: diagnostic, response_keys: Object.keys(master || {}), body_keys: Object.keys(body || {}), source_fields: rows.length ? Object.keys(rows[0]) : Object.keys(body) });
+      if (!response.ok) return json({ success: false, message: "국내 종목 검색 실패 (HTTP " + response.status + ")" }, 502);
+      let payload: any;
+      try { payload = await response.json(); }
+      catch { return json({ success: false, message: "국내 종목 검색 응답이 JSON 형식이 아닙니다." }, 502); }
+      const candidates = payload?.result?.items || payload?.items || [];
+      const list: any[] = Array.isArray(candidates) ? candidates : [];
+      const stocks = list.map((item: any) => ({
+        name: String(item?.name || item?.stockName || item?.itemName || "").trim(),
+        code: String(item?.code || item?.itemCode || item?.stockCode || "").trim(),
+        market: String(item?.typeName || item?.marketName || item?.market || ""),
+      })).filter((item: any) => item.name && /^\\d{6}$/.test(item.code))
+        .filter((item: any, index: number, all: any[]) => all.findIndex((other: any) => other.code === item.code) === index)
+        .slice(0, 15);
+      return json({ success: true, stocks, count: stocks.length, source: "Naver Finance domestic autocomplete", message: stocks.length ? "" : "검색어와 일치하는 국내 상장 종목이 없습니다." });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
