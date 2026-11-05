@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Position = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number }
-type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number }
+type Trade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number; realizedPnl?: number }
 type PaperState = { cash: number; positions: Position[]; trades: Trade[] }
 const INITIAL_CASH = 1_000_000
 const STORAGE_KEY = 'kb-ai-trader-paper-v1'
@@ -36,6 +36,8 @@ export default function PaperTrading({ token }: { token: string }) {
   const invested = useMemo(() => account.positions.reduce((sum, p) => sum + p.quantity * p.averagePrice, 0), [account.positions])
   const total = account.cash + valuation
   const pnl = valuation - invested
+  const realizedPnl = useMemo(() => account.trades.reduce((sum, trade) => sum + (trade.realizedPnl || 0), 0), [account.trades])
+  const totalPnl = pnl + realizedPnl
   const persist = (next: PaperState) => { setAccount(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) }
 
 
@@ -113,7 +115,7 @@ export default function PaperTrading({ token }: { token: string }) {
     const cleanCode = code.trim()
     const cleanName = name.trim()
     const tradePrice = Number(price)
-    const tradeQty = Math.floor(Number(quantity))
+    const tradeQty = Number(quantity)
     if (!/^\d{6}$/.test(cleanCode) || !cleanName || !Number.isFinite(tradePrice) || tradePrice <= 0 || !Number.isInteger(tradeQty) || tradeQty <= 0) {
       setNotice('종목명을 검색해 목록에서 선택하고, 가격과 수량을 확인해 주세요.')
       return
@@ -134,7 +136,8 @@ export default function PaperTrading({ token }: { token: string }) {
       if (!existing || existing.quantity < tradeQty) { setNotice('보유 수량이 부족합니다.'); return }
       const amount = tradePrice * tradeQty
       const positions = account.positions.map(p => p.code === cleanCode ? { ...p, quantity: p.quantity - tradeQty, lastPrice: tradePrice } : p).filter(p => p.quantity > 0)
-      const trade: Trade = { id: crypto.randomUUID(), time: new Date().toISOString(), side, code: cleanCode, name: cleanName, quantity: tradeQty, price: tradePrice, amount }
+      const realized = (tradePrice - existing.averagePrice) * tradeQty
+      const trade: Trade = { id: crypto.randomUUID(), time: new Date().toISOString(), side, code: cleanCode, name: cleanName, quantity: tradeQty, price: tradePrice, amount, realizedPnl: realized }
       persist({ cash: account.cash + amount, positions, trades: [trade, ...account.trades] })
       setNotice(cleanName + ' ' + tradeQty + '주 가상 매도 체결 처리했습니다.')
     }
@@ -154,12 +157,14 @@ export default function PaperTrading({ token }: { token: string }) {
 
   return <section className="paper-page">
     <div className="page-heading"><div><div className="eyebrow">PAPER TRADING · NO REAL ORDERS</div><h1>가상 트레이딩</h1><p>초기 자금 100만 원 · 브라우저 로컬 저장 · 실계좌와 완전 분리</p></div><button className="outline-button" onClick={() => setConfirmReset(true)}>계좌 초기화</button></div>
-    <div className="paper-warning"><b>시세 연결 전 단계</b><span>현재 주문 체결가는 직접 입력한 기준 가격입니다. 실시간 시세·호가 기반 체결이나 AI 자동 주문은 아직 활성화되지 않았습니다. 수동 입력 가격을 실제 시장 가격으로 오인하지 않도록 구분합니다.</span></div>
+    <div className="paper-warning"><b>가상 거래 전용</b><span>매수·매도는 실제 주문이 아닌 가상 체결입니다. KB 현재가 조회 또는 직접 입력한 가격을 기준으로 계산하며, 보유 종목의 평가 가격은 마지막 체결가 또는 수동 수정 가격을 사용합니다.</span></div>
     <div className="stats-grid">
       <article className="stat-card"><div className="stat-top">가상 총자산</div><div className="stat-value">{won(total)}</div><div className="stat-foot">가상 예수금 + 보유 평가금액</div></article>
       <article className="stat-card"><div className="stat-top">가상 예수금</div><div className="stat-value">{won(account.cash)}</div><div className="stat-foot">가상 주문에 사용할 수 있는 금액</div></article>
       <article className="stat-card"><div className="stat-top">보유 평가금액</div><div className="stat-value">{won(valuation)}</div><div className="stat-foot">마지막 입력 기준 가격</div></article>
       <article className="stat-card"><div className="stat-top">평가손익</div><div className={'stat-value ' + (pnl < 0 ? 'negative-value' : 'positive-value')}>{pnl > 0 ? '+' : ''}{won(pnl)}</div><div className="stat-foot">매입 평균가 대비 평가손익 · 비용 미반영</div></article>
+      <article className="stat-card"><div className="stat-top">실현손익</div><div className={'stat-value ' + (realizedPnl < 0 ? 'negative-value' : 'positive-value')}>{realizedPnl > 0 ? '+' : ''}{won(realizedPnl)}</div><div className="stat-foot">매도 체결로 확정된 손익</div></article>
+      <article className="stat-card"><div className="stat-top">누적손익</div><div className={'stat-value ' + (totalPnl < 0 ? 'negative-value' : 'positive-value')}>{totalPnl > 0 ? '+' : ''}{won(totalPnl)}</div><div className="stat-foot">평가손익 + 실현손익 · 비용 미반영</div></article>
     </div>
     <div className="paper-grid">
       <section className="panel"><div className="panel-heading"><div><h3>가상 주문</h3><span>MANUAL PAPER ORDER</span></div></div>
@@ -179,11 +184,11 @@ export default function PaperTrading({ token }: { token: string }) {
         </form>
       </section>
       <section className="panel"><div className="panel-heading"><div><h3>보유 종목</h3><span>VIRTUAL POSITIONS</span></div></div>
-        {account.positions.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>종목</th><th>수량</th><th>평균가</th><th>기준가 수정</th><th>평가손익</th></tr></thead><tbody>{account.positions.map(p => <tr key={p.code}><td>{p.name}<small>{p.code}</small></td><td>{p.quantity.toLocaleString()}주</td><td>{Math.round(p.averagePrice).toLocaleString()}원</td><td><input aria-label={p.name + ' 기준 가격'} type="number" min="1" defaultValue={p.lastPrice} onBlur={e => updateMark(p, e.target.value)} /></td><td className={p.lastPrice >= p.averagePrice ? 'positive-value' : 'negative-value'}>{((p.lastPrice - p.averagePrice) * p.quantity).toLocaleString('ko-KR')}원</td></tr>)}</tbody></table></div> : <div className="ai-empty">아직 보유한 가상 종목이 없습니다. 왼쪽에서 가상 매수 주문을 입력하세요.</div>}
+        {account.positions.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>종목</th><th>수량</th><th>평균 매수가</th><th>평가 기준가 수정</th><th>평가금액</th><th>평가손익</th><th>수익률</th></tr></thead><tbody>{account.positions.map(p => { const positionPnl = (p.lastPrice - p.averagePrice) * p.quantity; const cost = p.averagePrice * p.quantity; const rate = cost ? positionPnl / cost * 100 : 0; return <tr key={p.code}><td>{p.name}<small>{p.code}</small></td><td>{p.quantity.toLocaleString()}주</td><td>{Math.round(p.averagePrice).toLocaleString()}원</td><td><input aria-label={p.name + ' 평가 기준 가격'} type="number" min="1" defaultValue={p.lastPrice} onBlur={e => updateMark(p, e.target.value)} /></td><td>{won(p.lastPrice * p.quantity)}</td><td className={positionPnl >= 0 ? 'positive-value' : 'negative-value'}>{positionPnl > 0 ? '+' : ''}{won(positionPnl)}</td><td className={rate >= 0 ? 'positive-value' : 'negative-value'}>{rate > 0 ? '+' : ''}{rate.toFixed(2)}%</td></tr> })}</tbody></table></div> : <div className="ai-empty">아직 보유한 가상 종목이 없습니다. 왼쪽에서 가상 매수 주문을 입력하세요.</div>}
       </section>
     </div>
     <section className="panel"><div className="panel-heading"><div><h3>가상 체결 내역</h3><span>SIMULATED EXECUTIONS · {account.trades.length}건</span></div></div>
-      {account.trades.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>시간</th><th>구분</th><th>종목</th><th>수량</th><th>체결가</th><th>거래금액</th></tr></thead><tbody>{account.trades.map(t => <tr key={t.id}><td>{new Date(t.time).toLocaleString('ko-KR')}</td><td className={t.side === 'BUY' ? 'negative-value' : 'positive-value'}>{t.side === 'BUY' ? '매수' : '매도'}</td><td>{t.name}<small>{t.code}</small></td><td>{t.quantity}주</td><td>{t.price.toLocaleString()}원</td><td>{won(t.amount)}</td></tr>)}</tbody></table></div> : <div className="ai-empty">가상 체결 내역이 여기에 누적됩니다.</div>}
+      {account.trades.length ? <div className="table-wrap"><table className="paper-table"><thead><tr><th>시간</th><th>구분</th><th>종목</th><th>수량</th><th>체결가</th><th>거래금액</th><th>실현손익</th></tr></thead><tbody>{account.trades.map(t => <tr key={t.id}><td>{new Date(t.time).toLocaleString('ko-KR')}</td><td className={t.side === 'BUY' ? 'negative-value' : 'positive-value'}>{t.side === 'BUY' ? '매수' : '매도'}</td><td>{t.name}<small>{t.code}</small></td><td>{t.quantity}주</td><td>{t.price.toLocaleString()}원</td><td>{won(t.amount)}</td><td className={(t.realizedPnl || 0) >= 0 ? 'positive-value' : 'negative-value'}>{t.side === 'SELL' ? ((t.realizedPnl || 0) > 0 ? '+' : '') + won(t.realizedPnl || 0) : '—'}</td></tr>)}</tbody></table></div> : <div className="ai-empty">가상 체결 내역이 여기에 누적됩니다.</div>}
     </section>
     {confirmReset && <div className="paper-reset"><span>가상 계좌와 모든 체결 내역을 초기화할까요?</span><button onClick={reset}>초기화 확인</button><button onClick={() => setConfirmReset(false)}>취소</button></div>}
   </section>
