@@ -18,6 +18,7 @@ export type TradeSignal = {
   volumeRatio: number | null
   foreignToday: number | null
   foreignPositiveDays: number
+  flowReliable: boolean
   entryTrigger: number | null
   stopReference: number | null
   maxQuantity: number
@@ -42,13 +43,20 @@ export function generateTradeSignals(stocks: SignalInput[], maxPositionWon = 200
           .filter(item => /^\d{8}$/.test(String(item.dt || '')))
           .slice(0, 5)
       : []
+    const now = new Date()
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+    const marketClosed = (kst.getUTCHours() > 15 || (kst.getUTCHours() === 15 && kst.getUTCMinutes() >= 30))
+    const currentDay = kst.toISOString().slice(0, 10).replace(/-/g, '')
+    const lastRecordDate = rows[0] ? String(rows[0].dt) : ''
     const previousVolume = rows.length > 1 ? numeric(rows[1].vlm) : null
-    const volumeRatio = volume !== null && previousVolume !== null && previousVolume > 0
+    // Full-day / full-day comparisons only; intraday vs yesterday full day is misleading.
+    const volumeRatio = marketClosed && lastRecordDate === currentDay && volume !== null && previousVolume !== null && previousVolume > 0
       ? volume / previousVolume : null
     const flows = rows.map(row => numeric(row.fgnr))
     const foreignToday = flows[0] ?? null
     const foreignPositiveDays = flows.filter(value => value !== null && value > 0).length
     const repeatedFlow = rows.length > 1 && flows[0] !== null && flows[0] === flows[1]
+    const flowReliable = rows.length >= 3 && !repeatedFlow && rows.every((row, idx) => idx === 0 || String(rows[idx - 1].dt) !== String(row.dt))
     const reasons: string[] = []
     let score = 0
     const complete = price !== null && price > 0 && rate !== null && volume !== null && rows.length >= 2 && foreignToday !== null
@@ -59,20 +67,21 @@ export function generateTradeSignals(stocks: SignalInput[], maxPositionWon = 200
       else if (rate <= -3) { score -= 2; reasons.push('당일 낙폭 3% 이상: 반등 확인 필요') }
       else if (rate > 7) { score -= 2; reasons.push('당일 급등: 추격 진입 위험') }
       else reasons.push('가격 방향성 추가 확인 필요')
+      if (volumeRatio === null) reasons.push('장중 거래량을 전일 전체 거래량과 비교하지 않음 · 장 마감 후 비교')
       if (volumeRatio !== null) {
         if (volumeRatio >= 1.3 && volumeRatio <= 3) { score += 1; reasons.push('거래량 전일 대비 증가') }
         else if (volumeRatio > 3) reasons.push('거래량 급증: 이상 거래 여부 확인')
         else reasons.push('거래량 증가 확인되지 않음')
       }
-      if (repeatedFlow) {
-        reasons.push('투자자 수급 값이 서로 다른 날짜에 동일: API 검증 전 점수 미반영')
+      if (!flowReliable) {
+        reasons.push('투자자 수급 반복·일자 검증 미통과: 수급 점수 제외')
       } else {
         if (foreignToday > 0 && foreignPositiveDays >= 3) { score += 2; reasons.push('최근 관측일 중 외국인 순매수 우세') }
         if (foreignToday < 0 && foreignPositiveDays === 0) { score -= 1; reasons.push('외국인 수급 약세') }
       }
     }
     const status: TradeSignal['status'] = !complete || stock.quoteError || stock.investorError
-      ? '데이터 부족' : score <= -1 ? '위험 주의' : score >= 3 && !repeatedFlow ? '관찰 후보' : '조건 미충족'
+      ? '데이터 부족' : score <= -1 ? '위험 주의' : score >= 3 && flowReliable ? '관찰 후보' : '조건 미충족'
     const entryTrigger = status === '관찰 후보' && price !== null ? Math.ceil(price * 1.01) : null
     const stopReference = entryTrigger !== null ? Math.floor(entryTrigger * 0.97) : null
     const maxQuantity = entryTrigger !== null ? Math.floor(maxPositionWon / entryTrigger) : 0
@@ -80,7 +89,7 @@ export function generateTradeSignals(stocks: SignalInput[], maxPositionWon = 200
     if (entryTrigger !== null && maxQuantity === 0) reasons.push('종목당 20만원 한도에서 1주 매수 불가')
     return {
       code: stock.code, name: stock.name, status, score, price, volumeRatio,
-      foreignToday, foreignPositiveDays, entryTrigger, stopReference, maxQuantity, reasons,
+      foreignToday, foreignPositiveDays, flowReliable, entryTrigger, stopReference, maxQuantity, reasons,
     }
   }).sort((a, b) => b.score - a.score).slice(0, 10)
 }
