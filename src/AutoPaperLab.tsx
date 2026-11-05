@@ -20,12 +20,11 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
   const save = (next: AutoAccount) => { localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next)); setAccount(next) }
   useEffect(() => {
     if (!checkedAt || !quotes.length) return
-    setAccount(previous => {
-      if (!previous.enabled || previous.lastCycle === checkedAt) return previous
-      const next = runAutoCycle(previous, signals, quotes, checkedAt)
-      localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next))
-      return next
-    })
+    const current = readAutoAccount()
+    if (!current.enabled || current.lastCycle === checkedAt) return
+    const next = runAutoCycle(current, signals, quotes, checkedAt)
+    localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next))
+    setAccount(next)
   }, [checkedAt, quotes, signals])
   function toggle() {
     const next = { ...account, enabled: !account.enabled,
