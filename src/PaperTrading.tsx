@@ -5,7 +5,6 @@ import { readAutoAccount, AUTO_STORAGE_KEY, newAutoAccount } from './autoPaper'
 type Position = PaperLedger['positions'][number]
 type Trade = PaperLedger['trades'][number]
 type PaperState = PaperLedger
-const emptyState: PaperState = freshLedger()
 const won = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const readState = readPaperLedger
 
