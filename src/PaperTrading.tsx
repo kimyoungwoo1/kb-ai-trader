@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PAPER_EVENT, freshLedger, readPaperLedger, writePaperLedger, type PaperLedger } from './paperLedger'
+import { readAutoAccount, AUTO_STORAGE_KEY, newAutoAccount } from './autoPaper'
 
 type Position = PaperLedger['positions'][number]
 type Trade = PaperLedger['trades'][number]
 type PaperState = PaperLedger
-const INITIAL_CASH = 1_000_000
 const emptyState: PaperState = freshLedger()
 const won = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const readState = readPaperLedger
@@ -213,9 +213,16 @@ export default function PaperTrading({ token }: { token: string }) {
   }
 
   function reset() {
-    persist(emptyState)
+    const auto = readAutoAccount()
+    if (auto.enabled || auto.positions.length) {
+      setConfirmReset(false)
+      setNotice('자동 가상매매가 실행 중이거나 자동 보유 포지션이 있습니다. 자동 가상매매를 중지하고 포지션을 먼저 정리해야 공유 계좌를 초기화할 수 있습니다.')
+      return
+    }
+    localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(newAutoAccount()))
+    persist(freshLedger())
     setConfirmReset(false)
-    setNotice('가상 계좌를 초기화했습니다. 초기 자금은 100만 원입니다.')
+    setNotice('공유 가상 계좌와 수동·자동 체결 기록을 초기화했습니다. 초기 자금은 100만 원입니다.')
   }
 
   return <section className="paper-page">
