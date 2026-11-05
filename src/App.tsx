@@ -10,7 +10,7 @@ type InvestorDay = { dt: string; indv: number; fgnr: number; scrt: number }
 function getInvestorDays(stock: MarketStock): InvestorDay[] {
   const rows = (stock.investor as { out?: unknown } | null)?.out
   if (!Array.isArray(rows)) return []
-  return rows.filter((row: any) => /^\\d{8}$/.test(String(row?.dt || ''))).slice(0, 5).map((row: any) => ({
+  return rows.filter((row: any) => /^\d{8}$/.test(String(row?.dt || ''))).slice(0, 5).map((row: any) => ({
     dt: String(row.dt),
     indv: Number(row.indv) || 0,
     fgnr: Number(row.fgnr) || 0,
