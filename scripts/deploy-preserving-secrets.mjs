@@ -37,9 +37,9 @@ function walk(root){
 }
 async function main(){
   ensure(existsSync('worker/wrangler.jsonc'),'저장소 루트에서 실행해야 합니다.')
-  console.log('1/7 현재 정상 롤백 버전 검증')
-  const history=exec('npx',['wrangler','deployments','list','--config','./wrangler.jsonc'],join(cwd,'worker'))
-  ensure(history.slice(history.lastIndexOf('Created:')).includes(knownGood),'현재 운영 버전이 dafe0360이 아니어서 중단했습니다.')
+  console.log('1/7 정상 Secret 보유 버전 검증 (현재 운영 버전 번호 무관)')
+  // A rollback or an automatic deployment can change the currently active version.
+  // The source version only needs to exist with the expected bindings.
   const auth=parseJson(exec('npx',['wrangler','auth','token','--json'],join(cwd,'worker')))
   ensure(['oauth','api_token'].includes(auth.type)&&auth.token,'Wrangler 인증 조회 실패')
   token=auth.token
@@ -54,9 +54,9 @@ async function main(){
       throw Error('Cloudflare HTTP '+response.status+': '+(value.errors||[]).map(x=>x.code+': '+x.message).join(' / '))
     return value.result??value
   }
-  const w=await api(root+'/workers/workers/'+name)
-  ensure(w.id&&w.name===name,'배포 대상 Worker 불일치')
-  const old=await api(root+'/workers/workers/'+encodeURIComponent(w.id)+'/versions/'+knownGood)
+  // The API accepts the Worker name directly as worker_id. Avoid fetching unrelated account data.
+  const workerId=encodeURIComponent(name)
+  const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
   verifyVersion(old,'정상 롤백 버전')
   console.log('2/7 테스트 및 프런트엔드 빌드')
   exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs'])
@@ -69,7 +69,7 @@ async function main(){
   for(const file of files){
     const path='/'+relative(dir,file).split(sep).join('/')
     const data=readFileSync(file)
-    const hash=createHash('sha256').update(data.toString('base64')+extname(file).slice(1)).digest('hex').slice(0,32)
+    const hash=createHash('sha256').update(data).digest('hex').slice(0,32)
     ensure(!assets.has(hash),'정적 파일 해시 충돌')
     assets.set(hash,{data,type:mimetype(file)})
     manifest[path]={hash,size:data.length}
@@ -104,7 +104,7 @@ async function main(){
   }
   console.log('5/7 다섯 Secret을 정상 버전에서 상속한 새 버전 업로드')
   const config=JSON.parse(readFileSync(join(cwd,'worker/wrangler.jsonc'),'utf8'))
-  const created=await api(root+'/workers/workers/'+encodeURIComponent(w.id)+'/versions',{
+  const created=await api(root+'/workers/workers/'+workerId+'/versions',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       main_module:'worker.mjs',
@@ -120,7 +120,7 @@ async function main(){
   })
   ensure(created.id,'새 버전 생성 응답에 ID가 없음')
   console.log('6/7 새 버전 Secret 바인딩 검증')
-  verifyVersion(await api(root+'/workers/workers/'+encodeURIComponent(w.id)+'/versions/'+created.id),'신규 버전')
+  verifyVersion(await api(root+'/workers/workers/'+workerId+'/versions/'+created.id),'신규 버전')
   console.log('7/7 검증 완료. 운영에 새 버전 배포')
   await api(root+'/workers/scripts/'+name+'/deployments',{
     method:'POST',headers:{'Content-Type':'application/json'},
