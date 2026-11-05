@@ -65,7 +65,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   }
   if (!inSession(now)) return { ...account, lastMessage: '국내 주식 정규장 시간(평일 09:00~15:30 KST)에만 가상 체결합니다.' }
   if (account.lastCycle === checkedAt) return account
-  const quoteMap = new Map(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number]))
+  const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
   let cash = account.cash
   let positions = account.positions.map(p => ({ ...p }))
   let pending = account.pending.map(p => ({ ...p }))
@@ -97,7 +97,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     return false
   })
   // Discard pending signals whose conditions disappeared, then update watch targets.
-  const valid = new Map(signals.filter(s => s.status === '관찰 후보' && s.flowReliable && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s]))
+  const valid = new Map<string, TradeSignal>(signals.filter(s => s.status === '관찰 후보' && s.flowReliable && positive(s.entryTrigger) && positive(s.stopReference)).map(s => [s.code, s] as [string, TradeSignal]))
   pending = pending.filter(p => valid.has(p.code) && !positions.some(position => position.code === p.code))
   for (const signal of signals) {
     if (!valid.has(signal.code) || positions.some(p => p.code === signal.code) || pending.some(p => p.code === signal.code) || alreadyTradedToday.has(signal.code)) continue
