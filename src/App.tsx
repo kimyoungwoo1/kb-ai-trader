@@ -10,6 +10,7 @@ import { canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState, startCloudAu
 import { getAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 import { writeScreeningSnapshot } from './screeningHistory'
+import { isServerPaperMode, serverPaperAction, setServerPaperMode } from './serverPaperClient'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -78,6 +79,7 @@ export default function App() {
   const [watchlistText, setWatchlistText] = useState(() => localStorage.getItem('kb-trader-watchlist') || '')
   const [activePage, setActivePage] = useState<'dashboard' | 'auto' | 'analytics' | 'news' | 'paper'>('dashboard')
   const [autoHeartbeat, setAutoHeartbeat] = useState(() => Date.now())
+  const [serverMode, setServerMode] = useState(false)
   useEffect(() => {
     const refreshStatus = () => setAutoHeartbeat(Date.now())
     window.addEventListener(AUTO_EVENT, refreshStatus)
@@ -468,7 +470,7 @@ export default function App() {
       // A stale or inaccessible information source stops new entries, never exits.
       // A remote market scan can outlive a previous lease. Revalidate the D1
       // single-trader permission immediately before committing any paper fills.
-      if (canExecutePaperTrade() && await verifyTradingLease()) {
+      if (!isServerPaperMode() && canExecutePaperTrade() && await verifyTradingLease()) {
         const latest = readAutoAccount()
         if (latest.enabled && latest.lastCycle !== checkedAt && canExecutePaperTrade()) {
           writeAutoAccount(runAutoCycle(latest, evaluated.signals, collected, checkedAt))
@@ -550,7 +552,7 @@ export default function App() {
       // Re-read account after awaits and never write stale positions back over user actions.
       // Check the server lease after all asynchronous KB quote reads, then
       // re-read local state to avoid using a stale pre-network portfolio.
-      if (!canExecutePaperTrade() || !(await verifyTradingLease())) return
+      if (isServerPaperMode() || !canExecutePaperTrade() || !(await verifyTradingLease())) return
       const latest = readAutoAccount()
       if (!latest.enabled || !isKrxSession() || !canExecutePaperTrade()) return
       if (!valid.length) {
@@ -597,13 +599,41 @@ export default function App() {
   marketScanRunner.current = loadBroadMarketData
   useEffect(() => {
     if (!token) return
-    return startCloudAutoSync(token)
+    let cancelled = false
+    let cleanupLegacy: (()=>void) | undefined
+    let interval: number | undefined
+    void (async () => {
+      try {
+        const status = await serverPaperAction(token,'status')
+        if (cancelled) return
+        if (status.migrated) {
+          setServerMode(true)
+          interval = window.setInterval(() => {
+            void serverPaperAction(token,'status').catch(() => {})
+          }, 15_000)
+        } else {
+          setServerPaperMode(false)
+          setServerMode(false)
+          cleanupLegacy = startCloudAutoSync(token)
+        }
+      } catch {
+        // Fail closed: never start the legacy browser engine when the server
+        // account status is unknown (e.g. lost connectivity).
+        setServerPaperMode(true)
+        setServerMode(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+      cleanupLegacy?.()
+      if (interval !== undefined) window.clearInterval(interval)
+    }
   }, [token])
 
   useEffect(() => {
     if (!token) return
     const poll = () => {
-      if (!isKrxSession() || !readAutoAccount().enabled || !canExecutePaperTrade() || marketScanRef.current) return
+      if (isServerPaperMode() || !isKrxSession() || !readAutoAccount().enabled || !canExecutePaperTrade() || marketScanRef.current) return
       void marketScanRunner.current()
     }
     // Market scans no longer depend on the visible page. Browser must remain open.
@@ -628,7 +658,7 @@ export default function App() {
     if (!token) return
     // Thirty-second monitoring for held/queued securities, independent of page navigation.
     // Browser tabs can throttle timers; this is not a server-side stop order.
-    const poll = () => { if (readAutoAccount().enabled && canExecutePaperTrade()) void fastWatchRunner.current() }
+    const poll = () => { if (!isServerPaperMode() && readAutoAccount().enabled && canExecutePaperTrade()) void fastWatchRunner.current() }
     poll()
     let wasReady = canExecutePaperTrade()
     const onCloudReady = () => {
@@ -694,7 +724,7 @@ export default function App() {
       </button>
       <div className="connection">KB증권 계좌 연동</div>
     </div></header><div className="content">{activePage === 'dashboard' && <section className="page-heading"><div><div className="eyebrow">PERSONAL TRADING SPACE</div><h1>계좌 현황</h1><p>KB증권 실계좌 보유 종목 조회</p></div><button className="outline-button" onClick={refresh} disabled={loading}>{loading ? '조회 중...' : '계좌 새로고침'}</button></section>}
-      {activePage === 'paper' ? <PaperTrading token={token} /> : activePage === 'analytics'
+      {activePage === 'paper' ? (serverMode ? <section className="panel auto-main-panel"><h2>서버 가상매매 원장</h2><p>서버 실행 모드입니다. 기존 브라우저 수동 매매는 데이터 충돌 방지를 위해 비활성화했습니다. 자동 가상매매 및 매매 분석 메뉴에서 서버 보유종목과 거래 기록을 확인하세요.</p></section> : <PaperTrading token={token} />) : activePage === 'analytics'
         ? <TradingAnalytics
             signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             catalysts={catalysts}
@@ -710,7 +740,7 @@ export default function App() {
             token={token}
             scanLoading={marketDataLoading}
             scanMessage={marketDataMessage}
-            onStart={() => { if (isKrxSession() && !marketScanRef.current) void marketScanRunner.current() }}
+            onStart={() => { if (!isServerPaperMode() && isKrxSession() && !marketScanRef.current) void marketScanRunner.current() }}
             onOpenAnalytics={() => setActivePage('analytics')}
           />
         : activePage === 'dashboard' ? <>
