@@ -34,20 +34,31 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
   if (cached?.key === key && Date.now() < cached.expiresAt) return cached.token
   if (inflight?.then && inflightKey === key) return inflight
   const load = async (): Promise<string> => {
-    let response: Response
-    try {
-      response = await fetch(kbBaseUrl(env) + '/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataHeader: { ipAddr: '127.0.0.1', macAddr: '00:00:00:00:00:00' },
-          dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: 'client_credentials' },
-        }),
-        signal: AbortSignal.timeout(12_000),
-      })
-    } catch {
-      throw new KbAuthError('KB 인증 서버 연결 실패', 502)
+    let response: Response | undefined
+    // Retry only transient transport failures, never KB-issued HTTP errors or
+    // a rejected token. All concurrent requests share this one in-flight promise.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await fetch(kbBaseUrl(env) + '/oauth2/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataHeader: { ipAddr: '127.0.0.1', macAddr: '00:00:00:00:00:00' },
+            dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: 'client_credentials' },
+          }),
+          signal: AbortSignal.timeout(12_000),
+        })
+        break
+      } catch (error) {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 400))
+          continue
+        }
+        const reason = error instanceof Error && error.name === 'TimeoutError' ? '응답 시간 초과' : '네트워크 연결 실패'
+        throw new KbAuthError('KB 인증 서버 '+reason+' (재시도 2회 실패)', 502)
+      }
     }
+    if (!response) throw new KbAuthError('KB 인증 서버 응답 없음', 502)
     let data: any
     try { data = await response.json() } catch { throw new KbAuthError('KB 인증 응답 형식 오류', 502) }
     const token = data?.dataBody?.access_token
