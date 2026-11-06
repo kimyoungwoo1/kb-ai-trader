@@ -248,6 +248,67 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     dailyStats: dailyStatsAfterRun(account, '검사 완료', executed, now),
     runs: [run, ...(account.runs || [])].slice(0, 30) }
 }
+/**
+ * Explicit, user-confirmed trial liquidation using a VERIFIED current KB quote.
+ * Unlike a synthetic engine rehearsal, this settles the selected holding in the
+ * shared paper ledger. The separate test flag keeps strategy KPIs honest.
+ * Real brokerage trading endpoints are never called.
+ */
+export function runAutoTrialSell(
+  account: AutoAccount,
+  code: string,
+  quote: { price: number; checkedAt: string },
+  now = new Date(),
+  paperStore: { read: () => PaperLedger; write: (value: PaperLedger) => void } =
+    { read: readPaperLedger, write: writePaperLedger },
+): AutoAccount {
+  if (!account.enabled) throw Error('자동 가상매매가 중지되어 있습니다.')
+  if (!inSession(now)) throw Error('시험 청산은 정규장에만 실행할 수 있습니다.')
+  if (!/^\\d{6}$/.test(code)) throw Error('종목코드가 올바르지 않습니다.')
+  if (!positive(quote.price)) throw Error('유효한 KB 현재가를 확인하지 못했습니다.')
+  const at = Date.parse(quote.checkedAt)
+  if (!Number.isFinite(at) || at > now.getTime() + 15_000 || now.getTime() - at > 120_000)
+    throw Error('조회한 시세가 2분 이내의 최신 가격이 아닙니다.')
+  const position = account.positions.find(p => p.code === code)
+  if (!position) throw Error('자동 전략 보유 종목이 아니거나 이미 청산되었습니다.')
+  if (!(position.quantity > 0 && positive(position.entry))) throw Error('가상 보유 정보가 올바르지 않습니다.')
+  const ledger = paperStore.read()
+  const idx = ledger.positions.findIndex(p => p.code === code)
+  if (idx < 0 || ledger.positions[idx].quantity < position.quantity)
+    throw Error('공유 가상계좌의 보유 수량이 맞지 않아 시험 청산을 취소했습니다.')
+
+  const mark = quote.price
+  const sellPrice = won(mark * (1 - SELL_SLIPPAGE))
+  const amount = sellPrice * position.quantity
+  const costs = won(amount * SELL_COST)
+  const pnl = amount - costs - position.entry * position.quantity - position.buyCost
+  const reason = '시험 청산 · 사용자 확인 후 KB 현재가 기준 가상매도'
+  const id = now.toISOString() + '-trial-sell-' + code
+  const remaining = ledger.positions[idx].quantity - position.quantity
+  const nextLedgerPositions = ledger.positions.map((p, i) =>
+    i === idx ? { ...p, quantity: remaining, lastPrice: mark, quoteUpdatedAt: quote.checkedAt } : p,
+  ).filter(p => p.quantity > 0)
+  const fill: AutoFill = { id, at: now.toISOString(), code, name: position.name,
+    side: 'SELL', quantity: position.quantity, price: sellPrice, costs, pnl, reason, test: true }
+  const trade: PaperTrade = { id, time: now.toISOString(), side: 'SELL', code,
+    name: position.name, quantity: position.quantity, price: sellPrice,
+    amount, realizedPnl: pnl, source: 'test', costs, reason }
+  paperStore.write({
+    ...ledger,
+    cash: ledger.cash + amount - costs,
+    positions: nextLedgerPositions,
+    trades: [trade, ...ledger.trades],
+  })
+  return {
+    ...account,
+    cash: ledger.cash + amount - costs,
+    positions: account.positions.filter(p => p.code !== code),
+    fills: [fill, ...account.fills].slice(0, 1000),
+    lastMessage: position.name + ' ' + position.quantity + '주 시험 청산 완료 · '
+      + '자동 전략 성과에서는 제외됩니다.',
+  }
+}
+
 export function readAutoAccount(): AutoAccount {
   try {
     const saved = JSON.parse(localStorage.getItem(AUTO_STORAGE_KEY) || 'null') as AutoAccount | null
