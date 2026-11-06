@@ -28,7 +28,7 @@ function summarize(row: StateRow | null) {
   return { success: true, migrated: true, mode: row.mode, revision: row.revision,
     updated_at: row.updated_at, last_error: row.last_error, snapshot };
 }
-export async function serverPaperApi(db: Db | undefined, action: string): Promise<Response> {
+export async function serverPaperApi(db: Db | undefined, action: string, expectedSignature = ''): Promise<Response> {
   if (!db) return ok({ success: false, message: 'PAPER_DB 연결이 필요합니다.' }, 503);
   try {
     const row = await state(db);
@@ -39,6 +39,8 @@ export async function serverPaperApi(db: Db | undefined, action: string): Promis
       if (!current) return ok({ success:false, message:'D1에 기존 가상매매 백업이 없습니다. 먼저 현재 기록을 백업하세요.' }, 409);
       const snapshot = JSON.parse(current.snapshot_json);
       if (!valid(snapshot)) return ok({ success:false, message:'기존 D1 백업 형식을 검증할 수 없습니다.' }, 409);
+      const serverSignature = [snapshot.ledger.trades.length,snapshot.ledger.trades.slice(0,4).map((x:any)=>x.id).join('|'),snapshot.account.fills.length,snapshot.account.fills.slice(0,4).map((x:any)=>x.id).join('|')].join(':');
+      if (!expectedSignature || expectedSignature !== serverSignature) return ok({success:false, message:'현재 브라우저 거래 기록과 D1 백업이 다릅니다. 최신 기록을 먼저 백업·복원하고 다시 시도하세요.'},409);
       const now = Date.now();
       // Atomic check: a still-running browser trader must not be migrated.
       const imported = { ...snapshot, savedAt: new Date(now).toISOString(),
@@ -76,8 +78,8 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
   const slot = Math.floor(date.getTime() / 60_000);
   if (row.cycle_slot >= slot) return;
   // A single conditional write reserves this minute across all Worker instances.
-  const reserved = await db.prepare('UPDATE server_paper_state SET revision=revision+1, cycle_slot=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot < ?')
-    .bind(slot,row.revision,slot).run();
+  const reserved = await db.prepare('UPDATE server_paper_state SET revision=revision+1, cycle_slot=?, busy_until=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot < ? AND busy_until < ?')
+    .bind(slot,date.getTime()+180_000,row.revision,slot,date.getTime()).run();
   if ((reserved.meta?.changes ?? 0) !== 1) return;
   const writeRevision = row.revision+1;
   let snapshot: Snapshot;
@@ -153,12 +155,12 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       message = '보유·감시 종목 '+validQuotes.length+'/'+symbols.length+'건';
     }
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
-    const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
-      .bind(JSON.stringify(snapshot),new Date().toISOString(),message,writeRevision,slot).run();
+    const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=NULL, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+      .bind(JSON.stringify(snapshot),new Date().toISOString(),writeRevision,slot).run();
     if ((res.meta?.changes ?? 0)!==1) return; // Stop/start or another write won; never overwrite.
   } catch (error) {
     const diagnostic = error instanceof Error ? error.message.slice(0,180) : '서버 감시 실패';
-    await db.prepare('UPDATE server_paper_state SET last_error=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+    await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
   }
 }
