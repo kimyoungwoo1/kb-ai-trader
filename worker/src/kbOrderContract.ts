@@ -111,3 +111,65 @@ export async function lookupKbOrder(env:KbCredentials,day:string,orderNo:string,
  }
  throw Error('KB 체결조회 페이지 상한 초과 · 주문 상태 미확정')
 }
+
+/** Read-only discovery: users never need to remember a historical order number.
+ * SSQM2341 is date-scoped and limited to domestic stocks. Old purchases and
+ * foreign equity transactions may not appear and must NOT be inferred missing.
+ */
+export function recentKbTradingDates(now=new Date(),days:1|3|5=3):string[]{
+ if(![1,3,5].includes(days)||!Number.isFinite(now.getTime()))throw Error('최근 조회 범위 오류')
+ const date=new Date(now.getTime()+9*3600_000)
+ date.setUTCHours(12,0,0,0)
+ const result:string[]=[]
+ while(result.length<days){
+  if(date.getUTCDay()>=1&&date.getUTCDay()<=5)
+   result.push(date.toISOString().slice(0,10).replace(/-/g,''))
+  date.setUTCDate(date.getUTCDate()-1)
+ }
+ return result
+}
+export type RecentKbOrder=OrderLine&{orderDate:string}
+export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new Date()):Promise<{
+ orders:RecentKbOrder[];checkedDates:string[];failedDates:string[];partial:boolean
+}>{
+ const dates=recentKbTradingDates(now,days)
+ const token=await getKbAccessToken(env)
+ const checkedDates:string[]=[],failedDates:string[]=[]
+ const records:RecentKbOrder[]=[]
+ let partial=false
+ for(const day of dates){
+  let nextKey=''
+  const visited=new Set<string>()
+  let dayComplete=false
+  try{
+   for(let page=0;page<3;page++){
+    const {path,body}=makeOrderInquiry(day,nextKey)
+    const response=await fetch(kbBaseUrl(env)+path,{
+     method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+     body:JSON.stringify(body),signal:AbortSignal.timeout(10000)
+    })
+    if(!response.ok)throw Error('KB 체결조회 HTTP '+response.status)
+    const parsed=parseOrderLines(await response.json())
+    for(const line of parsed.lines)records.push({...line,orderDate:day})
+    if(!parsed.nextKey){dayComplete=true;break}
+    if(visited.has(parsed.nextKey))throw Error('KB 체결조회 페이지 반복')
+    visited.add(parsed.nextKey)
+    nextKey=parsed.nextKey
+   }
+  }catch{
+   failedDates.push(day)
+   partial=true
+   continue
+  }
+  if(dayComplete)checkedDates.push(day)
+  else{failedDates.push(day);partial=true}
+ }
+ const seen=new Set<string>()
+ const orders=records.filter(row=>{
+   const key=[row.orderDate,row.orderNo,row.code,row.side].join(':')
+   if(seen.has(key))return false
+   seen.add(key);return true
+ }).slice(0,100)
+ if(orders.length<records.length)partial=true
+ return {orders,checkedDates,failedDates,partial}
+}
