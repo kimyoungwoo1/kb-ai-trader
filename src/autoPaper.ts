@@ -57,6 +57,7 @@ export type AutoAccount = {
   lastCycle: string; lastMessage: string; runs: AutoRun[]
   dailyStats?: AutoDailyStats
   watchStatus?: AutoWatchStatus
+  watchDaily?: { date: string; checked: number; filled: number }
 }
 export const newAutoAccount = (): AutoAccount => ({
   enabled: false, cash: AUTO_INITIAL, positions: [], pending: [], fills: [],
@@ -277,10 +278,13 @@ export function runAutoWatchCycle(
     { read: readPaperLedger, write: writePaperLedger },
   requested = quotes.length,
 ): AutoAccount {
-  if (!account.enabled || !quotes.length || account.lastCycle === checkedAt) return account
+  const checked = Date.parse(checkedAt)
+  if (!account.enabled || !inSession(now) || !quotes.length || account.lastCycle === checkedAt
+    || !Number.isFinite(checked) || Math.abs(now.getTime() - checked) > 120_000) return account
   const next = runAutoCycle(account, [], quotes, checkedAt, now, paperStore)
   if (next === account) return account
-  const filled = next.fills.length - account.fills.length
+  const oldIds = new Set(account.fills.map(item => item.id))
+  const filled = next.fills.filter(item => !oldIds.has(item.id)).length
   const received = quotes.length
   const status: AutoWatchStatus['status'] = received < requested ? '일부 오류' : '정상'
   const message = filled > 0
@@ -289,7 +293,31 @@ export function runAutoWatchCycle(
   return {
     ...next,
     runs: account.runs,
-    dailyStats: account.dailyStats,
+    dailyStats: {
+      ...(account.dailyStats?.date === kstDate(now) ? account.dailyStats : {
+        date: kstDate(now),
+        checked: (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        completed: (account.runs || []).filter(run => run.status === '검사 완료'
+          && Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        deferred: (account.runs || []).filter(run => run.status === '실행 보류'
+          && Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        filled: (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now))
+          .reduce((sum, run) => sum + run.filled, 0),
+      }),
+      filled: (account.dailyStats?.date === kstDate(now) ? account.dailyStats.filled
+        : (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now))
+          .reduce((sum, run) => sum + run.filled, 0)) + filled,
+    },
+    watchDaily: {
+      date: kstDate(now),
+      checked: (account.watchDaily?.date === kstDate(now) ? account.watchDaily.checked : 0) + 1,
+      filled: (account.watchDaily?.date === kstDate(now) ? account.watchDaily.filled : 0) + filled,
+    },
     lastMessage: filled > 0 ? message : account.lastMessage,
     watchStatus: {
       checkedAt, processedAt: now.toISOString(), watched: requested,
