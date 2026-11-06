@@ -1,6 +1,7 @@
 import { AUTO_EVENT, AUTO_STORAGE_KEY, type AutoAccount } from './autoPaper'
 import { PAPER_EVENT, PAPER_KEY, readPaperLedger, type PaperLedger } from './paperLedger'
 import { readAutoAccount } from './autoPaper'
+import { SCREENING_HISTORY_KEY, type ScreeningSnapshot } from './screeningHistory'
 
 export const SERVER_PAPER_EVENT = 'kb-server-paper-updated'
 const API = 'https://kb-ai-trader.ksmsy1.workers.dev/api/paper/server'
@@ -10,7 +11,7 @@ let latest: ServerPaperStatus | null = null
 export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
-  snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string }
+  snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot }
 }
 export function isServerPaperMode() { return active }
 export function getServerPaperStatus() { return latest }
@@ -37,6 +38,7 @@ export async function serverPaperAction(token: string, action: string): Promise<
       // Read-only local mirrors for existing charts. The server D1 row is authoritative.
       localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(data.snapshot.account))
       localStorage.setItem(PAPER_KEY, JSON.stringify(data.snapshot.ledger))
+      if (data.snapshot.screening?.signals?.length) localStorage.setItem(SCREENING_HISTORY_KEY,JSON.stringify(data.snapshot.screening))
       window.dispatchEvent(new CustomEvent(AUTO_EVENT))
       window.dispatchEvent(new CustomEvent(PAPER_EVENT))
     }
