@@ -41,9 +41,27 @@ export type PerformanceReport = {
   netPnl: number; averagePnl: number | null; profitFactor: number | null
   expectancyPct: number | null; maxDrawdown: number | null
   totalEquity: number; returnPct: number; observations: number
+  averageHoldingDays: number | null; averageWin: number | null; averageLoss: number | null
+  payoffRatio: number | null; consecutiveLosses: number
 }
 export function analyzePerformance(account: AutoAccount, ledger: PaperLedger): PerformanceReport {
   const completed = (account.fills || []).filter(f => f.side === 'SELL' && f.pnl !== null && Number.isFinite(f.pnl))
+  const buys = (account.fills || []).filter(f => f.side === 'BUY').sort((a,b) => a.at.localeCompare(b.at))
+  const matched = new Set<string>()
+  const holdingDays: number[] = []
+  for (const sell of [...completed].sort((a,b) => a.at.localeCompare(b.at))) {
+    const match = buys.find(b => !matched.has(b.id) && b.code === sell.code && b.quantity === sell.quantity && b.at <= sell.at)
+    if (!match) continue
+    matched.add(match.id)
+    const days = (Date.parse(sell.at) - Date.parse(match.at)) / 86400000
+    if (Number.isFinite(days) && days >= 0) holdingDays.push(days)
+  }
+  const gains = completed.filter(f => (f.pnl ?? 0) > 0)
+  const losses = completed.filter(f => (f.pnl ?? 0) < 0)
+  const averageWin = gains.length ? gains.reduce((n,f) => n + (f.pnl ?? 0), 0) / gains.length : null
+  const averageLoss = losses.length ? losses.reduce((n,f) => n + Math.abs(f.pnl ?? 0), 0) / losses.length : null
+  let consecutiveLosses = 0
+  for (const f of [...completed].sort((a,b)=>b.at.localeCompare(a.at))) { if ((f.pnl ?? 0) < 0) consecutiveLosses++; else break }
   const profit = completed.filter(f => (f.pnl || 0) > 0).reduce((sum, f) => sum + (f.pnl || 0), 0)
   const loss = completed.filter(f => (f.pnl || 0) < 0).reduce((sum, f) => sum + Math.abs(f.pnl || 0), 0)
   const netPnl = completed.reduce((sum, f) => sum + (f.pnl || 0), 0)
@@ -61,9 +79,12 @@ export function analyzePerformance(account: AutoAccount, ledger: PaperLedger): P
     winRate: completed.length ? completed.filter(f => (f.pnl || 0) > 0).length / completed.length * 100 : null,
     netPnl, averagePnl: completed.length ? netPnl / completed.length : null,
     profitFactor: completed.length && loss > 0 ? profit / loss : null,
-    expectancyPct: null, // Requires entry trade matching and capital-weighted returns.
+    expectancyPct: null, // Capital-weighted expectancy still requires fully matched cost basis.
     maxDrawdown: points.length ? maxDrawdown : null,
     totalEquity, returnPct: (totalEquity / 1_000_000 - 1) * 100,
     observations: points.length,
+    averageHoldingDays: holdingDays.length ? holdingDays.reduce((a,b)=>a+b,0)/holdingDays.length : null,
+    averageWin, averageLoss, payoffRatio: averageWin !== null && averageLoss !== null && averageLoss > 0 ? averageWin / averageLoss : null,
+    consecutiveLosses,
   }
 }
