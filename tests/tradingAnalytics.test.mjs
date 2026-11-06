@@ -66,7 +66,7 @@ test('ledger journal types and date filters are separate from strategy win rate'
 })
 
 test('unified equity and observed curve do not impersonate strategy profit', () => {
-  const report = summarizeTradingAnalytics(account, ledger, '30', now)
+  const report = summarizeTradingAnalytics(account, ledger, '7', now)
   assert.equal(report.performance.totalEquity, 1011000)
   assert.ok(Math.abs(report.performance.returnPct - 1.1) < 1e-9)
   assert.equal(report.strategy.netPnl, -100)
