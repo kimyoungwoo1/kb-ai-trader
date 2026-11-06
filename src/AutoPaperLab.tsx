@@ -5,6 +5,7 @@ import { getAutoHealth, todayActivity } from './autoStatus'
 import { runPaperEngineCheck, type EngineCheckReport } from './paperEngineCheck'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
 import { acquireTradingLease, verifyTradingLease, canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState } from './cloudAutoSync'
+import { getServerPaperStatus, isServerPaperMode, serverPaperAction, SERVER_PAPER_EVENT } from './serverPaperClient'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -34,6 +35,7 @@ export default function AutoPaperLab({
   const [trialNotice, setTrialNotice] = useState('')
   const [cloud, setCloud] = useState(getCloudSyncState)
   const [startBusy, setStartBusy] = useState(false)
+  const [serverTick, setServerTick] = useState(0)
   const [clock, setClock] = useState(() => Date.now())
 
   useEffect(() => {
@@ -51,20 +53,30 @@ export default function AutoPaperLab({
     window.addEventListener('storage', sync)
     const syncCloud = () => setCloud(getCloudSyncState())
     window.addEventListener(CLOUD_SYNC_EVENT, syncCloud)
+    const syncServer = () => setServerTick(x => x+1)
+    window.addEventListener(SERVER_PAPER_EVENT, syncServer)
     return () => {
       window.removeEventListener(CLOUD_SYNC_EVENT, syncCloud)
+      window.removeEventListener(SERVER_PAPER_EVENT, syncServer)
       window.removeEventListener(AUTO_EVENT, sync)
       window.removeEventListener(PAPER_EVENT, sync)
       window.removeEventListener('storage', sync)
     }
   }, [])
 
+  const serverMode = isServerPaperMode()
+  const serverInfo = getServerPaperStatus()
+  void serverTick
   const currentEquity = ledgerEquity(ledger)
   const currentReturn = (currentEquity / 1_000_000 - 1) * 100
   const autoOwned = new Set(account.positions.map(item => item.code))
   const lastRun = (account.runs || [])[0]
   const baseHealth = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
-  const health = account.enabled && (cloud.phase === 'blocked' || cloud.phase === 'error')
+  const health = serverMode
+    ? { ...baseHealth, tone: serverInfo?.last_error ? 'warning' as const : account.enabled ? 'success' as const : 'neutral' as const,
+        label: account.enabled ? '서버 자동 가상매매 실행 중' : '서버 자동 가상매매 중지',
+        detail: serverInfo?.last_error || ('서버 D1 원장 · 최근 갱신 ' + formatTime(serverInfo?.updated_at)) }
+    : account.enabled && (cloud.phase === 'blocked' || cloud.phase === 'error')
     ? { ...baseHealth, tone: 'warning' as const, label: 'D1 실행권 오류 · 자동체결 차단',
       detail: cloud.message }
     : account.enabled && baseHealth.inSession && baseHealth.tone !== 'warning' && !catalystReady(catalysts, new Date(clock))
@@ -75,6 +87,7 @@ export default function AutoPaperLab({
   const lastCompleted = (account.runs || []).find(item => item.status === '검사 완료')
 
   async function confirmTrialSell() {
+    if (serverMode) { setTrialNotice('서버 원장 모드에서는 브라우저 시험 청산이 비활성화됩니다.'); return }
     if (!trialCode || trialBusy || scanLoading) return
     setTrialBusy(true)
     setTrialNotice('')
@@ -104,6 +117,15 @@ export default function AutoPaperLab({
 
   async function toggle() {
     if (startBusy) return
+    if (serverMode) {
+      setStartBusy(true)
+      try {
+        const next = await serverPaperAction(token, account.enabled ? 'stop' : 'start')
+        setTrialNotice(next.mode === 'running' ? '서버 가상매매 시작 · 브라우저를 닫아도 Cron이 작동합니다.' : '서버 가상매매 중지 · 보유종목 유지')
+      } catch (error) { setTrialNotice('서버 제어 실패 · '+(error instanceof Error ? error.message : '다시 시도해 주세요.')) }
+      finally { setStartBusy(false) }
+      return
+    }
     const enabled = !readAutoAccount().enabled
     if (enabled) {
       setStartBusy(true)
@@ -129,6 +151,19 @@ export default function AutoPaperLab({
     if (enabled) onStart?.()
   }
 
+  async function migrate() {
+    if (startBusy) return
+    setStartBusy(true)
+    try {
+      await serverPaperAction(token,'migrate')
+      // A reload releases the old legacy browser listeners; only server mode
+      // will be initialized on the next page load.
+      window.location.reload()
+    } catch (error) {
+      setTrialNotice('서버 이전 실패 · '+(error instanceof Error ? error.message : 'D1 상태 확인 필요'))
+      setStartBusy(false)
+    }
+  }
   return <section className="auto-dashboard">
     <div className="auto-hero panel">
       <div className="auto-hero-heading">
@@ -142,11 +177,11 @@ export default function AutoPaperLab({
             <span className="auto-state-dot" />
             {health.label}
           </span>
-          {account.enabled && health.inSession && <button type="button" className="outline-button" onClick={onStart} disabled={scanLoading || !onStart}>
+          {account.enabled && !serverMode && health.inSession && <button type="button" className="outline-button" onClick={onStart} disabled={scanLoading || !onStart}>
             {scanLoading ? '조회 중...' : '지금 검사'}
           </button>}
           <button type="button" className="outline-button" onClick={() => void toggle()} disabled={startBusy}>
-            {startBusy ? 'D1 실행권 확인 중...' : account.enabled ? '자동매매 중지' : '자동매매 시작'}
+            {startBusy ? '상태 확인 중...' : account.enabled ? '자동매매 중지' : '자동매매 시작'}
           </button>
         </div>
       </div>
@@ -155,13 +190,20 @@ export default function AutoPaperLab({
           <strong>{health.label}</strong>
           <span>{health.detail}</span>
         </div>
-        <span className="auto-health-frequency">전체시장 5분 · 보유종목 30초</span>
+        <span className="auto-health-frequency">{serverMode ? '서버 전체시장 5분 · 보유종목 1분 (Cron)' : '전체시장 5분 · 보유종목 30초'}</span>
       </div>
-      <div className={'auto-cloud-sync-status cloud-phase-' + cloud.phase} role="status">
-        <span><strong>D1 자동 백업·중복 체결 방지</strong>
-          <small>{cloud.message}</small></span>
-        <span>{cloud.ownsLease ? '실행권 확보' : cloud.phase === 'blocked' || cloud.phase === 'error'
-          ? '자동 체결 차단' : '연결 확인/대기'} · v{cloud.revision ?? '-'}</span>
+      {!serverMode && <div className="auto-cloud-sync-status cloud-phase-ready" role="status">
+        <span><strong>서버 자동매매로 전환</strong>
+          <small>현재 D1 백업을 서버 원장으로 안전하게 이전합니다. 다른 탭의 자동매매를 중지한 뒤 실행하세요. 전환 이후 브라우저 수동 거래·기존 백업 쓰기는 비활성화됩니다.</small></span>
+        <button type="button" className="outline-button" disabled={startBusy} onClick={() => void migrate()}>
+          {startBusy ? '서버 이전 확인 중...' : 'D1 기록 서버로 이전'}
+        </button>
+      </div>}
+      <div className={'auto-cloud-sync-status cloud-phase-' + (serverMode ? 'ready' : cloud.phase)} role="status">
+        <span><strong>{serverMode ? 'D1 서버 거래 원장 · 서버 실행' : 'D1 자동 백업·중복 체결 방지'}</strong>
+          <small>{serverMode ? (serverInfo?.last_error || ('서버 '+(serverInfo?.mode || '상태 확인 중')+' · 최근 저장 '+formatTime(serverInfo?.updated_at))) : cloud.message}</small></span>
+        <span>{serverMode ? ('서버 '+(serverInfo?.mode === 'running' ? '실행 중' : '중지')+' · v'+(serverInfo?.revision ?? '-')) : (cloud.ownsLease ? '실행권 확보' : cloud.phase === 'blocked' || cloud.phase === 'error'
+          ? '자동 체결 차단' : '연결 확인/대기') + ' · v' + (cloud.revision ?? '-')}</span>
       </div>
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
@@ -170,7 +212,7 @@ export default function AutoPaperLab({
         <div><span>최근 전략 판단</span><strong>{lastRun ? lastRun.status : '아직 없음'}</strong><small>{lastRun ? formatTime(lastRun.processedAt) : '첫 검사 후 기록됩니다'}</small></div>
       </div>
       <div className="auto-watch-panel">
-        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 30초 간격 · KB 현재가 확인</span></div>
+        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>{serverMode ? '정규장 약 1분 간격 · 서버 KB 현재가 확인' : '정규장 약 30초 간격 · KB 현재가 확인'}</span></div>
         <div className="auto-watch-stats">
           <span>상태 <b>{account.positions.length + account.pending.length === 0 ? '감시 대상 없음'
             : account.watchStatus?.status || '시작 대기'}</b></span>
@@ -204,7 +246,7 @@ export default function AutoPaperLab({
         <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
         <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
-      <p className="auto-operation-note">정규장 시장 탐색 5분 · 보유·진입 감시 30초. 브라우저가 닫히거나 시세 요청이 지연되면 검사도 멈추거나 늦어질 수 있습니다. 실계좌 주문은 실행되지 않습니다.</p>
+      <p className="auto-operation-note">{serverMode ? '정규장 서버 시장 탐색 약 5분 · 보유·진입 감시 약 1분. 브라우저 종료 후에도 서버 Cron에서 실행합니다. KB 응답 오류·시장 휴장·스케줄 지연 시 검사는 보류됩니다.' : '정규장 시장 탐색 5분 · 보유·진입 감시 30초. 브라우저가 닫히거나 시세 요청이 지연되면 검사도 멈추거나 늦어질 수 있습니다.'} 실계좌 주문은 실행되지 않습니다.</p>
       <p className="auto-operation-note">뉴스·DART 확인: {catalystSummary}</p>
     </div>
 
@@ -234,7 +276,7 @@ export default function AutoPaperLab({
             <td className={pnl < 0 ? 'negative-value' : 'positive-value'}>{pnl > 0 ? '+' : ''}{money(pnl)}</td>
             <td>{autoPosition ? <button type="button" className="outline-button auto-trial-button"
               onClick={() => { setTrialCode(position.code); setTrialNotice('') }}
-              disabled={trialBusy || scanLoading || !health.inSession || !account.enabled}>시험 청산</button> : '—'}</td>
+              disabled={serverMode || trialBusy || scanLoading || !health.inSession || !account.enabled}>시험 청산</button> : '—'}</td>
           </tr>
         })}</tbody>
       </table></div> : <p className="ai-empty">현재 보유 중인 가상 종목이 없습니다. 매수 조건을 만족할 때 거래 내역에 자동 기록됩니다.</p>}
@@ -280,7 +322,7 @@ export default function AutoPaperLab({
         <p className="news-query">초기 자금 100만원 · 종목당 최대 20만원 · 최대 5종목 · 당일 실현손실 -1만원 이후 신규 진입 중단 · 익절 +5% / 손절 -3% · 최대 보유 15일. 수수료와 슬리피지는 모의 계산이며 실주문은 비활성화돼 있습니다.</p>
         <p className="news-message">{account.lastMessage}</p>
         <div className="auto-actions">{!confirmReset
-          ? <button type="button" className="outline-button" onClick={() => setConfirmReset(true)}>자동 전략 기록만 초기화</button>
+          ? <button type="button" className="outline-button" disabled={serverMode} onClick={() => setConfirmReset(true)}>자동 전략 기록만 초기화</button>
           : <><span>공유 현금·보유 종목·전체 거래 원장은 유지되며 자동 전략 기록만 초기화됩니다.</span>
             <button type="button" className="outline-button" onClick={() => { writeAutoAccount(newAutoAccount()); setConfirmReset(false) }}>기록 초기화</button>
             <button type="button" className="outline-button" onClick={() => setConfirmReset(false)}>취소</button></>}
