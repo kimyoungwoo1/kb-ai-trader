@@ -21,4 +21,4 @@ jobs:
       - name: Typecheck and build
         run: npm run build
       - name: Signal and trading-status regression checks
-        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs tests/autoStatus.test.mjs tests/paperEngineCheck.test.mjs tests/scanReview.test.mjs
+        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs tests/autoStatus.test.mjs tests/paperEngineCheck.test.mjs tests/scanReview.test.mjs tests/trialExit.test.mjs
