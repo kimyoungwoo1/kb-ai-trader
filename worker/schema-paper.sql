@@ -18,3 +18,14 @@ CREATE TABLE IF NOT EXISTS paper_trade_lease (
  owner TEXT NOT NULL,
  lease_until INTEGER NOT NULL
 );
+
+-- Server-owned paper account. The browser backup is not modified during migration.
+CREATE TABLE IF NOT EXISTS server_paper_state (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  revision INTEGER NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('running','stopped')),
+  cycle_slot INTEGER NOT NULL DEFAULT -1,
+  updated_at TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  last_error TEXT
+);
