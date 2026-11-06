@@ -169,7 +169,7 @@ export default function AutoPaperLab({
         <div><span>최근 전략 판단</span><strong>{lastRun ? lastRun.status : '아직 없음'}</strong><small>{lastRun ? formatTime(lastRun.processedAt) : '첫 검사 후 기록됩니다'}</small></div>
       </div>
       <div className="auto-watch-panel">
-        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 1분 간격 · KB 현재가 확인</span></div>
+        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 10초 간격 · KB 현재가 확인</span></div>
         <div className="auto-watch-stats">
           <span>상태 <b>{account.positions.length + account.pending.length === 0 ? '감시 대상 없음'
             : account.watchStatus?.status || '시작 대기'}</b></span>
