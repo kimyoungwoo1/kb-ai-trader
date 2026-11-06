@@ -86,6 +86,9 @@ function mockBroker(opts={loseAck:false}){
   if(path.endsWith('/api/v1/ssqm2952'))return Response.json({
     dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{Record1:[]}
   })
+  if(path.endsWith('/api/v1/ssqm1801'))return Response.json({
+    dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{Record1:[],nxt_key:''}
+  })
   if(path.endsWith('/api/v1/ssam1802')){
     if(opts.loseAck)throw Error('simulated lost response')
     return Response.json({dataHeader:{resultCode:'200',processFlag:'A',processCode:'0005'},
