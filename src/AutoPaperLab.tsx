@@ -4,6 +4,7 @@ import { AUTO_EVENT, newAutoAccount, readAutoAccount, writeAutoAccount, type Aut
 import type { TradeSignal } from './tradeSignals'
 import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
 import { getAutoHealth, todayActivity } from './autoStatus'
+import { runPaperEngineCheck, type EngineCheckReport } from './paperEngineCheck'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -24,6 +25,7 @@ export default function AutoPaperLab({
   const [account, setAccount] = useState<AutoAccount>(readAutoAccount)
   const [ledger, setLedger] = useState(readPaperLedger)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [engineCheck, setEngineCheck] = useState<EngineCheckReport | null>(null)
   const [clock, setClock] = useState(() => Date.now())
 
   useEffect(() => {
@@ -132,6 +134,28 @@ export default function AutoPaperLab({
       </div>
       <p className="auto-operation-note">현재 자동 검사는 로그인한 브라우저가 열려 있을 때만 실행됩니다. 브라우저를 닫아도 실행되는 서버 자동매매는 아직 제공하지 않습니다. 실계좌 주문은 실행되지 않습니다.</p>
     </div>
+
+    <section className="panel auto-main-panel auto-engine-check">
+      <div className="auto-engine-check-heading">
+        <div>
+          <h3>매수·매도 기능 테스트</h3>
+          <p>자동매매 엔진에 시험용 가격을 입력해 감시 등록 → 가상매수 → 익절/손절 매도까지 검증합니다.</p>
+        </div>
+        <button type="button" className="outline-button" onClick={() => setEngineCheck(runPaperEngineCheck())}>체결 테스트 실행</button>
+      </div>
+      <p className="auto-check-safety">테스트 종목과 가격은 가상 시나리오입니다. 실제 시세나 시장 주문을 사용하지 않으며, 현재 가상잔액·수익률·보유종목·거래 기록도 변경하지 않습니다.</p>
+      {engineCheck && <div className={'auto-engine-check-result ' + (engineCheck.passed ? 'auto-engine-check-passed' : 'auto-engine-check-failed')} role="status" aria-live="polite">
+        <strong>{engineCheck.passed ? '체결 엔진 테스트 통과' : '체결 엔진 테스트 실패'} · {formatTime(engineCheck.checkedAt)}</strong>
+        <div className="auto-engine-check-list">{engineCheck.scenarios.map(result =>
+          <div key={result.name} className="auto-engine-check-scenario">
+            <b>{result.passed ? '✓' : '✕'} {result.name}</b>
+            <small>{result.steps.join(' → ') || result.message}</small>
+            {result.passed && <span>{result.quantity}주 · 매수가 {money(result.buyPrice || 0)} · 매도가 {money(result.exitPrice || 0)} · 모의 손익 {money(result.realizedPnl || 0)}</span>}
+          </div>
+        )}</div>
+        <small>이 결과는 체결 프로그램의 기능 시험입니다. 실제 시장에서 매수 신호가 발생했다는 의미는 아닙니다.</small>
+      </div>}
+    </section>
 
     <section className="panel auto-main-panel">
       <div className="panel-heading"><div><h3>현재 가상 보유 종목</h3><span>MANUAL + AUTOMATIC PAPER POSITIONS</span></div></div>
