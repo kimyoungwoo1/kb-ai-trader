@@ -11,3 +11,10 @@ CREATE TABLE IF NOT EXISTS paper_backup_history (
   snapshot_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_paper_backup_updated ON paper_backup_history(updated_at);
+
+-- One active browser/device executes the automatic paper trading loop at a time.
+CREATE TABLE IF NOT EXISTS paper_trade_lease (
+ id INTEGER PRIMARY KEY CHECK (id = 1),
+ owner TEXT NOT NULL,
+ lease_until INTEGER NOT NULL
+);
