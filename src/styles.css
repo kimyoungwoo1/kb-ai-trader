@@ -546,3 +546,7 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .live-trial-field::placeholder{color:#8297b4;opacity:1}
 .live-trial-field:focus-visible{outline:2px solid #4f9ef4;outline-offset:2px;border-color:#5da4ec}
 .live-trial-field option{background:#0b1626;color:#e9f2ff}
+
+/* Visible validation feedback; never leave disabled controls unexplained. */
+.live-trial-inline-error{margin:0;padding:10px 12px;border:1px solid #715330;border-radius:7px;background:#28231e;color:#ffd39a;font-size:12px;line-height:1.6}
+.live-trial-inline-success{margin:0;padding:10px 12px;border:1px solid #345e55;border-radius:7px;background:#142c29;color:#8ee1bd;font-size:12px;line-height:1.6;display:flex;gap:8px;align-items:center}
