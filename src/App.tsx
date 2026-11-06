@@ -79,7 +79,7 @@ export default function App() {
   const [watchlistText, setWatchlistText] = useState(() => localStorage.getItem('kb-trader-watchlist') || '')
   const [activePage, setActivePage] = useState<'dashboard' | 'auto' | 'analytics' | 'news' | 'paper'>('dashboard')
   const [autoHeartbeat, setAutoHeartbeat] = useState(() => Date.now())
-  const [serverMode, setServerMode] = useState(false)
+  const [serverMode, setServerMode] = useState(true)
   useEffect(() => {
     const refreshStatus = () => setAutoHeartbeat(Date.now())
     window.addEventListener(AUTO_EVENT, refreshStatus)
@@ -607,9 +607,10 @@ export default function App() {
         const status = await serverPaperAction(token,'status')
         if (cancelled) return
         if (status.migrated) {
+          setMarketCheckedAt(status.snapshot?.account.lastCycle || '')
           setServerMode(true)
           interval = window.setInterval(() => {
-            void serverPaperAction(token,'status').catch(() => {})
+            void serverPaperAction(token,'status').then(data=>setMarketCheckedAt(data.snapshot?.account.lastCycle || '')).catch(() => {})
           }, 15_000)
         } else {
           setServerPaperMode(false)
