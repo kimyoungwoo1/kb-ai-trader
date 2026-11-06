@@ -297,3 +297,21 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-global-status-idle{border-color:#485265;background:#222d3c;color:#c4cedd}
 .auto-global-status-off{border-color:#544657;background:#2a2530;color:#c5b8c8}
 @media(max-width:850px){.topbar{padding:0 14px}.top-actions{gap:8px}.auto-global-status{max-width:200px;overflow:hidden;text-overflow:ellipsis}.topbar .connection{display:none}}
+
+
+/* Explicitly isolated execution rehearsal for the production paper-trading engine. */
+.auto-engine-check{border-color:#30496c}
+.auto-engine-check-heading{display:flex;justify-content:space-between;align-items:center;gap:18px}
+.auto-engine-check-heading h3{font-size:12px;color:#e6efff;margin:0 0 6px}
+.auto-engine-check-heading p{color:#a5b6cf;font-size:10px;margin:0;line-height:1.7}
+.auto-engine-check-heading .outline-button{white-space:nowrap;flex-shrink:0}
+.auto-check-safety{font-size:9px;line-height:1.7;color:#8ea2bc;margin:12px 0 0}
+.auto-engine-check-result{border:1px solid #805234;background:#262119;border-radius:8px;padding:15px;margin-top:15px;color:#f4c3a1}
+.auto-engine-check-passed{background:#102a24;border-color:#316b53;color:#98e7c2}
+.auto-engine-check-result>strong{display:block;font-size:12px;line-height:1.6;margin-bottom:10px}
+.auto-engine-check-result>small{display:block;font-size:9px;color:#b2bdcd;line-height:1.7;margin-top:11px}
+.auto-engine-check-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.auto-engine-check-scenario{display:grid;gap:7px;padding:11px;border:1px solid #384b60;border-radius:7px;background:#0e1a27}
+.auto-engine-check-scenario b{font-size:11px;color:#e3f0ff}
+.auto-engine-check-scenario small,.auto-engine-check-scenario span{font-size:9px;color:#aebed4;line-height:1.6}
+@media(max-width:700px){.auto-engine-check-heading{align-items:flex-start;flex-direction:column}.auto-engine-check-list{grid-template-columns:1fr}}
