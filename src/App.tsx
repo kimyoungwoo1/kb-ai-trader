@@ -449,6 +449,7 @@ export default function App() {
         ? <AutoPaperLab
             signals={generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             checkedAt={marketCheckedAt}
+            token={token}
             scanLoading={marketDataLoading}
             scanMessage={marketDataMessage}
             onStart={() => { if (isKrxSession() && !marketScanRef.current) void marketScanRunner.current() }}
