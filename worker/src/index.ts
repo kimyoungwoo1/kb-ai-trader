@@ -85,7 +85,7 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
@@ -368,6 +368,95 @@ export default {
         source: "Naver Finance autocomplete",
         message: matched.length ? "" : lastError + " 응답 진단: " + (responseDiagnostics.join(" | ") || "응답 없음") + (sampleItem === null ? "" : " 샘플: " + JSON.stringify(sampleItem).slice(0, 700)),
       });
+    }
+
+    // One authenticated browser request for up to 5 stocks per 30-second watch cycle.
+    // OAuth is acquired once before issuing price queries. The five outgoing calls
+    // run together so a single slow KB request does not serially delay all symbols.
+    if (url.pathname === "/api/kb/quotes" && request.method === "POST") {
+      if (!env.KB_APP_KEY || !env.KB_APP_SECRET)
+        return json({ success: false, stage: "configuration", message: "KB Open API 자격 정보가 없습니다." }, 503);
+      let body: { stocks?: { code?: string; name?: string }[] };
+      try { body = await request.json() as typeof body; }
+      catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      const requested = Array.isArray(body.stocks) ? body.stocks : [];
+      if (requested.length === 0 || requested.length > 5) return json({
+        success: false, message: "현재가 감시는 한 번에 1~5개 종목을 조회해야 합니다.",
+      }, 400);
+      const stocks = requested.map(stock => ({
+        code: String(stock?.code || "").trim(),
+        name: String(stock?.name || "").trim().slice(0, 80),
+      }));
+      if (stocks.some(stock => !/^\d{6}$/.test(stock.code)) ||
+          new Set(stocks.map(stock => stock.code)).size !== stocks.length)
+        return json({ success: false, message: "종목코드 오류 또는 중복 입력입니다." }, 400);
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) {
+        const limited = error instanceof KbAuthError && error.rateLimited;
+        return json({ success: false, stage: "authentication", rate_limited: limited,
+          message: error instanceof KbAuthError ? error.message : "KB 인증 서버 오류" },
+          limited ? 429 : 502);
+      }
+      const baseUrl = kbBaseUrl(env);
+      const results = await Promise.all(stocks.map(async stock => {
+        try {
+          const response = await fetch(baseUrl + "/api/v1/ivu10140", {
+            method: "POST",
+            headers: { Authorization: "bearer " + accessToken,
+              appKey: env.KB_APP_KEY!, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
+              dataBody: { excg_clsf: "1", shrt_cd: stock.code },
+            }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          let data: any;
+          try { data = await response.json(); }
+          catch { return { code: stock.code, name: stock.name,
+            price: null, checked_at: "", error: "KB 현재가 응답 형식 오류", rate_limited: false, token_expired: false }; }
+          const resultCode = String(data?.dataHeader?.resultCode ?? "");
+          const apiFailure = resultCode && !["0", "0000", "200"].includes(resultCode);
+          const failed = !response.ok || !!apiFailure;
+          const diagnostic = failed ? getKbErrorMessage(data).slice(0, 180) : "";
+          const rateLimited = response.status === 429 ||
+            /호출.{0,12}(초과|제한)|과다.{0,7}요청|rate.?limit|too many|429/i.test(diagnostic);
+          const tokenExpired = response.status === 401 || response.status === 403 ||
+            /토큰.{0,12}(만료|인증)|인증.{0,12}실패|invalid.{0,6}token/i.test(diagnostic);
+          if (failed) return {
+            code: stock.code, name: stock.name, price: null, checked_at: "",
+            error: rateLimited ? "KB API 호출 제한" :
+              tokenExpired ? "KB 인증 만료" : ("KB 응답 오류 HTTP " + response.status + " · " + diagnostic),
+            rate_limited: rateLimited, token_expired: tokenExpired,
+          };
+          const payload = data?.dataBody || {};
+          const raw = payload.now_prc ?? payload.stck_prpr ?? payload.cur_prc ??
+            payload.current_price ?? payload.price ?? payload.last_price ?? payload.prpr;
+          const parsed = raw == null ? NaN : Number(String(raw).replace(/,/g, ""));
+          const good = Number.isFinite(parsed) && parsed > 0;
+          return {
+            code: stock.code, name: stock.name,
+            price: good ? parsed : null,
+            checked_at: good ? new Date().toISOString() : "",
+            error: good ? "" : "KB 현재가 필드 확인 실패",
+            rate_limited: false, token_expired: false,
+          };
+        } catch (error) {
+          const timedOut = error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message);
+          return {
+            code: stock.code, name: stock.name, price: null, checked_at: "",
+            error: timedOut ? "KB 현재가 응답 20초 초과" : "KB 현재가 서버 연결 실패",
+            rate_limited: false, token_expired: false,
+          };
+        }
+      }));
+      if (results.some(item => item.token_expired)) clearKbAccessToken();
+      return Response.json({
+        success: true, requested: stocks.length, checked_at: new Date().toISOString(),
+        received: results.filter(item => item.price !== null).length,
+        rate_limited: results.some(item => item.rate_limited),
+        token_expired: results.some(item => item.token_expired), results,
+      }, { headers: { ...corsHeaders, "Cache-Control": "no-store" } });
     }
 
     if (url.pathname === "/api/kb/quote" && request.method === "POST") {
