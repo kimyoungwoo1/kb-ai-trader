@@ -1,5 +1,5 @@
 import type { TradeSignal } from './tradeSignals'
-import { readPaperLedger, writePaperLedger, type PaperTrade } from './paperLedger'
+import { readPaperLedger, writePaperLedger, type PaperTrade, type PaperLedger } from './paperLedger'
 
 export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
 export const AUTO_EVENT = 'kb-auto-account-changed'
@@ -92,7 +92,7 @@ function dailyStatsAfterRun(account: AutoAccount, status: AutoRun['status'], fil
 
 export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quotes: {
   code: string; name: string; price: number | null; quoteError?: string
-}[], checkedAt: string, now = new Date()): AutoAccount {
+}[], checkedAt: string, now = new Date(), paperStore: { read: () => PaperLedger; write: (ledger: PaperLedger) => void } = { read: readPaperLedger, write: writePaperLedger }): AutoAccount {
   if (!account.enabled || account.lastCycle === checkedAt) return account
   const checked = new Date(checkedAt)
   const decisions = signals.map(signal => ({
@@ -103,7 +103,9 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
       ? signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요'
       : signal.reasons.join(' / ') || '진입 조건 미충족',
   }))
-  const candidates = signals.filter(signal => signal.status === '관찰 후보' && signal.flowReliable && signal.maxQuantity > 0).length
+  // Foreign-flow validation contributes optional signal score, not a mandatory trade filter.
+  // Count the same eligible observations that the pending-entry engine actually uses.
+  const candidates = signals.filter(signal => signal.status === '관찰 후보' && signal.maxQuantity > 0 && positive(signal.entryTrigger) && positive(signal.stopReference)).length
   const completeRun = (status: AutoRun['status'], message: string, filled = 0): AutoAccount => {
     const run: AutoRun = {
       checkedAt, processedAt: now.toISOString(), status, scanned: signals.length,
@@ -117,7 +119,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     return completeRun('실행 보류', '시세 수집 후 5분 초과 또는 수집시각 오류 · 가상 체결 보류')
   }
   if (!inSession(now)) return completeRun('실행 보류', '정규장 외 시간 · 신호만 확인, 가상 체결 보류')
-  const ledger = readPaperLedger()
+  const ledger = paperStore.read()
   const ledgerPositions = ledger.positions.map(p => ({ ...p }))
   const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
   let cash = ledger.cash
@@ -206,7 +208,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     const updatedQuote = quoteMap.get(position.code)
     if (updatedQuote !== undefined) position.lastPrice = updatedQuote
   }
-  writePaperLedger({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
+  paperStore.write({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
   const equity = cash + ledgerPositions.reduce((sum, p) => sum + p.lastPrice * p.quantity, 0)
   const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
     : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
