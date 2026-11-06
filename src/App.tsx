@@ -658,6 +658,7 @@ export default function App() {
             catalysts={catalysts}
             marketCoverage={marketDiscoveryInfo}
             liveCheckedAt={marketCheckedAt}
+            token={token}
             onGoAuto={() => setActivePage('auto')}
           /> : activePage === 'auto'
         ? <AutoPaperLab
