@@ -8,6 +8,7 @@ import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAut
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { getAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
+import { writeScreeningSnapshot } from './screeningHistory'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -457,6 +458,7 @@ export default function App() {
       setMarketStocks(collected)
       setMarketCheckedAt(checkedAt)
       setAutoSignals(evaluated.signals)
+      writeScreeningSnapshot({ checkedAt, signals: evaluated.signals })
       setSignalSnapshot([])
       setSignalCheckedAt('')
       // Evaluate atomically after BOTH quote analysis and news/DART validation.
@@ -643,6 +645,7 @@ export default function App() {
             signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             catalysts={catalysts}
             marketCoverage={marketDiscoveryInfo}
+            liveCheckedAt={marketCheckedAt}
             onGoAuto={() => setActivePage('auto')}
           /> : activePage === 'auto'
         ? <AutoPaperLab
