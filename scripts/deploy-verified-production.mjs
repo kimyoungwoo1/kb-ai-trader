@@ -2,7 +2,7 @@
 // One-shot deployment preserving the five secrets from known-good version dafe0360.
 // Only switches traffic after the NEW version's secret bindings are verified.
 import { execFileSync } from 'node:child_process'
-import { createHash, generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { join, relative, resolve, extname, sep } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -38,7 +38,12 @@ function walk(root){
 }
 async function main(){
   ensure(existsSync('worker/wrangler.jsonc'),'저장소 루트에서 실행해야 합니다.')
-  console.log('1/7 정상 Secret 보유 버전 검증 (현재 운영 버전 번호 무관)')
+  console.log('1/7 운영 버전·KB 바인딩 사전 검증')
+  const preflight=await fetch(domain+'/api/health',{cache:'no-store',signal:AbortSignal.timeout(15000)})
+  ensure(preflight.ok,'현재 운영 Worker가 정상 응답하지 않아 안전 배포를 중단합니다.')
+  const health=await preflight.json()
+  ensure(health?.success===true&&health?.service==='kb-ai-trader-api','현재 운영 Worker 헬스체크에 실패했습니다.')
+  console.log('✓ 기존 운영 Worker 응답 정상 (KB 실계좌 연결은 배포 후 별도 검사)')
   // A rollback or an automatic deployment can change the currently active version.
   // The source version only needs to exist with the expected bindings.
   const auth=parseJson(exec('npx',['wrangler','auth','token','--json'],join(cwd,'worker')))
@@ -64,6 +69,8 @@ async function main(){
   rollbackVersion=active.version_id
   const live=await api(root+'/workers/workers/'+workerId+'/versions/'+rollbackVersion)
   verifyVersion(live,'현재 운영 버전')
+  const probeKey=randomBytes(32).toString('base64url')
+  console.log('✓ 배포 후 KB 계좌 검사 전용 일회성 인증키 생성 (출력하지 않음)')
   // Opt-in encrypted Web Push uses a persistent VAPID keypair. The first
   // release creates it inside the new Worker version; subsequent deploys
   // inherit that SAME key from the currently active deployment.
@@ -193,7 +200,8 @@ async function main(){
         ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
         ...required.map(name=>({name,type:'inherit',version_id:rollbackVersion})),
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
-        ...pushBindings
+        ...pushBindings,
+        {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
     })
@@ -226,6 +234,8 @@ async function main(){
   ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
     &&newBindings.has('VAPID_PUBLIC_KEY')&&newBindings.has('VAPID_SUBJECT'),
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
+  ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
+    '신규 버전 배포 검사용 인증키가 누락됐습니다.')
   console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인')
   console.log('7/7 검증 완료. 운영에 새 버전 배포')
   await api(root+'/workers/scripts/'+name+'/deployments',{
@@ -238,6 +248,35 @@ async function main(){
   ensure(login.status===400,'로그인 Secret 동작 검사 실패: HTTP '+login.status)
   const page=await fetch(domain,{cache:'no-store'})
   ensure(page.ok&&(await page.text()).includes('<html'),'대시보드 정적 파일 응답 검사 실패')
+  // Authenticated real KB account smoke test: no account numbers, token values
+  // or API payloads leave the Worker. A failure triggers the existing rollback.
+  console.log('✓ 배포 후 KB 보유종목·계좌 평가 실연결 검사 시작')
+  let checked=false
+  for(let attempt=0;attempt<2;attempt++){
+    let summary
+    try{
+      const response=await fetch(domain+'/api/deploy/verify',{
+        method:'POST',cache:'no-store',headers:{'X-Deploy-Probe':probeKey},
+        signal:AbortSignal.timeout(65000)
+      })
+      summary=await response.json()
+      if(response.ok && summary?.success===true
+         &&summary?.checks?.holdings?.success===true
+         &&summary?.checks?.valuation?.success===true){
+        checked=true
+        console.log('✓ KB 보유종목·계좌 평가 API 인증 및 실조회 정상')
+        break
+      }
+      const h=summary?.checks?.holdings, v=summary?.checks?.valuation
+      console.warn('○ KB 배포 검사 실패 ('+(attempt+1)+'/2) · 보유 '+(h?.stage||'unknown')
+        +' HTTP '+(h?.http_status||response.status)
+        +' · 평가 '+(v?.stage||'unknown')+' HTTP '+(v?.http_status||response.status))
+    }catch(error){
+      console.warn('○ KB 배포 검사 연결 실패 ('+(attempt+1)+'/2) · '+(error?.name||'network'))
+    }
+    if(attempt===0)await new Promise(resolve=>setTimeout(resolve,1500))
+  }
+  ensure(checked,'KB 계좌 실조회 실패 · 배포 자동 복구 시도 (인증키·계좌 데이터는 로그에 출력하지 않음)')
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
   // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
   if(paperDbId){
@@ -258,7 +297,7 @@ async function main(){
 try {await main()} catch(e){
   console.error('중단: '+e.message)
   if(switched){
-    console.error('로그인 또는 대시보드 확인 실패: 정상 버전 자동 복구 시도')
+    console.error('배포 후 안전성 검사 실패: 이전 운영 버전 자동 복구 시도')
     try{
       const r=await fetch('https://api.cloudflare.com/client/v4/accounts/'+accountId+'/workers/scripts/'+name+'/deployments',{
         method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
