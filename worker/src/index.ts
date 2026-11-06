@@ -133,7 +133,7 @@ const service = {
     if (url.pathname === "/api/live/trial" && request.method === "POST") {
       let input:unknown;
       try{input=await request.json();}catch{return json({success:false,message:'요청 형식 오류'},400);}
-      const response=await liveTrialApi(env.PAPER_DB,input);
+      const response=await liveTrialApi(env.PAPER_DB,input,env);
       const headers=new Headers(response.headers);
       for(const [key,value] of Object.entries(corsHeaders))headers.set(key,value);
       return new Response(response.body,{status:response.status,headers});
