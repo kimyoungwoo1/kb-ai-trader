@@ -8,6 +8,7 @@ const API = 'https://kb-ai-trader.ksmsy1.workers.dev/api/paper/server'
 let active = false
 let lastRevision = -1
 let latest: ServerPaperStatus | null = null
+let lastConnectionError = ''
 export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
@@ -15,6 +16,11 @@ export type ServerPaperStatus = {
 }
 export function isServerPaperMode() { return active }
 export function getServerPaperStatus() { return latest }
+export function getServerPaperError() { return lastConnectionError }
+export function setServerPaperError(message: string) {
+  lastConnectionError = message
+  window.dispatchEvent(new CustomEvent(SERVER_PAPER_EVENT))
+}
 export function setServerPaperMode(enabled: boolean) {
   active = enabled
   if (!enabled) lastRevision = -1
@@ -31,6 +37,7 @@ export async function serverPaperAction(token: string, action: string): Promise<
   const data = await res.json() as ServerPaperStatus
   if (!res.ok || !data.success) throw Error(data.message || '서버 가상매매 요청 실패')
   latest = data
+  lastConnectionError = ''
   if (data.migrated && data.snapshot) {
     active = true
     if (lastRevision !== data.revision) {
