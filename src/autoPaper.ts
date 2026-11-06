@@ -264,7 +264,7 @@ export function runAutoTrialSell(
 ): AutoAccount {
   if (!account.enabled) throw Error('자동 가상매매가 중지되어 있습니다.')
   if (!inSession(now)) throw Error('시험 청산은 정규장에만 실행할 수 있습니다.')
-  if (!/^\\d{6}$/.test(code)) throw Error('종목코드가 올바르지 않습니다.')
+  if (!/^\d{6}$/.test(code)) throw Error('종목코드가 올바르지 않습니다.')
   if (!positive(quote.price)) throw Error('유효한 KB 현재가를 확인하지 못했습니다.')
   const at = Date.parse(quote.checkedAt)
   if (!Number.isFinite(at) || at > now.getTime() + 15_000 || now.getTime() - at > 120_000)
