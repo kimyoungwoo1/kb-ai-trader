@@ -637,7 +637,7 @@ export default function App() {
 
   const baseHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
   const autoHealth = readAutoAccount().enabled && isKrxSession(new Date(autoHeartbeat))
-    && !catalystReady(catalysts, new Date(autoHeartbeat))
+    && baseHealth.tone !== 'warning' && !catalystReady(catalysts, new Date(autoHeartbeat))
     ? { ...baseHealth, tone: 'warning' as const, label: '뉴스·공시 신규 매수 보류',
       detail: '뉴스·공시 수집이 미완료입니다. 기존 보유 종목의 가상매도 감시는 지속합니다.' }
     : baseHealth
