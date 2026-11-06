@@ -12,6 +12,7 @@ type Db = any;
 type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
+export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'error'; message:string; filled:number; scanned:number };
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error FROM server_paper_state WHERE id=1').first<StateRow>();
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
@@ -71,21 +72,29 @@ export async function serverPaperApi(db: Db | undefined, action: string, expecte
     return ok({ success:false,message:'D1 서버 가상매매 오류: '+(error instanceof Error ? error.message.slice(0,180) : '알 수 없는 오류') },503);
   }
 }
-export async function serverPaperTick(db: Db | undefined, post: Post, date = new Date()): Promise<void> {
-  if (!db || !marketOpen(date)) return;
+export async function serverPaperTick(db: Db | undefined, post: Post, date = new Date()): Promise<TickOutcome> {
+  if (!db) return {result:'error',message:'D1 데이터베이스 연결 없음',filled:0,scanned:0};
+  if (!marketOpen(date)) return {result:'market_closed',message:'정규장 외 · 매매 검사 없음',filled:0,scanned:0};
   const row = await state(db);
-  if (!row || row.mode !== 'running') return;
+  if (!row || row.mode !== 'running') return {result:'stopped',message:'서버 자동매매 중지 상태',filled:0,scanned:0};
   const slot = Math.floor(date.getTime() / 60_000);
-  if (row.cycle_slot >= slot) return;
+  if (row.cycle_slot >= slot) return {result:'duplicate',message:'이미 처리된 1분 구간',filled:0,scanned:0};
   // A single conditional write reserves this minute across all Worker instances.
   const reserved = await db.prepare('UPDATE server_paper_state SET revision=revision+1, cycle_slot=?, busy_until=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot < ? AND busy_until < ?')
     .bind(slot,date.getTime()+180_000,row.revision,slot,date.getTime()).run();
-  if ((reserved.meta?.changes ?? 0) !== 1) return;
+  if ((reserved.meta?.changes ?? 0) !== 1) return {result:'busy',message:'다른 서버 실행이 처리 중',filled:0,scanned:0};
   const writeRevision = row.revision+1;
   let snapshot: Snapshot;
   try { snapshot = JSON.parse(row.snapshot_json); if (!valid(snapshot)) throw Error('서버 원장 형식 오류'); }
-  catch { return; }
-  if (!snapshot.account.enabled) return;
+  catch {
+    await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND cycle_slot=?')
+      .bind('서버 원장 형식 오류',writeRevision,slot).run().catch(()=>{});
+    return {result:'error',message:'서버 원장 형식 오류',filled:0,scanned:0};
+  }
+  if (!snapshot.account.enabled) {
+    await db.prepare('UPDATE server_paper_state SET busy_until=0 WHERE id=1 AND revision=? AND cycle_slot=?').bind(writeRevision,slot).run().catch(()=>{});
+    return {result:'stopped',message:'서버 계좌가 비활성화됨',filled:0,scanned:0};
+  }
   let message = '';
   try {
     const watched = [...snapshot.account.positions,...snapshot.account.pending]
@@ -100,7 +109,11 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const selected = [...watched,...rotated,...pool].filter((x:any,i:number,a:any[])=>a.findIndex(y=>y.code===x.code)===i);
       return selected.slice(0,25);
     })() : watched;
-    if (!symbols.length) return;
+    if (!symbols.length) {
+      await db.prepare('UPDATE server_paper_state SET busy_until=0, last_error=NULL WHERE id=1 AND revision=? AND cycle_slot=?')
+        .bind(writeRevision,slot).run();
+      return {result:'no_symbols',message:'빠른 감시 대상 없음 · 다음 전체시장 검사 대기',filled:0,scanned:0};
+    }
     const now = new Date();
     const checkedAt = now.toISOString();
     let nextAccount: AutoAccount;
@@ -158,10 +171,12 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
     const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=NULL, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(JSON.stringify(snapshot),new Date().toISOString(),writeRevision,slot).run();
-    if ((res.meta?.changes ?? 0)!==1) return; // Stop/start or another write won; never overwrite.
+    if ((res.meta?.changes ?? 0)!==1) return {result:'busy',message:'원장 변경 경합 · 거래 결과 반영 안 함',filled:0,scanned:0};
+    return {result:doScan ? 'scanned' : 'watched',message,filled:Math.max(0,nextAccount.fills.length-snapshot.account.fills.length),scanned:symbols.length};
   } catch (error) {
     const diagnostic = error instanceof Error ? error.message.slice(0,180) : '서버 감시 실패';
     await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
+    return {result:'error',message:diagnostic,filled:0,scanned:0};
   }
 }
