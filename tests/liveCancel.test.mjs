@@ -20,7 +20,7 @@ class MemoryD1{
   return {params:[],bind(...p){this.params=p;return this},
    async first(){if(sql.startsWith('SELECT enabled,trading_day'))return {enabled:1,trading_day:'2026-11-09'};throw Error('unexpected read '+sql)},
    async all(){
-    if(sql.includes('state IN (\\'ACCEPTED\\',\\'PARTIAL\\')')&&sql.includes('SELECT *'))
+    if(sql.includes("state IN ('ACCEPTED','PARTIAL')")&&sql.includes('SELECT *'))
      return {results:['ACCEPTED','PARTIAL'].includes(db.order.state)?[db.order]:[]}
     if(sql.includes('SELECT * FROM live_order_journal WHERE state IN'))return {results:[db.order]}
     throw Error('unexpected list '+sql)
