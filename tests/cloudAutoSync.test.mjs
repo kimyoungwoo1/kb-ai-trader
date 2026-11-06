@@ -104,9 +104,13 @@ test('a new paper fill triggers cloud backup, later periodic checkpoint does not
     assert.equal(driver.getCloudSyncState().lastError,'')
     const periodic=[...intervals.values()]
     assert.equal(periodic.length,2)
-    // The checkpoint function is the timer created with the 2-minute interval.
-    for(const task of periodic) task()
-    await tick()
+    // Simulate the 2-minute checkpoint timer becoming due.
+    const originalNow = Date.now
+    Date.now = () => originalNow() + 121_000
+    try {
+      for(const task of periodic) task()
+      await tick()
+    } finally { Date.now = originalNow }
     assert.equal(driver.getCloudSyncState().revision,3)
     assert.equal(values.filter(item=>item.action==='save').at(-1).checkpointOnly,true)
   } finally {
