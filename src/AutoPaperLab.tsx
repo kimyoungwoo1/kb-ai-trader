@@ -152,13 +152,25 @@ export default function AutoPaperLab({
           <strong>{health.label}</strong>
           <span>{health.detail}</span>
         </div>
-        <span className="auto-health-frequency">정규장 · 약 5분 간격</span>
+        <span className="auto-health-frequency">전체시장 5분 · 보유종목 1분</span>
       </div>
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
         <div><span>오늘 검사 횟수</span><strong>{activity.checked.toLocaleString('ko-KR')}회</strong><small>완료 {activity.completed}회 · 보류 {activity.deferred}회{activity.partialHistory ? ' · 이전 기록 일부만 집계' : ''}</small></div>
         <div><span>오늘 자동 체결</span><strong>{activity.filled.toLocaleString('ko-KR')}건</strong><small>모의 매수·매도 합계</small></div>
         <div><span>최근 전략 판단</span><strong>{lastRun ? lastRun.status : '아직 없음'}</strong><small>{lastRun ? formatTime(lastRun.processedAt) : '첫 검사 후 기록됩니다'}</small></div>
+      </div>
+      <div className="auto-watch-panel">
+        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 1분 간격 · KB 현재가 확인</span></div>
+        <div className="auto-watch-stats">
+          <span>상태 <b>{account.positions.length + account.pending.length === 0 ? '감시 대상 없음'
+            : account.watchStatus?.status || '시작 대기'}</b></span>
+          <span>최근 확인 <b>{formatTime(account.watchStatus?.processedAt)}</b></span>
+          <span>가격 확인 <b>{account.watchStatus ? account.watchStatus.received + '/' + account.watchStatus.watched + '종목' : '-'}</b></span>
+          <span>빠른 감시 체결 <b>{account.watchDaily?.date === new Date(clock + 9 * 3600000).toISOString().slice(0,10)
+            ? account.watchDaily.filled + '건' : '0건'}</b></span>
+        </div>
+        {account.watchStatus?.message && <p className="auto-watch-message">{account.watchStatus.message}</p>}
       </div>
       <div className="auto-overview-grid">
         <article className="auto-overview-card auto-overview-primary">
@@ -183,7 +195,7 @@ export default function AutoPaperLab({
         <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
         <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
-      <p className="auto-operation-note">현재 자동 검사는 로그인한 브라우저가 열려 있을 때만 실행됩니다. 브라우저를 닫아도 실행되는 서버 자동매매는 아직 제공하지 않습니다. 실계좌 주문은 실행되지 않습니다.</p>
+      <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 1분마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
     </div>
 
     <section className="panel auto-main-panel auto-scan-review">
