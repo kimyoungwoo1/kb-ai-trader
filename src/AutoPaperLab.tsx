@@ -5,7 +5,7 @@ import { getAutoHealth, todayActivity } from './autoStatus'
 import { runPaperEngineCheck, type EngineCheckReport } from './paperEngineCheck'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
 import { acquireTradingLease, verifyTradingLease, canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState } from './cloudAutoSync'
-import { getServerPaperStatus, isServerPaperMode, serverPaperAction, SERVER_PAPER_EVENT } from './serverPaperClient'
+import { getServerPaperStatus, getServerPaperError, isServerPaperMode, serverPaperAction, SERVER_PAPER_EVENT } from './serverPaperClient'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -66,6 +66,7 @@ export default function AutoPaperLab({
 
   const serverMode = isServerPaperMode()
   const serverInfo = getServerPaperStatus()
+  const serverError = getServerPaperError()
   void serverTick
   const currentEquity = ledgerEquity(ledger)
   const currentReturn = (currentEquity / 1_000_000 - 1) * 100
@@ -192,6 +193,17 @@ export default function AutoPaperLab({
         </div>
         <span className="auto-health-frequency">{serverMode ? '서버 전체시장 5분 · 보유종목 1분 (Cron)' : '전체시장 5분 · 보유종목 30초'}</span>
       </div>
+      {serverMode && !serverInfo?.migrated && <div className="auto-cloud-sync-status cloud-phase-blocked" role="alert">
+        <span><strong>서버 이전 상태 확인 필요</strong>
+          <small>{serverError || '서버 상태를 확인하지 못했습니다. 중복 체결 방지를 위해 브라우저 자동매매는 차단되어 있습니다.'}</small></span>
+        <button type="button" className="outline-button" disabled={startBusy} onClick={() => {
+          if (startBusy) return
+          setStartBusy(true)
+          void serverPaperAction(token,'status').then(() => window.location.reload())
+            .catch(error => setTrialNotice('서버 상태 재확인 실패 · '+(error instanceof Error ? error.message : '연결 오류')))
+            .finally(() => setStartBusy(false))
+        }}>서버 상태 다시 확인</button>
+      </div>}
       {!serverMode && <div className="auto-cloud-sync-status cloud-phase-ready" role="status">
         <span><strong>서버 자동매매로 전환</strong>
           <small>현재 D1 백업을 서버 원장으로 안전하게 이전합니다. 다른 탭의 자동매매를 중지한 뒤 실행하세요. 전환 이후 브라우저 수동 거래·기존 백업 쓰기는 비활성화됩니다.</small></span>
