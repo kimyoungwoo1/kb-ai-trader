@@ -351,7 +351,7 @@ export default function App() {
         })) : []
     const disclosures: MarketDisclosure[] = dartOk && Array.isArray(dartData?.disclosures)
       ? dartData.disclosures.filter((item: any) => item && /^\d{6}$/.test(String(item.stock_code)))
-        .slice(0, 500).map((item: any) => ({
+        .slice(0, 2500).map((item: any) => ({
           company: String(item.company || '').slice(0, 100),
           stock_code: String(item.stock_code), title: String(item.title || '').slice(0, 230),
           date: String(item.date || ''), receipt_no: String(item.receipt_no || ''),
