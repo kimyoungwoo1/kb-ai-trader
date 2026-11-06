@@ -102,7 +102,7 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
       success: false, message: '가상매매 백업의 구조가 올바르지 않습니다.' }, { status: 400 })
     const json = JSON.stringify(snapshot)
     // Reject accidental credential material, including nested extra fields.
-    if (/"(?:app[_-]?key|app[_-]?secret|password|access[_-]?token|refresh[_-]?token|dashboard[_-]?api[_-]?key)"\s*:/i.test(json))
+    if (/"(?:app[_-]?key|app[_-]?secret|api[_-]?key|secret|password|access[_-]?token|refresh[_-]?token|dashboard[_-]?api[_-]?key)"\s*:/i.test(json))
       return Response.json({ success: false,
         message: '가상매매 백업에는 인증 정보나 API Secret을 포함할 수 없습니다.' }, { status: 400 })
     if (new TextEncoder().encode(json).byteLength > MAX_BYTES) return Response.json({
