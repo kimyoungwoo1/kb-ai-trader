@@ -805,7 +805,39 @@ export default {
         if (result.status !== "000" && result.status !== "013") {
           return json({ success: false, message: "OpenDART 오류 " + (result.status || "미상") + ": " + (result.message || "응답 확인 필요"), status: result.status }, 502);
         }
-        const disclosures = (result.list || []).map(item => ({
+        // DART defaults to paginated results. Checking only the first 100 filings
+        // could miss a severe event and incorrectly call a stock risk-free.
+        const totalReported = Number(result.total_count || 0);
+        const combined = [...(result.list || [])];
+        const pagesRequired = Math.ceil(totalReported / 100);
+        let pageError = "";
+        for (let page = 2; page <= Math.min(pagesRequired, 5); page++) {
+          try {
+            const nextParams = new URLSearchParams(params);
+            nextParams.set("page_no", String(page));
+            const pageResponse = await fetch("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
+              redirect: "manual",
+              headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
+              signal: AbortSignal.timeout(12000),
+            });
+            if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
+              pageError = "DART 추가 페이지 HTTP " + pageResponse.status;
+              break;
+            }
+            const nextPage = await pageResponse.json() as typeof result;
+            if (nextPage.status !== "000" || !Array.isArray(nextPage.list)) {
+              pageError = "DART 추가 페이지 오류 " + (nextPage.status || "자료 없음");
+              break;
+            }
+            combined.push(...nextPage.list);
+          } catch {
+            pageError = "DART 추가 페이지 연결 실패";
+            break;
+          }
+        }
+        const disclosureComplete = !pageError && combined.length >= totalReported
+          && (totalReported === 0 || combined.length > 0);
+        const disclosures = combined.map(item => ({
           company: item.corp_name || "회사명 없음",
           stock_code: item.stock_code || "",
           title: item.report_nm || "공시 제목 없음",
@@ -819,7 +851,10 @@ export default {
         return json({
           success: true,
           disclosures,
-          total_count: result.total_count || disclosures.length,
+          total_count: totalReported,
+          fetched_count: disclosures.length,
+          complete: disclosureComplete,
+          pagination_error: pageError || null,
           date_range: startDate + " ~ " + endDate,
           checked_at: now.toISOString(),
           source: "금융감독원 OpenDART 공시검색 API",
