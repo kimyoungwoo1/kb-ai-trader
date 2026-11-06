@@ -165,16 +165,20 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
       { status: 409 })
     }
     const revision = (expected as number) + 1
-    // Append a durable, immutable revision record. The head is already saved even
-    // when this optional audit write fails; clients receive the committed version.
-    let historySaved = true
-    try {
-      const audit = await db.prepare(
-        'INSERT INTO paper_backup_history (revision, updated_at, snapshot_json) VALUES (?, ?, ?)'
-      ).bind(revision, now, json).run()
-      historySaved = !!audit.success
-    } catch { historySaved = false }
-    return Response.json({ success: true, revision, updated_at: now, history_saved: historySaved })
+    // A periodic no-trade checkpoint updates HEAD but avoids a full-size
+    // history row. Snapshots containing fills and explicit manual saves are archived.
+    const checkpointOnly = input.checkpointOnly === true
+    let historySaved = checkpointOnly ? false : true
+    if (!checkpointOnly) {
+      try {
+        const audit = await db.prepare(
+          'INSERT INTO paper_backup_history (revision, updated_at, snapshot_json) VALUES (?, ?, ?)'
+        ).bind(revision, now, json).run()
+        historySaved = !!audit.success
+      } catch { historySaved = false }
+    }
+    return Response.json({ success: true, revision, updated_at: now,
+      history_saved: historySaved, checkpoint_only: checkpointOnly })
   } catch {
     return Response.json({ success: false,
       message: 'D1 백업 테이블을 확인할 수 없습니다. 데이터베이스 바인딩과 초기화 상태를 확인해 주세요.' }, { status: 503 })
