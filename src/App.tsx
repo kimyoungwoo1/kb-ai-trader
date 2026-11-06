@@ -646,10 +646,8 @@ export default function App() {
             onGoAuto={() => setActivePage('auto')}
           /> : activePage === 'auto'
         ? <AutoPaperLab
-            signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             catalysts={catalysts}
             catalystSummary={catalystSummary}
-            marketCoverage={marketDiscoveryInfo}
             checkedAt={marketCheckedAt}
             token={token}
             scanLoading={marketDataLoading}
