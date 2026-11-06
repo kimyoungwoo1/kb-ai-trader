@@ -6,6 +6,7 @@ import AutoPaperLab from './AutoPaperLab'
 import TradingAnalytics from './TradingAnalytics'
 import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
+import { canExecutePaperTrade, startCloudAutoSync, verifyTradingLease } from './cloudAutoSync'
 import { getAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 import { writeScreeningSnapshot } from './screeningHistory'
@@ -463,9 +464,13 @@ export default function App() {
       setSignalCheckedAt('')
       // Evaluate atomically after BOTH quote analysis and news/DART validation.
       // A stale or inaccessible information source stops new entries, never exits.
-      const latest = readAutoAccount()
-      if (latest.enabled && latest.lastCycle !== checkedAt) {
-        writeAutoAccount(runAutoCycle(latest, evaluated.signals, collected, checkedAt))
+      // A remote market scan can outlive a previous lease. Revalidate the D1
+      // single-trader permission immediately before committing any paper fills.
+      if (canExecutePaperTrade() && await verifyTradingLease()) {
+        const latest = readAutoAccount()
+        if (latest.enabled && latest.lastCycle !== checkedAt && canExecutePaperTrade()) {
+          writeAutoAccount(runAutoCycle(latest, evaluated.signals, collected, checkedAt))
+        }
       }
       setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + collected.length + '/' + selected.length + '종목(보유·감시 ' + pinned.length + '종목 포함) · 수급 상위 후보 순위 기준 · ' + [...(discovery.diagnostics || []), ...batchErrors].join(' / '))
       setMarketDataMessage('공개 시장 수급 후보 정밀 검사 ' + collected.length + '/50종목 · '
@@ -477,7 +482,7 @@ export default function App() {
     } finally { marketScanRef.current = false; setMarketDataLoading(false) }
   }
   async function refreshTrackedPrices() {
-    if (!token || fastWatchBusyRef.current || !isKrxSession()
+    if (!token || fastWatchBusyRef.current || !canExecutePaperTrade() || !isKrxSession()
       || Date.now() < fastWatchBackoffRef.current) return
     const account = readAutoAccount()
     if (!account.enabled) return
@@ -541,8 +546,11 @@ export default function App() {
       if (rateLimited) fastWatchBackoffRef.current = Date.now() + 180_000
       // A manual sale, stop request or broad scan can occur during the network reads.
       // Re-read account after awaits and never write stale positions back over user actions.
+      // Check the server lease after all asynchronous KB quote reads, then
+      // re-read local state to avoid using a stale pre-network portfolio.
+      if (!canExecutePaperTrade() || !(await verifyTradingLease())) return
       const latest = readAutoAccount()
-      if (!latest.enabled || !isKrxSession()) return
+      if (!latest.enabled || !isKrxSession() || !canExecutePaperTrade()) return
       if (!valid.length) {
         writeAutoAccount(recordAutoWatchError(latest,
           rateLimited ? 'KB API 호출 제한 · 3분 후 재시도' : failures.join(' / ') || '조회된 가격 없음',
@@ -587,8 +595,13 @@ export default function App() {
   marketScanRunner.current = loadBroadMarketData
   useEffect(() => {
     if (!token) return
+    return startCloudAutoSync(token)
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
     const poll = () => {
-      if (!isKrxSession() || !readAutoAccount().enabled || marketScanRef.current) return
+      if (!isKrxSession() || !readAutoAccount().enabled || !canExecutePaperTrade() || marketScanRef.current) return
       void marketScanRunner.current()
     }
     // Market scans no longer depend on the visible page. Browser must remain open.
@@ -601,7 +614,7 @@ export default function App() {
     if (!token) return
     // Thirty-second monitoring for held/queued securities, independent of page navigation.
     // Browser tabs can throttle timers; this is not a server-side stop order.
-    const poll = () => { if (readAutoAccount().enabled) void fastWatchRunner.current() }
+    const poll = () => { if (readAutoAccount().enabled && canExecutePaperTrade()) void fastWatchRunner.current() }
     poll()
     const timer = window.setInterval(poll, FAST_QUOTE_INTERVAL_MS)
     // Tab timers may pause in the background. Resume promptly when it becomes visible.
