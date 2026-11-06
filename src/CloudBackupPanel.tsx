@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AUTO_STORAGE_KEY, readAutoAccount } from './autoPaper'
 import { PAPER_KEY, readPaperLedger } from './paperLedger'
 import { SCREENING_HISTORY_KEY, readScreeningSnapshot } from './screeningHistory'
+import { CLOUD_SYNC_EVENT, getCloudSyncState, saveCloudBackupNow, suspendCloudSync } from './cloudAutoSync'
 
 type ServerStatus = { revision: number; updated_at: string | null; configured: boolean; has_backup: boolean }
 const LOCAL_SAFETY_KEY = 'kb-ai-trader-pre-cloud-restore-v1'
@@ -24,6 +25,22 @@ export default function CloudBackupPanel({ token }: { token: string }) {
   const [message, setMessage] = useState('클라우드 백업 연결 상태 확인 전')
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [autoState, setAutoState] = useState(getCloudSyncState)
+  useEffect(() => {
+    const update = () => {
+      const current = getCloudSyncState()
+      setAutoState(current)
+      if (current.revision !== null) {
+        setStatus(previous => previous ? {
+          ...previous, revision: current.revision!,
+          has_backup: current.revision! > 0,
+          updated_at: current.lastBackupAt || previous.updated_at,
+        } : previous)
+      }
+    }
+    window.addEventListener(CLOUD_SYNC_EVENT, update)
+    return () => window.removeEventListener(CLOUD_SYNC_EVENT, update)
+  }, [])
   const refresh = useCallback(async () => {
     if (!token) return
     try {
@@ -39,25 +56,17 @@ export default function CloudBackupPanel({ token }: { token: string }) {
   }, [token])
   useEffect(() => { void refresh() }, [refresh])
   async function save() {
-    if (!token || !status || busy) return
-    if (!window.confirm('현재 브라우저의 가상계좌·자동매매 기록을 서버에 저장할까요? 기존 서버 백업이 있으면 새 버전으로 갱신됩니다.')) return
+    if (!token || busy) return
+    if (!window.confirm('현재 브라우저 가상매매 기록을 지금 D1 서버에 백업할까요? 자동 백업과 동일한 버전 잠금을 사용합니다.')) return
     setBusy(true)
     try {
-      const current = {
-        format: 1, savedAt: new Date().toISOString(),
-        ledger: readPaperLedger(), account: readAutoAccount(),
-        screening: readScreeningSnapshot(),
-      }
-      const result = await requestBackup(token, 'save', {
-        expectedRevision: status.revision, snapshot: current,
-      })
-      setStatus({ configured: true, has_backup: true,
-        revision: result.revision, updated_at: result.updated_at })
-      setMessage('클라우드 백업 완료 · 버전 ' + result.revision
-        + (result.history_saved ? ' · 변경 이력 보관 완료' : ' · 최신 백업 저장 (과거 버전 이력 확인 필요)'))
+      const success = await saveCloudBackupNow()
+      if (!success) throw Error(getCloudSyncState().message)
+      await refresh()
+      setMessage('수동 백업 완료 · 최신 자동 백업 상태와 동기화했습니다.')
     } catch (error) {
       setMessage('백업 실패 · ' + (error instanceof Error ? error.message : '응답 오류')
-        + ' · 기존 로컬 거래 기록은 그대로 유지됩니다.')
+        + ' · 기존 로컬 데이터는 보존됩니다.')
     } finally { setBusy(false) }
   }
   async function restore() {
@@ -69,6 +78,7 @@ export default function CloudBackupPanel({ token }: { token: string }) {
     if (!window.confirm('D1 서버의 백업으로 이 브라우저의 가상계좌·자동 전략·종목 분석 기록을 교체할까요?\n\n로컬 기존 기록은 되돌리기 사본으로 남기며, 복원 후 자동매매는 중지 상태로 시작합니다.')) return
     setBusy(true)
     try {
+      await suspendCloudSync()
       const result = await requestBackup(token, 'load')
       const snapshot = result.snapshot
       if (snapshot?.format !== 1 || !snapshot.ledger || !snapshot.account
@@ -139,11 +149,15 @@ export default function CloudBackupPanel({ token }: { token: string }) {
     <div className="analysis-mini-stats">
       <div><span>서버 백업 버전</span><b>{status?.has_backup ? 'v' + status.revision : '백업 없음'}</b></div>
       <div><span>마지막 서버 저장</span><b>{date(status?.updated_at || null)}</b></div>
+      <div><span>자동 백업 상태</span><b>{autoState.phase === 'ready' ? '정상 동작'
+        : autoState.phase === 'blocked' || autoState.phase === 'error' ? '확인 필요' : '준비 중'}</b></div>
+      <div><span>자동매매 단일 실행권</span><b>{autoState.ownsLease ? '이 브라우저' : '미보유 / 미사용'}</b></div>
     </div>
-    <p className="analysis-footnote">가상계좌 현금·보유 종목·체결 기록·자동매매 판단 이력과 마지막 종목 분석을 함께 저장해. 저장과 복원은 버튼을 눌렀을 때만 실행되며 다른 PC에서 자동으로 덮어쓰지 않아.</p>
-    <p className="analysis-footnote">동시에 여러 PC에서 자동매매를 실행하지 마. 이 기능은 서버 백업이지 실시간 동기화된 단일 주문 엔진이 아니야. 다른 PC로 옮길 때는 현재 PC의 자동매매를 중지하고 백업한 다음, 새 PC에서 복원해 사용해.</p>
+    <p className="analysis-footnote">가상 체결이 발생하면 변경을 감지해 서버에 자동 백업하고, 장중 사용 중에는 약 2분마다 보조 백업합니다. 수동 백업·복원도 사용할 수 있어요. 자동매매 실행권은 D1에서 브라우저별로 관리합니다.</p>
+    <p className="analysis-footnote">마지막 자동 저장: {date(autoState.lastBackupAt)} · {autoState.message}</p>
+    <p className="analysis-footnote">D1 실행권으로 여러 탭·기기의 자동 가상체결을 막지만, 서버에서 직접 주문하는 방식은 아니야. 다른 PC에서는 자동매매를 중지하고 최신 서버 백업을 복원해 사용하세요. 브라우저가 갑자기 종료되면 마지막 체결의 백업이 완료되기 전에 종료될 가능성도 있습니다.</p>
     <div className="cloud-backup-actions">
-      <button type="button" className="outline-button" disabled={busy || offline || !status}
+      <button type="button" className="outline-button" disabled={busy || offline || !status || autoState.phase !== 'ready'}
         onClick={() => void save()}>{busy ? '처리 중...' : '현재 기록 서버에 백업'}</button>
       <button type="button" className="outline-button" disabled={busy || offline || !status?.has_backup}
         onClick={() => void restore()}>서버 기록 이 브라우저에 복원</button>
