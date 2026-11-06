@@ -181,12 +181,15 @@ async function main(){
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
   // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
   if(paperDbId){
+    const currentBefore=await api(root+'/workers/scripts/'+name+'/schedules')
+    const oldSchedules=Array.isArray(currentBefore)?currentBefore:currentBefore.schedules||[]
+    const newSchedules=[...oldSchedules.map(item=>({cron:item.cron})).filter(item=>item.cron!=='* * * * *'),{cron:'* * * * *'}]
     await api(root+'/workers/scripts/'+name+'/schedules',{
       method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({schedules:[{cron:'* * * * *'}]})
+      body:JSON.stringify(newSchedules)
     })
     const currentSchedules=await api(root+'/workers/scripts/'+name+'/schedules')
-    ensure((currentSchedules.schedules||[]).some(item=>item.cron==='* * * * *'),
+    ensure((Array.isArray(currentSchedules)?currentSchedules:currentSchedules.schedules||[]).some(item=>item.cron==='* * * * *'),
       '서버 감시 Cron 등록 확인 실패')
     console.log('✓ 매 1분 서버 가상매매 Cron 활성화 확인')
   }
