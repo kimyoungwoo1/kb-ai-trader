@@ -190,7 +190,9 @@ async function main(){
       "CREATE TABLE IF NOT EXISTS paper_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT)",
       "CREATE INDEX IF NOT EXISTS idx_paper_notifications_created ON paper_notifications(id DESC)",
       "CREATE TABLE IF NOT EXISTS paper_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-      "CREATE TABLE IF NOT EXISTS paper_notification_settings (id INTEGER PRIMARY KEY CHECK(id=1), settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
+      "CREATE TABLE IF NOT EXISTS paper_notification_settings (id INTEGER PRIMARY KEY CHECK(id=1), settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS live_trial_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled=0), updated_at TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS live_trial_candidates (id INTEGER PRIMARY KEY AUTOINCREMENT, trading_day TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE, code TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL CHECK(side='BUY'), quantity INTEGER NOT NULL CHECK(quantity>0), limit_price INTEGER NOT NULL CHECK(limit_price>0), notional INTEGER NOT NULL CHECK(notional<=50000), reason TEXT NOT NULL, status TEXT NOT NULL CHECK(status='DRY_RUN_ONLY'), created_at TEXT NOT NULL)"
     ]){
       const queryResult=await api(root+'/d1/database/'+paperDbId+'/query',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
