@@ -20,5 +20,10 @@
       "KB_APP_KEY",
       "KB_APP_SECRET"
     ]
+  },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
   }
 }
