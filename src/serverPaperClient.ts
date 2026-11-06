@@ -1,5 +1,6 @@
 import { AUTO_EVENT, AUTO_STORAGE_KEY, type AutoAccount } from './autoPaper'
-import { PAPER_EVENT, PAPER_KEY, type PaperLedger } from './paperLedger'
+import { PAPER_EVENT, PAPER_KEY, readPaperLedger, type PaperLedger } from './paperLedger'
+import { readAutoAccount } from './autoPaper'
 
 export const SERVER_PAPER_EVENT = 'kb-server-paper-updated'
 const API = 'https://kb-ai-trader.ksmsy1.workers.dev/api/paper/server'
@@ -19,10 +20,12 @@ export function setServerPaperMode(enabled: boolean) {
   window.dispatchEvent(new CustomEvent(SERVER_PAPER_EVENT))
 }
 export async function serverPaperAction(token: string, action: string): Promise<ServerPaperStatus> {
+  const ledger = readPaperLedger(), account = readAutoAccount()
+  const signature = action === 'migrate' ? [ledger.trades.length,ledger.trades.slice(0,4).map(x=>x.id).join('|'),account.fills.length,account.fills.slice(0,4).map(x=>x.id).join('|')].join(':') : ''
   const res = await fetch(API, {
     method: 'POST',cache:'no-store',
     headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-    body:JSON.stringify({action}),signal:AbortSignal.timeout(35_000),
+    body:JSON.stringify({action,signature}),signal:AbortSignal.timeout(35_000),
   })
   const data = await res.json() as ServerPaperStatus
   if (!res.ok || !data.success) throw Error(data.message || '서버 가상매매 요청 실패')
