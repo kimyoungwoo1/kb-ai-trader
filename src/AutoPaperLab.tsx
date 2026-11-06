@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PAPER_EVENT, ledgerEquity, readPaperLedger } from './paperLedger'
-import { AUTO_EVENT, newAutoAccount, readAutoAccount, writeAutoAccount, type AutoAccount } from './autoPaper'
+import { AUTO_EVENT, AUTO_TAKE_PROFIT_PCT, newAutoAccount, readAutoAccount, runAutoTrialSell, writeAutoAccount, type AutoAccount } from './autoPaper'
 import type { TradeSignal } from './tradeSignals'
 import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
 import { getAutoHealth, todayActivity } from './autoStatus'
@@ -14,10 +14,11 @@ const formatTime = (value?: string) => {
 }
 
 export default function AutoPaperLab({
-  signals, checkedAt, onStart, scanLoading = false, scanMessage = '',
+  signals, checkedAt, token, onStart, scanLoading = false, scanMessage = '',
 }: {
   signals: TradeSignal[]
   checkedAt: string
+  token: string
   onStart?: () => void
   scanLoading?: boolean
   scanMessage?: string
@@ -26,6 +27,9 @@ export default function AutoPaperLab({
   const [ledger, setLedger] = useState(readPaperLedger)
   const [confirmReset, setConfirmReset] = useState(false)
   const [engineCheck, setEngineCheck] = useState<EngineCheckReport | null>(null)
+  const [trialCode, setTrialCode] = useState('')
+  const [trialBusy, setTrialBusy] = useState(false)
+  const [trialNotice, setTrialNotice] = useState('')
   const [selectedRunIndex, setSelectedRunIndex] = useState(0)
   const [showAllReviewed, setShowAllReviewed] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
@@ -80,6 +84,32 @@ export default function AutoPaperLab({
     setSelectedRunIndex(0)
     setShowAllReviewed(false)
   }, [account.runs?.[0]?.checkedAt])
+
+  async function confirmTrialSell() {
+    if (!trialCode || trialBusy || scanLoading) return
+    setTrialBusy(true)
+    setTrialNotice('')
+    try {
+      const current = readAutoAccount()
+      if (!current.positions.some(p => p.code === trialCode)) throw Error('대상 종목이 이미 청산되었습니다.')
+      const response = await fetch('https://kb-ai-trader.ksmsy1.workers.dev/api/kb/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ code: trialCode, exchange: '1' }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success) throw Error(result.message || 'KB 현재가 조회에 실패했습니다.')
+      const quote = { price: Number(result.price), checkedAt: String(result.checked_at || '') }
+      const next = runAutoTrialSell(readAutoAccount(), trialCode, quote)
+      writeAutoAccount(next)
+      setTrialCode('')
+      setTrialNotice('시험 청산 완료 · ' + next.lastMessage + ' 가상잔액과 체결 내역을 확인하세요.')
+    } catch (error) {
+      setTrialNotice('시험 청산 실패 · ' + (error instanceof Error ? error.message : '다시 시도해 주세요.'))
+    } finally {
+      setTrialBusy(false)
+    }
+  }
 
   function toggle() {
     const enabled = !account.enabled
@@ -240,18 +270,36 @@ export default function AutoPaperLab({
     <section className="panel auto-main-panel">
       <div className="panel-heading"><div><h3>현재 가상 보유 종목</h3><span>MANUAL + AUTOMATIC PAPER POSITIONS</span></div></div>
       {ledger.positions.length ? <div className="table-wrap"><table className="paper-table">
-        <thead><tr><th>종목</th><th>보유 수량</th><th>평균 매수가</th><th>최근 확인가</th><th>평가손익</th></tr></thead>
+        <thead><tr><th>종목</th><th>보유 수량</th><th>평균 매수가</th><th>최근 확인가</th><th>익절 목표 (+{AUTO_TAKE_PROFIT_PCT}%)</th><th>평가손익</th><th>시험 청산</th></tr></thead>
         <tbody>{ledger.positions.map(position => {
           const pnl = (position.lastPrice - position.averagePrice) * position.quantity
+          const autoPosition = account.positions.find(item => item.code === position.code)
+          const target = autoPosition ? Math.round(autoPosition.entry * (1 + AUTO_TAKE_PROFIT_PCT / 100)) : null
+          const distance = target && position.lastPrice > 0 ? (target / position.lastPrice - 1) * 100 : null
           return <tr key={position.code}>
             <td><strong>{position.name}</strong><small>{position.code} · {autoOwned.has(position.code) ? '자동 전략 포함' : '수동 가상매매'}</small></td>
             <td>{position.quantity.toLocaleString('ko-KR')}주</td>
             <td>{money(position.averagePrice)}</td>
             <td>{money(position.lastPrice)}</td>
+            <td>{target === null ? '수동 관리' : <>{money(target)}<small>{distance !== null ? (distance > 0 ? '목표까지 +' + distance.toFixed(2) + '%' : '목표가 이상') : '시세 확인 필요'}</small></>}</td>
             <td className={pnl < 0 ? 'negative-value' : 'positive-value'}>{pnl > 0 ? '+' : ''}{money(pnl)}</td>
+            <td>{autoPosition ? <button type="button" className="outline-button auto-trial-button"
+              onClick={() => { setTrialCode(position.code); setTrialNotice('') }}
+              disabled={trialBusy || scanLoading || !health.inSession || !account.enabled}>시험 청산</button> : '—'}</td>
           </tr>
         })}</tbody>
       </table></div> : <p className="ai-empty">현재 보유 중인 가상 종목이 없습니다. 매수 조건을 만족할 때 거래 내역에 자동 기록됩니다.</p>}
+      <p className="auto-check-safety">일반 자동매도는 +{AUTO_TAKE_PROFIT_PCT}% 익절 / -3% 손절 또는 최대 15일 보유 시 실행됩니다. 아래 시험 청산은 수익 목표 달성을 기다리지 않고 해당 종목을 실제 가상계좌에서 매도하는 별도 사용자 테스트입니다.</p>
+      {trialCode && <div className="auto-trial-confirm">
+        <strong>가상 보유 종목 시험 청산</strong>
+        <p>{account.positions.find(p => p.code === trialCode)?.name || trialCode} · 현재 KB 시세를 새로 조회하여 해당 자동 보유 수량을 전량 가상매도합니다.</p>
+        <p><b>주의:</b> 가상잔액·보유 종목·전체 거래 내역과 계좌 수익률이 실제로 바뀝니다. 이 체결은 ‘시험 매도’로 구분되며 자동매매 전략 승률에서는 제외됩니다. 실계좌 주문은 없습니다.</p>
+        <div className="auto-trial-actions">
+          <button type="button" className="outline-button auto-trial-confirm-button" disabled={trialBusy || scanLoading} onClick={() => void confirmTrialSell()}>{trialBusy ? '현재가 확인 및 청산 중...' : '최신 시세로 시험 청산 확정'}</button>
+          <button type="button" className="outline-button" disabled={trialBusy} onClick={() => setTrialCode('')}>취소</button>
+        </div>
+      </div>}
+      {trialNotice && <p role="status" className="auto-trial-notice">{trialNotice}</p>}
     </section>
 
     <section className="panel auto-main-panel">
@@ -260,7 +308,7 @@ export default function AutoPaperLab({
         <thead><tr><th>체결 시각</th><th>종목</th><th>구분</th><th>수량</th><th>가상 체결가</th><th>실현손익</th></tr></thead>
         <tbody>{ledger.trades.slice(0, 8).map(trade => <tr key={trade.id}>
           <td>{formatTime(trade.time)}</td><td>{trade.name}<small>{trade.code}</small></td>
-          <td>{trade.source === 'auto' ? '자동 ' : '수동 '}{trade.side === 'BUY' ? '매수' : '매도'}</td>
+          <td>{trade.source === 'test' ? '시험 매도' : (trade.source === 'auto' ? '자동 ' : '수동 ') + (trade.side === 'BUY' ? '매수' : '매도')}</td>
           <td>{trade.quantity.toLocaleString('ko-KR')}주</td><td>{money(trade.price)}</td>
           <td>{trade.realizedPnl === undefined ? '-' : money(trade.realizedPnl)}</td>
         </tr>)}</tbody>
@@ -270,7 +318,7 @@ export default function AutoPaperLab({
     <details className="panel auto-advanced">
       <summary><strong>고급 진단 및 전략 설정</strong><span>검사 종목·탈락 사유·실행 기록·성과 통계</span></summary>
       <div className="auto-advanced-inner">
-        <p className="news-query">초기 자금 100만원 · 종목당 최대 20만원 · 최대 3종목 · 당일 실현손실 -1만원 이후 신규 진입 중단 · 익절 +6% / 손절 -3% · 최대 보유 15일. 수수료와 슬리피지는 모의 계산이며 실주문은 비활성화되어 있습니다.</p>
+        <p className="news-query">초기 자금 100만원 · 종목당 최대 20만원 · 최대 3종목 · 당일 실현손실 -1만원 이후 신규 진입 중단 · 익절 +5% / 손절 -3% · 최대 보유 15일. 수수료와 슬리피지는 모의 계산이며 실주문은 비활성화되어 있습니다.</p>
         <div className="auto-monitor">
           <div><span>엔진 상태</span><strong>{account.enabled ? '활성화' : '중지'}</strong></div>
           <div><span>최근 검사 결과</span><strong>{lastRun?.status || '미실행'}</strong></div>
