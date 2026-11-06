@@ -106,3 +106,12 @@ CREATE TABLE IF NOT EXISTS live_order_journal (
  updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_live_order_one_buy_per_day ON live_order_journal(trading_day) WHERE side='BUY';
+
+-- Independent hard-off switch for future real-money pilot; existing
+-- live_trial_settings remains hard-locked to preserve previous behavior.
+CREATE TABLE IF NOT EXISTS live_execution_gate (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ trading_day TEXT,
+ updated_at TEXT NOT NULL
+);
