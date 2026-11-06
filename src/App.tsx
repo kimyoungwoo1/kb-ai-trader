@@ -520,14 +520,30 @@ export default function App() {
         return
       }
       const now = new Date()
-      const next = runAutoWatchCycle(latest, valid, now.toISOString(), now, undefined, tracked.length)
-      if (next !== latest) {
+      const freshContext = readCatalystSnapshot()
+      const deferredEntries = latest.pending.filter(item =>
+        !catalystAllowsPending(item.code, item.name, freshContext, now))
+      const allowedEntries = latest.pending.filter(item =>
+        catalystAllowsPending(item.code, item.name, freshContext, now))
+      // Filter pending entries only for this evaluation, then retain blocked
+      // watch records for a future fresh-context scan. Held positions may EXIT regardless.
+      const input = deferredEntries.length ? { ...latest, pending: allowedEntries } : latest
+      const evaluated = runAutoWatchCycle(input, valid, now.toISOString(), now, undefined, tracked.length)
+      if (evaluated !== input) {
+        const next = deferredEntries.length ? { ...evaluated,
+          pending: [...evaluated.pending, ...deferredEntries].filter(item =>
+            !evaluated.positions.some(position => position.code === item.code)),
+        } : evaluated
         if (failures.length && next.watchStatus) {
           next.watchStatus = {
             ...next.watchStatus,
             status: '일부 오류',
             message: next.watchStatus.message + ' · ' + failures.join(' / '),
           }
+        }
+        if (deferredEntries.length && next.watchStatus) {
+          next.watchStatus.message += ' · 뉴스·공시 확인 전 대기 진입 '
+            + deferredEntries.length + '종목 보류 (익절·손절은 정상 감시)'
         }
         writeAutoAccount(next)
       }
@@ -599,7 +615,9 @@ export default function App() {
     </div></header><div className="content">{activePage === 'dashboard' && <section className="page-heading"><div><div className="eyebrow">PERSONAL TRADING SPACE</div><h1>계좌 현황</h1><p>KB증권 실계좌 보유 종목 조회</p></div><button className="outline-button" onClick={refresh} disabled={loading}>{loading ? '조회 중...' : '계좌 새로고침'}</button></section>}
       {activePage === 'paper' ? <PaperTrading token={token} /> : activePage === 'auto'
         ? <AutoPaperLab
-            signals={generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
+            signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
+            catalysts={catalysts}
+            catalystSummary={catalystSummary}
             checkedAt={marketCheckedAt}
             token={token}
             scanLoading={marketDataLoading}
