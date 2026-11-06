@@ -637,6 +637,7 @@ export default function App() {
             signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             catalysts={catalysts}
             catalystSummary={catalystSummary}
+            marketCoverage={marketDiscoveryInfo}
             checkedAt={marketCheckedAt}
             token={token}
             scanLoading={marketDataLoading}
