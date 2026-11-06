@@ -544,9 +544,9 @@ export default function App() {
       const now = new Date()
       const freshContext = readCatalystSnapshot()
       const deferredEntries = latest.pending.filter(item =>
-        !catalystAllowsPending(item.code, item.name, freshContext, now))
+        rateLimited || !catalystAllowsPending(item.code, item.name, freshContext, now))
       const allowedEntries = latest.pending.filter(item =>
-        catalystAllowsPending(item.code, item.name, freshContext, now))
+        !rateLimited && catalystAllowsPending(item.code, item.name, freshContext, now))
       // Filter pending entries only for this evaluation, then retain blocked
       // watch records for a future fresh-context scan. Held positions may EXIT regardless.
       const input = deferredEntries.length ? { ...latest, pending: allowedEntries } : latest
