@@ -10,9 +10,10 @@ export default function LiveTrial({token}:{token:string}){
   const [status,setStatus]=useState<TrialStatus|null>(null)
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
+  const [feedback,setFeedback]=useState('')
   const [confirmation,setConfirmation]=useState('')
   const arm=async()=>{
-    setBusy(true);setError('')
+    setBusy(true);setError('');setFeedback('')
     try{
       const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
         body:JSON.stringify({action:'arm',confirmation})})
@@ -33,13 +34,14 @@ export default function LiveTrial({token}:{token:string}){
   },[token])
   useEffect(()=>{void load();const id=setInterval(()=>void load(),30000);return()=>clearInterval(id)},[load])
   const disable=async()=>{
-    setBusy(true)
+    setBusy(true);setError('');setFeedback('')
     try{
       const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
         body:JSON.stringify({action:'disable'})})
       const data=await response.json()
       if(!response.ok||!data.success)throw Error(data.message||'잠금 실패')
       await load()
+      setFeedback('✓ '+(data.message||'실주문 잠금 상태를 확인했습니다.')+' · '+new Date().toLocaleTimeString('ko-KR'))
     }catch(e){setError(e instanceof Error?e.message:'잠금 실패')}finally{setBusy(false)}
   }
   return <section className="notification-page">
@@ -65,6 +67,7 @@ export default function LiveTrial({token}:{token:string}){
         <button className="outline-button" disabled={busy||confirmation!=='실계좌 5만원 자동매매 실행'}
           onClick={()=>void arm()}>오늘 실거래 활성화</button>
       </div>}
+      {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
       {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
     </div>
     <div className="panel" style={{padding:20}}>
