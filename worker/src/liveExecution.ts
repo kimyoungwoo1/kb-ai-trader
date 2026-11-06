@@ -51,28 +51,81 @@ export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:st
   return true
  }catch{return false}
 }
-/** Read-only real account position query, using the existing SSQM2952 format. */
+/** Independent KB holdings cross-check before any REAL order.
+ * SSQM2952 may omit/collapse positions; a zero balance is not proof that
+ * no shares are held. Cross-validate against the dashboard's SSQM1801 source.
+ * No real-money write is ever sent by these reads.
+ */
+function stockQuantity(row:any,codeField:'is_cd'|'is_no',quantityField:'hld_q'|'gnrl_q'):number|null{
+ const rawCode=String(row?.[codeField]??'').trim().replace(/^A(?=[0-9]{6}$)/,'')
+ if(rawCode!==''){
+   if(!/^[0-9]{6}$/.test(rawCode))return null // foreign equity; not in domestic trial
+   if(row?.[quantityField]===null||row?.[quantityField]===undefined||row?.[quantityField]==='')
+     throw Error('KB 보유수량 필수 숫자 필드 누락 · 실주문 차단')
+   const amount=num(row[quantityField])
+   if(!Number.isSafeInteger(amount))throw Error('KB 보유수량 숫자 검증 실패 · 실주문 차단')
+   return amount
+ }
+ // A missing security code means this row cannot prove that target is absent.
+ throw Error('KB 보유종목코드 필드 누락 · 실주문 차단')
+}
 export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<number>{
  if(!/^[0-9]{6}$/.test(code))throw Error('종목코드 오류')
  const token=await getKbAccessToken(env)
- const response=await fetch(kbBaseUrl(env)+'/api/v1/ssqm2952',{
-  method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-  body:JSON.stringify({dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},dataBody:{excg_mktpr_ccd:'A'}}),
+ const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
+ const body=(dataBody:unknown)=>JSON.stringify({
+  dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},dataBody
+ })
+ const valuationResponse=await fetch(kbBaseUrl(env)+'/api/v1/ssqm2952',{
+  method:'POST',headers,body:body({excg_mktpr_ccd:'A'}),
   signal:AbortSignal.timeout(15000)
  })
- if(!response.ok)throw Error('KB 보유수량 조회 실패')
- const payload:any=await response.json()
- if(String(payload?.dataHeader?.resultCode)!=='200'||!Array.isArray(payload?.dataBody?.Record1))
-  throw Error('KB 보유수량 응답 검증 실패')
- let total=0
- for(const r of payload.dataBody.Record1){
-  if(String(r?.is_cd??'').replace(/^A/,'')!==code)continue
-  const units=[num(r?.ec_q),num(r?.hld_q)]
-  if(units.some(n=>!Number.isSafeInteger(n)))throw Error('KB 보유수량 숫자 검증 실패')
-  total+=Math.max(...units)
+ if(!valuationResponse.ok)throw Error('KB 자산평가 보유수량 조회 실패')
+ const valuation:any=await valuationResponse.json()
+ if(String(valuation?.dataHeader?.resultCode)!=='200'||!Array.isArray(valuation?.dataBody?.Record1))
+  throw Error('KB 자산평가 수량 검증 실패')
+ let valuationShares=0
+ for(const row of valuation.dataBody.Record1){
+  const rawCode=String(row?.is_cd??'').trim().replace(/^A(?=[0-9]{6}$)/,'')
+  if(rawCode!==code){if(!rawCode)throw Error('KB 자산평가 종목코드 누락');continue}
+  const rawQuantity=row?.hld_q??row?.ec_q
+  if(rawQuantity===null||rawQuantity===undefined||rawQuantity==='')
+   throw Error('KB 자산평가 보유수량 누락')
+  const q=num(rawQuantity)
+  if(!Number.isSafeInteger(q))throw Error('KB 자산평가 보유수량 오류')
+  valuationShares+=q
  }
- if(!Number.isSafeInteger(total))throw Error('KB 보유수량 합계 오류')
- return total
+ if(!Number.isSafeInteger(valuationShares))throw Error('KB 자산평가 수량 합산 오류')
+ let availableShares=0,nextKey=''
+ const seen=new Set<string>()
+ for(let page=0;page<10;page++){
+  const response=await fetch(kbBaseUrl(env)+'/api/v1/ssqm1801',{
+   method:'POST',headers,body:body({mkt_tm_ccd:'1',nxt_key:nextKey,inq_clsf:'0',is_no:''}),
+   signal:AbortSignal.timeout(15000)
+  })
+  if(!response.ok)throw Error('KB 실제 보유종목 조회 실패')
+  const holdings:any=await response.json()
+  if(String(holdings?.dataHeader?.resultCode)!=='200'||!Array.isArray(holdings?.dataBody?.Record1))
+   throw Error('KB 보유종목 응답 검증 실패')
+  for(const row of holdings.dataBody.Record1){
+   const rawCode=String(row?.is_no??'').trim().replace(/^A(?=[0-9]{6}$)/,'')
+   if(!rawCode)throw Error('KB 보유종목코드 누락 · 실주문 차단')
+   if(rawCode!==code)continue
+   const q=stockQuantity(row,'is_no','gnrl_q')
+   if(q===null)throw Error('국내주식 보유수량 확인 실패')
+   availableShares+=q
+  }
+  if(!Number.isSafeInteger(availableShares))throw Error('KB 보유종목 수량 합산 오류')
+  const next=String(holdings.dataBody.nxt_key??'').trim()
+  if(!next){
+   if(valuationShares!==availableShares)
+    throw Error('KB 계좌평가·보유종목 수량 불일치 · 실주문 차단')
+   return valuationShares
+  }
+  if(seen.has(next))throw Error('KB 보유종목 다음키 반복')
+  seen.add(next);nextKey=next
+ }
+ throw Error('KB 보유종목 페이지 한도 초과 · 실주문 차단')
 }
 /** Read-only SSQM1801 orderable stock check before any live SELL. */
 export async function readKbSellableQuantity(env:KbCredentials,code:string):Promise<number>{
