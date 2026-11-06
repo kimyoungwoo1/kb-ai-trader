@@ -1,3 +1,5 @@
+import { lookupKbOrder } from './kbOrderContract'
+import type { KbCredentials } from './kbToken'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
  * readiness layer: it NEVER calls a brokerage order endpoint.
@@ -33,7 +35,7 @@ export function validateTrialCandidate(value:TrialCandidate,now=new Date()):stri
   return null
 }
 const limits={budget:LIVE_TRIAL_BUDGET,maxDailyBuys:LIVE_TRIAL_DAILY_BUYS,maxSymbols:LIVE_TRIAL_MAX_SYMBOLS,orderType:'지정가'}
-export async function liveTrialApi(db:Db|undefined,input:unknown):Promise<Response>{
+export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredentials):Promise<Response>{
   if(!db)return reply({success:false,message:'실계좌 보호용 D1 연결이 필요합니다.'},503)
   const body=input&&typeof input==='object'?input as Record<string,unknown>:{}
   const action=String(body.action||'status')
@@ -44,6 +46,18 @@ export async function liveTrialApi(db:Db|undefined,input:unknown):Promise<Respon
       return reply({success:true,enabled:false,brokerOrdersVerified:false,mode:'PREPARATION_ONLY',limits,
         updatedAt:settings?.updated_at||null,candidates:rows.results||[],
         message:'KB 공식 주문·체결·취소 응답 명세가 검증되지 않아 실주문은 서버에서 차단됩니다. 자동주문 기능은 아직 활성화할 수 없습니다.'})
+    }
+    if(action==='lookup'){
+      if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)return reply({success:false,message:'KB 조회 인증 설정 없음'},503)
+      const orderNo=String(body.orderNo||''),code=String(body.code||'')
+      const day=String(body.day||''),side=body.side==='SELL'?'SELL':body.side==='BUY'?'BUY':null
+      if(!side||!/^[0-9]{1,15}$/.test(orderNo)||!/^[0-9]{6}$/.test(code)||
+         !/^20[0-9]{6}$/.test(day))return reply({success:false,message:'조회 조건 확인 필요'},400)
+      // Read-only KB SSQM2341: returns only matching order, never the full
+      // brokerage account order list or access token.
+      const result=await lookupKbOrder(env,day,orderNo,code,side)
+      return reply({success:true,...result,message:result.found?
+        '증권사 주문/체결 조회 결과':'조회 날짜에 일치하는 주문 없음 · 미접수 확정은 아님'})
     }
     if(action==='disable'){
       await db.prepare("INSERT INTO live_trial_settings(id,enabled,updated_at) VALUES(1,0,?) ON CONFLICT(id) DO UPDATE SET enabled=0,updated_at=excluded.updated_at")
