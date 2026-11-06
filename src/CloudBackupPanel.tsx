@@ -3,6 +3,7 @@ import { AUTO_STORAGE_KEY, readAutoAccount } from './autoPaper'
 import { PAPER_KEY } from './paperLedger'
 import { SCREENING_HISTORY_KEY } from './screeningHistory'
 import { CLOUD_SYNC_EVENT, getCloudSyncState, saveCloudBackupNow, suspendCloudSync } from './cloudAutoSync'
+import { isServerPaperMode } from './serverPaperClient'
 
 type ServerStatus = { revision: number; updated_at: string | null; configured: boolean; has_backup: boolean }
 const LOCAL_SAFETY_KEY = 'kb-ai-trader-pre-cloud-restore-v1'
@@ -139,6 +140,7 @@ export default function CloudBackupPanel({ token }: { token: string }) {
       setMessage('되돌리기 실패 · ' + (error instanceof Error ? error.message : '로컬 데이터 오류'))
     }
   }
+  if (isServerPaperMode()) return <section className="panel analysis-section cloud-backup-panel"><h3>D1 서버 가상매매 원장</h3><p>서버가 거래·잔액·보유종목의 원본을 관리합니다. 이전 브라우저 백업과 복원 기능은 데이터 충돌 방지를 위해 비활성화했습니다.</p></section>
   return <section className="panel analysis-section cloud-backup-panel">
     <div className="panel-heading"><div><h3>가상매매 기록 클라우드 백업</h3>
       <span>D1 BACKUP · EXPLICIT SYNC ONLY · REAL ORDERS DISABLED</span></div>
