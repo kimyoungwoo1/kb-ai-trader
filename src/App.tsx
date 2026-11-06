@@ -10,7 +10,7 @@ import { canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState, startCloudAu
 import { getAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 import { writeScreeningSnapshot } from './screeningHistory'
-import { isServerPaperMode, serverPaperAction, setServerPaperMode } from './serverPaperClient'
+import { isServerPaperMode, serverPaperAction, setServerPaperMode, setServerPaperError } from './serverPaperClient'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -617,11 +617,13 @@ export default function App() {
           setServerMode(false)
           cleanupLegacy = startCloudAutoSync(token)
         }
-      } catch {
+      } catch (error) {
         // Fail closed: never start the legacy browser engine when the server
-        // account status is unknown (e.g. lost connectivity).
+        // account status is unknown. Show an explicit retry instead of hiding it.
+        if (cancelled) return
         setServerPaperMode(true)
         setServerMode(true)
+        setServerPaperError(error instanceof Error ? error.message : '서버 상태 조회 실패')
       }
     })()
     return () => {
