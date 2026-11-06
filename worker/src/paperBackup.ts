@@ -145,16 +145,31 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
       ? input.owner : ''
     const nowMs = Date.now()
     if (expected === 0) {
+      if (owner) {
+        result = await db.prepare(
+          'INSERT OR IGNORE INTO paper_backup_head (id, revision, updated_at, snapshot_json) ' +
+          'SELECT 1, 1, ?, ? WHERE EXISTS ' +
+          '(SELECT 1 FROM paper_trade_lease WHERE id = 1 AND owner = ? AND lease_until > ?)'
+        ).bind(now, json, owner, nowMs).run()
+      } else {
+        result = await db.prepare(
+          'INSERT OR IGNORE INTO paper_backup_head (id, revision, updated_at, snapshot_json) ' +
+          'SELECT 1, 1, ?, ? WHERE NOT EXISTS ' +
+          '(SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ?)'
+        ).bind(now, json, nowMs).run()
+      }
+    } else if (owner) {
       result = await db.prepare(
-        "INSERT OR IGNORE INTO paper_backup_head (id, revision, updated_at, snapshot_json) SELECT 1, 1, ?, ? WHERE " +
-        "NOT EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ? AND owner <> ?)"
-      ).bind(now, json, nowMs, owner).run()
+        'UPDATE paper_backup_head SET revision = revision + 1, updated_at = ?, snapshot_json = ? ' +
+        'WHERE id = 1 AND revision = ? AND EXISTS ' +
+        '(SELECT 1 FROM paper_trade_lease WHERE id = 1 AND owner = ? AND lease_until > ?)'
+      ).bind(now, json, expected, owner, nowMs).run()
     } else {
       result = await db.prepare(
-        'UPDATE paper_backup_head SET revision = revision + 1, updated_at = ?, snapshot_json = ? WHERE id = 1 AND revision = ? ' +
-        'AND (NOT EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ?) ' +
-        'OR EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND owner = ? AND lease_until > ?))'
-      ).bind(now, json, expected, nowMs, owner, nowMs).run()
+        'UPDATE paper_backup_head SET revision = revision + 1, updated_at = ?, snapshot_json = ? ' +
+        'WHERE id = 1 AND revision = ? AND NOT EXISTS ' +
+        '(SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ?)'
+      ).bind(now, json, expected, nowMs).run()
     }
     if (!result.success) throw Error('database write failed')
     if ((result.meta?.changes || 0) < 1) {
