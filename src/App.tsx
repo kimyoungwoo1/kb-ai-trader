@@ -330,7 +330,7 @@ export default function App() {
         signal: AbortSignal.timeout(22_000),
       }).then(async response => ({ ok: response.ok, data: await response.json() })),
       fetch(API + '/api/market/disclosures', {
-        method: 'POST', headers, body: '{}',
+        method: 'POST', headers, body: JSON.stringify({ complete: true }),
         signal: AbortSignal.timeout(80_000),
       }).then(async response => ({ ok: response.ok, data: await response.json() })),
     ])
