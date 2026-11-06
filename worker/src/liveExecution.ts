@@ -236,10 +236,11 @@ export async function cancelStaleLiveOrders(
   // First claim is irrevocable: a crash here leaves the order for manual review.
   result.attempted++
   try{
-   await db.prepare(
+   const marked=await db.prepare(
     "UPDATE live_order_journal SET state='CANCEL_REQUESTED',updated_at=? "+
     "WHERE id=? AND state IN ('ACCEPTED','PARTIAL') AND broker_order_id=?"
    ).bind(new Date().toISOString(),row.id,row.brokerOrderId).run()
+   if(!changed(marked)){result.unknown++;continue}
   }catch{result.unknown++;continue}
   // If the user disarms in the interim, NEVER send a cancel write. Claim remains.
   if(!(await getLiveGate(db,env,new Date())).enabled){result.unknown++;continue}
