@@ -163,6 +163,7 @@ async function saveInternal(): Promise<boolean> {
     try {
       const result = await request('save', {
         expectedRevision: expected, snapshot: payload,
+        checkpointOnly: snapshotSignature === lastTradeSignature,
         ...(state.ownsLease ? { owner } : {}),
       })
       if (!active || when !== generation) return false
