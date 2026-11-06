@@ -59,6 +59,58 @@ function walk(root){
     return entry.isDirectory()?walk(full):entry.isFile()?[full]:[]
   })
 }
+// Version URLs serve a newly uploaded version without changing production traffic.
+// A missing/disabled Version URL is a hard deployment blocker.
+const versionOrigin = (id) => {
+  ensure(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id),'신규 버전 UUID 형식 오류')
+  return 'https://'+id.slice(0,8).toLowerCase()+'-'+name+'.ksmsy1.workers.dev'
+}
+const probeVersion = async(origin,secret,label) => {
+  let last='연결되지 않음'
+  for(let attempt=1;attempt<=5;attempt++){
+    try{
+      const healthResponse=await fetch(origin+'/api/health',{
+        cache:'no-store',headers:{'Cache-Control':'no-store'},signal:AbortSignal.timeout(15000)
+      })
+      if(!healthResponse.ok)throw Error('헬스 HTTP '+healthResponse.status)
+      const health=await healthResponse.json()
+      ensure(health?.success===true&&health?.service==='kb-ai-trader-api',
+        label+': Worker 헬스체크 응답이 예상과 다름')
+      const login=await fetch(origin+'/api/auth/login',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:'{bad',
+        signal:AbortSignal.timeout(15000)
+      })
+      ensure(login.status===400,label+': 로그인 Secret 검사 실패 (HTTP '+login.status+')')
+      const page=await fetch(origin+'/',{cache:'no-store',signal:AbortSignal.timeout(15000)})
+      ensure(page.ok&&(await page.text()).includes('<html'),label+': 정적 대시보드 검사 실패')
+      const reply=await fetch(origin+'/api/deploy/verify',{
+        method:'POST',cache:'no-store',headers:{'X-Deploy-Probe':secret},
+        signal:AbortSignal.timeout(65000)
+      })
+      let body
+      try {body=await reply.json()}catch {throw Error('계좌 검사 응답 JSON 오류 (HTTP '+reply.status+')')}
+      if(reply.ok && body?.success===true &&
+          body?.checks?.holdings?.success===true && body?.checks?.valuation?.success===true){
+        console.log('✓ '+label+': 로그인·정적파일·KB 보유종목·계좌평가 실조회 통과')
+        return
+      }
+      const h=body?.checks?.holdings,v=body?.checks?.valuation
+      throw Error('KB 조회 실패: 보유 '+(h?.stage||'unknown')+'/'+(h?.http_status||reply.status)+
+        ', 평가 '+(v?.stage||'unknown')+'/'+(v?.http_status||reply.status))
+    }catch(error){
+      last=String(error?.message||'연결 오류').slice(0,180)
+      console.warn('○ '+label+' 재확인 '+attempt+'/5 · '+last)
+      if(attempt<5)await delay(1500*attempt)
+    }
+  }
+  throw Error(label+' 검증 실패 · '+last+' · 운영 트래픽 변경 없음(배포 전이면)')
+}
+const activeWranglerVersion = async () => {
+  const output=await cliRead(['wrangler','deployments','status','--name',name],'Wrangler 현재 운영 버전 조회')
+  const versions=[...output.matchAll(/Version\\(s\\):\\s*\\(100%\\)\\s*([a-f0-9-]{36})/g)]
+  ensure(versions.length===1,'Wrangler 현재 운영 버전 파싱 실패 · 자동 복구 상태 불명')
+  return versions[0][1].toLowerCase()
+}
 async function main(){
   ensure(existsSync('worker/wrangler.jsonc'),'저장소 루트에서 실행해야 합니다.')
   console.log('1/7 운영 버전·KB 바인딩 사전 검증')
@@ -298,52 +350,32 @@ async function main(){
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
   console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인')
-  console.log('7/7 검증 완료. 운영에 새 버전 배포')
+  // Mandatory smoke testing on the exact NEW version URL. Never change
+  // production traffic when Version URLs are disabled or not yet propagated.
+  console.log('7/7 신규 버전 URL에서 계좌 실조회 검증 (운영 트래픽 미변경)')
+  const previewOrigin=versionOrigin(createdId)
+  await probeVersion(previewOrigin,probeKey,'신규 버전 사전 검사')
+  console.log('✓ 신규 버전 운영 반영 허용 · 사전 실조회 성공')
   // Guard against another deployment switching the live Worker while we build.
   const latest=await api(root+'/workers/scripts/'+name+'/deployments')
   const latestSorted=(latest.deployments||[]).sort((a,b)=>Date.parse(b.created_on)-Date.parse(a.created_on))
   const currentVersion=latestSorted[0]?.versions?.find(v=>v.percentage===100)?.version_id
   ensure(currentVersion===rollbackVersion,
     '배포 중 다른 운영 버전이 반영됐습니다. 최신 버전과 Secret 상속을 다시 확인하기 위해 안전 중단합니다.')
+  // A failed/ambiguous deployment API response might already have changed
+  // traffic. Mark the attempt before sending it and reconcile via Wrangler.
+  switched=true
   await api(root+'/workers/scripts/'+name+'/deployments',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:created.id}]})
+    body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:createdId}]})
   })
-  switched=true
-  // A malformed login body yields HTTP 400 when the password Secret exists, 503 otherwise.
-  const login=await fetch(domain+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{bad'})
-  ensure(login.status===400,'로그인 Secret 동작 검사 실패: HTTP '+login.status)
-  const page=await fetch(domain,{cache:'no-store'})
-  ensure(page.ok&&(await page.text()).includes('<html'),'대시보드 정적 파일 응답 검사 실패')
-  // Authenticated real KB account smoke test: no account numbers, token values
-  // or API payloads leave the Worker. A failure triggers the existing rollback.
-  console.log('✓ 배포 후 KB 보유종목·계좌 평가 실연결 검사 시작')
-  let checked=false
-  for(let attempt=0;attempt<3;attempt++){
-    let summary
-    try{
-      const response=await fetch(domain+'/api/deploy/verify',{
-        method:'POST',cache:'no-store',headers:{'X-Deploy-Probe':probeKey},
-        signal:AbortSignal.timeout(65000)
-      })
-      summary=await response.json()
-      if(response.ok && summary?.success===true
-         &&summary?.checks?.holdings?.success===true
-         &&summary?.checks?.valuation?.success===true){
-        checked=true
-        console.log('✓ KB 보유종목·계좌 평가 API 인증 및 실조회 정상')
-        break
-      }
-      const h=summary?.checks?.holdings, v=summary?.checks?.valuation
-      console.warn('○ KB 배포 검사 실패 ('+(attempt+1)+'/3) · 보유 '+(h?.stage||'unknown')
-        +' HTTP '+(h?.http_status||response.status)
-        +' · 평가 '+(v?.stage||'unknown')+' HTTP '+(v?.http_status||response.status))
-    }catch(error){
-      console.warn('○ KB 배포 검사 연결 실패 ('+(attempt+1)+'/2) · '+(error?.name||'network'))
-    }
-    if(attempt<2)await new Promise(resolve=>setTimeout(resolve,2000))
-  }
-  ensure(checked,'KB 계좌 실조회 실패 · 배포 자동 복구 시도 (인증키·계좌 데이터는 로그에 출력하지 않음)')
+  const activeAfter=await activeWranglerVersion()
+  ensure(activeAfter===createdId,
+    '운영 전환 후 실제 버전 불일치 · 확인된 버전 '+activeAfter)
+  console.log('✓ Wrangler 운영 버전 ID 확인: '+activeAfter)
+  // Production smoke is still required, but only after the newly uploaded
+  // version passed the complete KB account check *before* traffic switching.
+  await probeVersion(domain,probeKey,'운영 전환 후 재검사')
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
   // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
   if(paperDbId){
@@ -364,15 +396,27 @@ async function main(){
 try {await main()} catch(e){
   console.error('중단: '+e.message)
   if(switched){
-    console.error('배포 후 안전성 검사 실패: 이전 운영 버전 자동 복구 시도')
+    console.error('운영 배포 전환 시도 이후 실패 · Wrangler로 이전 버전 복구 및 검증')
     try{
-      const r=await fetch('https://api.cloudflare.com/client/v4/accounts/'+accountId+'/workers/scripts/'+name+'/deployments',{
-        method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-        body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:rollbackVersion}]})
-      })
-      const result=await r.json()
-      console.error(r.ok&&result.success!==false?'정상 버전 복구 요청 성공':'자동 복구 실패 — Cloudflare에서 이전 정상 버전으로 롤백하세요.')
-    }catch{console.error('자동 복구 실패 — Cloudflare에서 이전 정상 버전으로 롤백하세요.')}
-  }else console.error('운영 트래픽은 변경되지 않았습니다.')
+      const now=await activeWranglerVersion()
+      if(now===rollbackVersion){
+        console.error('✓ 이전 버전이 이미 운영 중 · 추가 롤백 불필요')
+      }else{
+        console.error('○ 현재 운영 버전 '+now+' · 복구 대상 '+rollbackVersion)
+        exec('npx',['wrangler','rollback',rollbackVersion,'--name',name,
+          '--message','Automatic recovery after failed verified deployment'],join(cwd,'worker'))
+        const restored=await activeWranglerVersion()
+        ensure(restored===rollbackVersion,'롤백 요청 후 운영 버전 확인 실패: '+restored)
+        console.error('✅ Wrangler 롤백 및 실제 운영 버전 재확인 완료: '+restored)
+      }
+    }catch(error){
+      console.error('⚠ 자동 복구 상태 미확인: '+String(error?.message||error).slice(0,220))
+      console.error('수동 복구: npx wrangler rollback '+rollbackVersion+
+        ' --name '+name+' --message "Manual restore after failed deployment"')
+      console.error('복구 확인: npx wrangler deployments status --name '+name)
+    }
+  }else{
+    console.error('✓ 운영 트래픽 변경 없음 · 현재 정상 운영 버전 유지')
+  }
   process.exitCode=1
 }
