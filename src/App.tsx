@@ -564,8 +564,9 @@ export default function App() {
           }
         }
         if (deferredEntries.length && next.watchStatus) {
-          next.watchStatus.message += ' · 뉴스·공시 확인 전 대기 진입 '
-            + deferredEntries.length + '종목 보류 (익절·손절은 정상 감시)'
+          next.watchStatus.message += ' · '
+            + (rateLimited ? 'KB 호출 제한' : '뉴스·공시 확인 전 대기 진입') + ' '
+            + deferredEntries.length + '종목 신규 진입 보류 (익절·손절은 가능한 시세로 감시)'
         }
         writeAutoAccount(next)
       }
