@@ -12,21 +12,22 @@ const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
 const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
-let token = '', accountId = '', switched = false, rollbackVersion = ''
+let token = '', accountId = '', switched = false, rollbackVersion = '', paperDbId = ''
 const exec = (program,args,dir=cwd) => execFileSync(program,args,{cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']})
 const ensure = (ok,msg) => { if(!ok) throw Error(msg) }
 const parseJson = text => JSON.parse(text.slice(text.indexOf('{')))
-const bindings = value => {
+const bindingEntries = value => {
   const opts=[value?.resources?.bindings,value?.bindings,value?.result?.resources?.bindings,value?.result?.bindings]
   const v=opts.find(x=>x&&typeof x==='object')
-  if(Array.isArray(v)) return v.map(b=>({name:b.name,type:b.type}))
-  return v?Object.entries(v).map(([n,b])=>({name:b?.name||n,type:b?.type})):[]
+  return Array.isArray(v)?v:v?Object.entries(v).map(([n,b])=>({name:b?.name||n,...b})):[]
 }
-function verifyVersion(version,label){
+const bindings = value => bindingEntries(value).map(b=>({name:b.name,type:b.type}))
+function verifyVersion(version,label,dbRequired=false){
   const map=new Map(bindings(version).map(b=>[b.name,b.type]))
   for(const key of required) ensure(map.get(key)==='secret_text',label+': '+key+' 누락')
   for(const key of ['AI','ASSETS']) ensure(map.has(key),label+': '+key+' 누락')
-  console.log('✓ '+label+': Secret 5개·AI·ASSETS 확인')
+  if(dbRequired) ensure(map.get('PAPER_DB')==='d1',label+': D1 PAPER_DB 바인딩 누락')
+  console.log('✓ '+label+': Secret 5개·AI·ASSETS'+(dbRequired?'·D1 PAPER_DB':'')+' 확인')
 }
 const mimetype=path=>({'.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2'}[extname(path)]||'application/octet-stream')
 function walk(root){
@@ -65,6 +66,39 @@ async function main(){
   verifyVersion(live,'현재 운영 버전')
   const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
   verifyVersion(old,'Secret 상속 기준 버전')
+  // D1 is optional until the user runs scripts/setup-paper-cloud.mjs.
+  // Once enabled, never silently deploy a new Worker version that loses it.
+  const liveD1=bindingEntries(live).find(b=>b.name==='PAPER_DB'&&b.type==='d1')
+  paperDbId=process.env.PAPER_DB_ID||liveD1?.database_id||liveD1?.id||''
+  if(!paperDbId){
+    try{
+      const existing=await api(root+'/d1/database?per_page=100')
+      const found=(Array.isArray(existing)?existing:existing?.result||[])
+        .filter(d=>d.name==='kb-ai-trader-paper')
+      ensure(found.length<=1,'같은 이름의 D1 데이터베이스가 중복됩니다.')
+      if(found.length)paperDbId=found[0].uuid||found[0].id||''
+    }catch(err){
+      console.warn('참고: D1 조회 불가. 클라우드 백업 기능은 별도 설치 전까지 비활성화됩니다.')
+    }
+  }
+  if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
+  if(paperDbId){
+    ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
+      'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
+    await api(root+'/d1/database/'+paperDbId)
+    // Idempotent, additive schema; never deletes saved account snapshots.
+    for(const sql of [
+      'CREATE TABLE IF NOT EXISTS paper_backup_head (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>0), updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS paper_backup_history (revision INTEGER PRIMARY KEY, updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)',
+      'CREATE INDEX IF NOT EXISTS idx_paper_backup_updated ON paper_backup_history(updated_at)'
+    ]){
+      await api(root+'/d1/database/'+paperDbId+'/query',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
+    }
+    console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
+  }else{
+    console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
+  }
   console.log('2/7 테스트 및 프런트엔드 빌드')
   exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs', 'tests/tradingAnalytics.test.mjs', 'tests/screeningHistory.test.mjs', 'tests/kbQuoteBatch.test.mjs'])
   exec('npm',['run','build'])
@@ -116,10 +150,11 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':'30 stock scan + inherited secret bindings'},
+      annotations:{'workers/message':'paper watch + D1 backup + inherited secret bindings'},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
+        ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
         ...required.map(name=>({name,type:'inherit',version_id:knownGood}))
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
@@ -127,7 +162,7 @@ async function main(){
   })
   ensure(created.id,'새 버전 생성 응답에 ID가 없음')
   console.log('6/7 새 버전 Secret 바인딩 검증')
-  verifyVersion(await api(root+'/workers/workers/'+workerId+'/versions/'+created.id),'신규 버전')
+  verifyVersion(await api(root+'/workers/workers/'+workerId+'/versions/'+created.id),'신규 버전',!!paperDbId)
   console.log('7/7 검증 완료. 운영에 새 버전 배포')
   await api(root+'/workers/scripts/'+name+'/deployments',{
     method:'POST',headers:{'Content-Type':'application/json'},
