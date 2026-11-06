@@ -339,7 +339,7 @@ export default function App() {
     const rssData = rss?.data as Record<string, any> | undefined
     const dartData = dart?.data as Record<string, any> | undefined
     const newsSources = Array.isArray(rssData?.diagnostics)
-      ? rssData.diagnostics.filter((item: any) => item.status === 200).length : 0
+      ? rssData.diagnostics.filter((item: any) => item.status === 200 && Number(item.valid_count || 0) > 0).length : 0
     const newsOk = !!rss?.ok && rssData?.success === true && newsSources > 0
     const dartOk = !!dart?.ok && dartData?.success === true
     const dartComplete = dartOk && dartData?.complete === true
