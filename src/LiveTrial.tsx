@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucide-react'
 import LiveOrderLookup from './LiveOrderLookup'
+import LiveRiskPreview from './LiveRiskPreview'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
 type TrialStatus={enabled:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[]}
 const API='/api/live/trial'
@@ -45,6 +46,7 @@ export default function LiveTrial({token}:{token:string}){
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
       {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
     </div>
+    <LiveRiskPreview token={token}/>
     <LiveOrderLookup token={token}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>시험매매 후보 기록</h3><span>SERVER D1 · DRY RUN ONLY</span></div></div>
