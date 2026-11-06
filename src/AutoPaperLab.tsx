@@ -26,6 +26,8 @@ export default function AutoPaperLab({
   const [ledger, setLedger] = useState(readPaperLedger)
   const [confirmReset, setConfirmReset] = useState(false)
   const [engineCheck, setEngineCheck] = useState<EngineCheckReport | null>(null)
+  const [selectedRunIndex, setSelectedRunIndex] = useState(0)
+  const [showAllReviewed, setShowAllReviewed] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
 
   useEffect(() => {
@@ -59,6 +61,25 @@ export default function AutoPaperLab({
   const health = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
   const activity = todayActivity(account, new Date(clock))
   const lastCompleted = (account.runs || []).find(item => item.status === '검사 완료')
+  const visibleRuns = (account.runs || []).slice(0, 6)
+  const selectedRun = visibleRuns[selectedRunIndex] || visibleRuns[0]
+  const reviewedStocks = [...(selectedRun?.decisions || [])].sort((a, b) => {
+    const priority = (item: typeof a) => {
+      if (item.outcome?.includes('체결')) return 0
+      if (item.outcome === '진입 감시 중') return 1
+      if (item.status === '관찰 후보') return 2
+      if (item.status === '위험 주의') return 3
+      if (item.status === '조건 미충족') return 4
+      return 5
+    }
+    return priority(a) - priority(b)
+  })
+  const shownStocks = showAllReviewed ? reviewedStocks : reviewedStocks.slice(0, 8)
+
+  useEffect(() => {
+    setSelectedRunIndex(0)
+    setShowAllReviewed(false)
+  }, [account.runs?.[0]?.checkedAt])
 
   function toggle() {
     const enabled = !account.enabled
@@ -134,6 +155,65 @@ export default function AutoPaperLab({
       </div>
       <p className="auto-operation-note">현재 자동 검사는 로그인한 브라우저가 열려 있을 때만 실행됩니다. 브라우저를 닫아도 실행되는 서버 자동매매는 아직 제공하지 않습니다. 실계좌 주문은 실행되지 않습니다.</p>
     </div>
+
+    <section className="panel auto-main-panel auto-scan-review">
+      <div className="auto-review-heading">
+        <div>
+          <h3>최근 시장 검사 내역</h3>
+          <p>자동매매가 실제로 분석한 종목과 판단 이유를 표시합니다. 최근 검사 기록은 새로고침 후에도 유지됩니다.</p>
+        </div>
+        {scanLoading && <span className="auto-review-collecting">새로운 종목 수집 중</span>}
+      </div>
+      {selectedRun ? <>
+        <div className="auto-review-summary">
+          <div><span>검사 종목</span><strong>{selectedRun.scanned}종목</strong></div>
+          <div><span>매수 관찰 후보</span><strong>{selectedRun.candidates}종목</strong></div>
+          <div><span>가상 체결</span><strong>{selectedRun.filled}건</strong></div>
+          <div><span>검사 시각</span><strong>{formatTime(selectedRun.processedAt)}</strong></div>
+        </div>
+        <div className="auto-review-history">
+          <span>최근 검사 선택</span>
+          <div className="auto-review-run-picker">
+            {visibleRuns.map((run, index) => <button type="button" key={run.checkedAt + index}
+              className={'auto-review-run ' + (index === selectedRunIndex ? 'selected' : '')}
+              aria-pressed={index === selectedRunIndex}
+              onClick={() => { setSelectedRunIndex(index); setShowAllReviewed(false) }}>
+              {index === 0 ? '최신 · ' : ''}{formatTime(run.processedAt)} <small>{run.status} · {run.scanned}종목</small>
+            </button>)}
+          </div>
+        </div>
+        <p className="auto-review-result">{selectedRun.status === '실행 보류' ? '검사 보류 · ' : '검사 결과 · '}{selectedRun.message}</p>
+        {reviewedStocks.length ? <>
+          <div className="auto-review-stock-list">{shownStocks.map(decision => {
+            const outcome = decision.outcome || (decision.status === '관찰 후보' ? '관찰 후보' : decision.status)
+            const tone = outcome.includes('체결') ? 'filled'
+              : outcome.includes('감시') || decision.status === '관찰 후보' ? 'watch'
+              : decision.status === '위험 주의' ? 'risk' : 'rejected'
+            const reasonSummary = decision.reason.split(' / ').slice(0, 2).join(' · ')
+            return <article className="auto-review-stock" key={decision.code}>
+              <div className="auto-review-stock-info">
+                <strong>{decision.name} <small>{decision.code}</small></strong>
+                <span className={'auto-review-decision auto-review-decision-' + tone}>{outcome}</span>
+              </div>
+              <div className="auto-review-stock-metrics">
+                <span>검사 당시 가격 <b>{decision.price != null ? money(decision.price) : '이전 검사 기록'}</b></span>
+                <span>신호 점수 <b>{decision.score !== undefined ? decision.score + '점' : '기록 없음'}</b></span>
+                {decision.entryTrigger != null && <span>진입 감시가 <b>{money(decision.entryTrigger)}</b></span>}
+              </div>
+              <p>{reasonSummary || '조건별 판단 사유가 기록되지 않았습니다.'}</p>
+              {decision.reason.includes(' / ') && <details className="auto-review-stock-details">
+                <summary>전체 판단 근거</summary><p>{decision.reason.split(' / ').join(' · ')}</p>
+              </details>}
+            </article>
+          })}</div>
+          {reviewedStocks.length > 8 && <button type="button" className="outline-button auto-review-more"
+            onClick={() => setShowAllReviewed(value => !value)}>
+            {showAllReviewed ? '상위 8종목만 보기' : '검사한 ' + reviewedStocks.length + '종목 전체 보기'}
+          </button>}
+        </> : <p className="ai-empty">이 회차에 저장된 종목별 기록이 없습니다. 다음 시장 수집 결과가 여기에 표시됩니다.</p>}
+        <p className="auto-review-note">매수 후보 선정은 체결이 아닙니다. 조건을 충족한 후 다음 시세에서 진입가를 확인해 가상 체결합니다. 가격·점수는 이번 업데이트 이후 저장되는 검사 기록부터 표시됩니다.</p>
+      </> : <p className="ai-empty">아직 자동 검사한 종목이 없습니다. 장중 자동 검사 또는 ‘지금 검사’가 완료되면 검사 종목과 매매 판단이 이곳에 표시됩니다.</p>}
+    </section>
 
     <section className="panel auto-main-panel auto-engine-check">
       <div className="auto-engine-check-heading">
