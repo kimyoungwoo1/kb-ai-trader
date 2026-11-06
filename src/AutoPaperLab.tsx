@@ -67,6 +67,16 @@ export default function AutoPaperLab({
   const serverMode = isServerPaperMode()
   const serverInfo = getServerPaperStatus()
   const serverError = getServerPaperError()
+  const cron = serverInfo?.cron
+  const lastCronAt = cron?.last_tick?.finished_at || ''
+  const cronAge = lastCronAt ? clock - Date.parse(lastCronAt) : Number.POSITIVE_INFINITY
+  const cronRecent = cronAge >= 0 && cronAge <= 180_000
+  const cronLabels: Record<string,string> = {
+    market_closed:'장 마감 · 검사 대기', stopped:'자동매매 중지',
+    duplicate:'중복 호출 무시', busy:'이전 검사 처리 중',
+    scanned:'전체시장 검사 완료', watched:'보유·진입 종목 감시 완료',
+    no_symbols:'감시 종목 없음', error:'서버 검사 오류',
+  }
   void serverTick
   const currentEquity = ledgerEquity(ledger)
   const currentReturn = (currentEquity / 1_000_000 - 1) * 100
@@ -217,6 +227,35 @@ export default function AutoPaperLab({
         <span>{serverMode ? ('서버 '+(serverInfo?.mode === 'running' ? '실행 중' : '중지')+' · v'+(serverInfo?.revision ?? '-')) : (cloud.ownsLease ? '실행권 확보' : cloud.phase === 'blocked' || cloud.phase === 'error'
           ? '자동 체결 차단' : '연결 확인/대기') + ' · v' + (cloud.revision ?? '-')}</span>
       </div>
+      {serverMode && serverInfo?.migrated && <section className="panel" aria-label="서버 Cron 실행 모니터">
+        <div className="panel-heading">
+          <div><h3>서버 자동매매 실행 모니터</h3><span>SERVER CRON · D1 실행 이력 · 최근 12회</span></div>
+          <span className={'analysis-source-state ' + (cronRecent && serverInfo.cron_monitor_available ? 'ready' : 'blocked')}>
+            {!serverInfo.cron_monitor_available ? '모니터 연결 확인 필요' : !lastCronAt ? '첫 실행 기록 대기' : cronRecent ? '최근 실행 확인' : '최근 실행 지연'}
+          </span>
+        </div>
+        <div className="auto-health-grid">
+          <div><span>최근 서버 Cron 호출</span><strong>{formatTime(lastCronAt)}</strong><small>{cron?.last_tick ? (cronLabels[cron.last_tick.result] || cron.last_tick.result) : '서버 실행 이력 확인 전'}</small></div>
+          <div><span>최근 정상 서버 검사</span><strong>{formatTime(cron?.last_success?.finished_at)}</strong><small>정규장 중 정상 완료된 검사</small></div>
+          <div><span>오늘 서버 검사</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>최근 1분 감시·5분 시장 탐색·대상 없음</small></div>
+          <div><span>오늘 서버 오류</span><strong>{cron?.today?.errors ?? '-'}회</strong><small>장 마감·중지·중복 건은 오류 제외</small></div>
+        </div>
+        {cron?.last_tick?.result === 'error' && <p className="news-message" role="alert">최근 서버 오류: {cron.last_tick.message}</p>}
+        <details className="auto-advanced">
+          <summary>서버 Cron 최근 실행 이력 보기</summary>
+          <div className="table-wrap">
+            <table className="paper-table">
+              <thead><tr><th>실행 시간</th><th>결과</th><th>검사 종목</th><th>모의 체결</th><th>상세</th></tr></thead>
+              <tbody>{cron?.recent?.length ? cron.recent.map(item => <tr key={item.slot}>
+                <td>{formatTime(item.finished_at)}</td>
+                <td>{cronLabels[item.result] || item.result}</td>
+                <td>{item.scanned}</td><td>{item.filled}</td><td>{item.message}</td>
+              </tr>) : <tr><td colSpan={5}>아직 저장된 Cron 실행 기록이 없습니다.</td></tr>}</tbody>
+            </table>
+          </div>
+        </details>
+        <p className="auto-operation-note">Cron 호출은 장 마감에도 기록됩니다. 서버가 실행 중인지와 실제 장중 매매 검사가 수행됐는지는 별도로 확인해야 합니다. 이 이력은 D1에 최대 14일 보관됩니다.</p>
+      </section>}
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
         <div><span>오늘 검사 횟수</span><strong>{activity.checked.toLocaleString('ko-KR')}회</strong><small>완료 {activity.completed}회 · 보류 {activity.deferred}회{activity.partialHistory ? ' · 이전 기록 일부만 집계' : ''}</small></div>
