@@ -149,7 +149,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const currentDate = kstDate(now)
   const alreadyTradedToday = new Set(fills.filter(f => kstDate(new Date(f.at)) === currentDate).map(f => f.code))
   let executed = 0
-  const dayRealized = fills.filter(f => f.side === 'SELL' && kstDate(new Date(f.at)) === currentDate)
+  const dayRealized = fills.filter(f => f.side === 'SELL' && !f.test && kstDate(new Date(f.at)) === currentDate)
     .reduce((sum, f) => sum + (f.pnl || 0), 0)
   let sessionPnl = dayRealized
   // Existing position exits have precedence, and only verified fresh quotes may trigger them.
