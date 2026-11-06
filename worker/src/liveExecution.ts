@@ -74,6 +74,39 @@ export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<
  if(!Number.isSafeInteger(total))throw Error('KB 보유수량 합계 오류')
  return total
 }
+/** Read-only SSQM1801 orderable stock check before any live SELL. */
+export async function readKbSellableQuantity(env:KbCredentials,code:string):Promise<number>{
+ if(!/^[0-9]{6}$/.test(code))throw Error('종목코드 오류')
+ const token=await getKbAccessToken(env)
+ let nextKey='',total=0
+ const seen=new Set<string>()
+ for(let page=0;page<10;page++){
+  const response=await fetch(kbBaseUrl(env)+'/api/v1/ssqm1801',{
+   method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+   body:JSON.stringify({dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},
+     dataBody:{inq_clsf:'1',is_no:'',mkt_tm_ccd:'1',nxt_key:nextKey}}),
+   signal:AbortSignal.timeout(15000)
+  })
+  if(!response.ok)throw Error('KB 주문가능 보유수량 HTTP 오류')
+  const payload:any=await response.json()
+  if(String(payload?.dataHeader?.resultCode)!=='200'||!Array.isArray(payload?.dataBody?.Record1))
+   throw Error('KB 주문가능 보유수량 검증 실패')
+  for(const row of payload.dataBody.Record1){
+   if(String(row?.is_no??'').replace(/^A/,'')!==code)continue
+   const n=num(row?.ordr_psbl_q)
+   if(!Number.isSafeInteger(n))throw Error('KB 매도 가능 수량 숫자 오류')
+   total+=n
+  }
+  const next=String(payload.dataBody.nxt_key??'').trim()
+  if(!next){
+   if(!Number.isSafeInteger(total))throw Error('매도 가능 수량 합계 오류')
+   return total
+  }
+  if(seen.has(next))throw Error('KB 보유수량 다음키 반복')
+  seen.add(next);nextKey=next
+ }
+ throw Error('KB 주문가능 보유수량 페이지 한도 초과')
+}
 async function journalSummary(db:Db,now:Date){
  const day=tradingDay(now)
  const [buy,active,held,principal]=await Promise.all([
@@ -127,9 +160,11 @@ async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<
  const buy=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='BUY' AND state='FILLED'").bind(fill.code).first()
  const existing=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='SELL'").bind(fill.code).first()
  if(num(buy?.n)!==1||num(existing?.n)!==0)return 'sell_not_safe'
- let realHolding:number
- try{realHolding=await readKbHeldQuantity(env,fill.code)}catch{return 'account_not_verified'}
- if(realHolding<shares)return 'real_holding_insufficient'
+ let realHolding:number,realSellable:number
+ try{[realHolding,realSellable]=await Promise.all([
+   readKbHeldQuantity(env,fill.code),readKbSellableQuantity(env,fill.code)
+ ])}catch{return 'account_not_verified'}
+ if(realHolding<shares||realSellable<shares)return 'real_holding_insufficient'
  const id=identity('SELL',fill.id),day=tradingDay(now),stamp=now.toISOString()
  const sql="INSERT OR IGNORE INTO live_order_journal (id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at) "+
   "SELECT ?,?,?,'SELL',?,?,0,'RESERVED',NULL,0,?,? WHERE EXISTS(SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?) "+
