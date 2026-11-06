@@ -183,7 +183,7 @@ export default function AutoPaperLab({
           <small>초기 가상자금 100만원 기준</small>
         </article>
         <article className="auto-overview-card">
-          <span>보유 종목</span><strong>{ledger.positions.length}종목</strong>
+          <span>보유 종목</span><strong>{ledger.positions.length} / 5종목</strong>
           <small>진입 감시 {account.pending.length}종목</small>
         </article>
         <article className="auto-overview-card">
@@ -330,7 +330,7 @@ export default function AutoPaperLab({
     <details className="panel auto-advanced">
       <summary><strong>고급 진단 및 전략 설정</strong><span>검사 종목·탈락 사유·실행 기록·성과 통계</span></summary>
       <div className="auto-advanced-inner">
-        <p className="news-query">초기 자금 100만원 · 종목당 최대 20만원 · 최대 3종목 · 당일 실현손실 -1만원 이후 신규 진입 중단 · 익절 +5% / 손절 -3% · 최대 보유 15일. 수수료와 슬리피지는 모의 계산이며 실주문은 비활성화되어 있습니다.</p>
+        <p className="news-query">초기 자금 100만원 · 종목당 최대 20만원 · 최대 5종목 · 당일 실현손실 -1만원 이후 신규 진입 중단 · 익절 +5% / 손절 -3% · 최대 보유 15일. 수수료와 슬리피지는 모의 계산이며 실주문은 비활성화되어 있습니다.</p>
         <div className="auto-monitor">
           <div><span>엔진 상태</span><strong>{account.enabled ? '활성화' : '중지'}</strong></div>
           <div><span>최근 검사 결과</span><strong>{lastRun?.status || '미실행'}</strong></div>
