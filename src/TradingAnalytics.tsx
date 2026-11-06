@@ -5,6 +5,7 @@ import type { TradeSignal } from './tradeSignals'
 import { readScreeningSnapshot, selectScreeningView } from './screeningHistory'
 import { summarizeTradingAnalytics, journalTrades, type AnalyticsPeriod, type JournalGroup } from './tradingAnalytics'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
+import CloudBackupPanel from './CloudBackupPanel'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const signedMoney = (value: number) => (value > 0 ? '+' : '') + money(value)
@@ -84,11 +85,12 @@ function Decision({ item }: { item: AutoRunDecision }) {
     </details>
   </div>
 }
-export default function TradingAnalytics({ signals, catalysts, marketCoverage, liveCheckedAt, onGoAuto }: {
+export default function TradingAnalytics({ signals, catalysts, marketCoverage, liveCheckedAt, token, onGoAuto }: {
   signals: TradeSignal[]
   catalysts: CatalystSnapshot | null
   marketCoverage: string
   liveCheckedAt: string
+  token: string
   onGoAuto: () => void
 }) {
   const [account, setAccount] = useState(readAutoAccount)
@@ -335,6 +337,7 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
             <b>{item.source}</b><span>{item.title}</span></a>)}
         </div></details>}
     </section>
-    <p className="analysis-footer">통계는 이 브라우저에 저장된 가상거래와 검사 이력을 기반으로 하며, 실제 수익이나 향후 투자 성과를 보장하지 않습니다. 브라우저 저장소를 삭제하면 기록이 사라질 수 있습니다.</p>
+    <CloudBackupPanel token={token} />
+    <p className="analysis-footer">통계는 현재 브라우저의 가상거래 기록을 기반으로 하며 실제 수익을 보장하지 않습니다. D1 백업은 명시적 저장·복원 방식입니다. 브라우저 저장소를 삭제하기 전에 서버에 백업하세요.</p>
   </div>
 }
