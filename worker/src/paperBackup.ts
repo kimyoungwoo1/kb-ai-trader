@@ -101,6 +101,10 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
     if (!validatePaperBackup(snapshot)) return Response.json({
       success: false, message: '가상매매 백업의 구조가 올바르지 않습니다.' }, { status: 400 })
     const json = JSON.stringify(snapshot)
+    // Reject accidental credential material, including nested extra fields.
+    if (/"(?:app[_-]?key|app[_-]?secret|password|access[_-]?token|refresh[_-]?token|dashboard[_-]?api[_-]?key)"\s*:/i.test(json))
+      return Response.json({ success: false,
+        message: '가상매매 백업에는 인증 정보나 API Secret을 포함할 수 없습니다.' }, { status: 400 })
     if (new TextEncoder().encode(json).byteLength > MAX_BYTES) return Response.json({
       success: false, message: '백업 용량 상한(1.7MB)을 초과했습니다.' }, { status: 413 })
     const now = new Date().toISOString()
