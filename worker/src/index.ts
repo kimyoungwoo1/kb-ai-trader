@@ -95,10 +95,10 @@ const service = {
       }
     }
     if (url.pathname === "/api/paper/server" && request.method === "POST") {
-      let action = "";
-      try { action = String((await request.json() as {action?:string}).action || ""); }
+      let action = "", signature = "";
+      try { const body = await request.json() as {action?:string;signature?:string}; action = String(body.action || ""); signature = String(body.signature || "").slice(0,800); }
       catch { return json({ success:false, message:"요청 JSON 오류" },400); }
-      const response = await serverPaperApi(env.PAPER_DB,action);
+      const response = await serverPaperApi(env.PAPER_DB,action,signature);
       const headers = new Headers(response.headers);
       for (const [k,v] of Object.entries(corsHeaders)) headers.set(k,v);
       return new Response(response.body,{status:response.status,headers});
