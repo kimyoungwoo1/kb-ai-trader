@@ -9,9 +9,20 @@ let active = false
 let lastRevision = -1
 let latest: ServerPaperStatus | null = null
 let lastConnectionError = ''
+export type ServerCronRun = {
+  slot: number; started_at: string; finished_at: string; result: string;
+  message: string; scanned: number; filled: number;
+}
+export type ServerCronMonitor = {
+  last_tick: ServerCronRun | null;
+  recent: ServerCronRun[];
+  last_success: ServerCronRun | null;
+  today: { total: number; completed: number; errors: number; skipped: number };
+}
 export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
+  cron_monitor_available?: boolean; cron?: ServerCronMonitor;
   snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot }
 }
 export function isServerPaperMode() { return active }
