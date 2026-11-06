@@ -81,7 +81,9 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
     // Once server migration has occurred the browser may never reacquire
     // the trading lease or overwrite the old backup, even from a stale open tab.
     if (action === 'claim' || action === 'renew' || action === 'save') {
-      const server = await db.prepare('SELECT mode FROM server_paper_state WHERE id=1').first<{mode:string}>().catch(()=>null);
+      let server: {mode:string} | null = null;
+      try { server = await db.prepare('SELECT mode FROM server_paper_state WHERE id=1').bind().first<{mode:string}>(); }
+      catch { /* Legacy databases before server table exists remain usable. */ }
       if (server) return Response.json({success:false,conflict:true,
         message:'서버 가상매매로 이전되었습니다. 기존 브라우저 자동 실행과 백업 기록 변경은 차단됩니다.'},{status:409});
     }
