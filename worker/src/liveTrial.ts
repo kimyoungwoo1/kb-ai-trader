@@ -1,6 +1,6 @@
 import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
-import { lookupKbOrder } from './kbOrderContract'
+import { lookupKbOrder, listKbRecentOrders } from './kbOrderContract'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
  * readiness layer: it NEVER calls a brokerage order endpoint.
@@ -97,6 +97,18 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
         preview,message:preview.permitted?
           '실계좌 주문가능금액·시험 한도 점검 통과. 실제 주문은 잠금 상태로 전송되지 않았습니다.':
           '실계좌 주문 안전성 점검에서 차단 조건이 발견됐습니다. 실제 주문은 전송되지 않았습니다.'})
+    }
+    if(action==='recentOrders'){
+      if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
+        return reply({success:false,message:'KB 조회 인증 설정 없음'},503)
+      const days=Number(body.days??3)
+      if(days!==1&&days!==3&&days!==5)
+        return reply({success:false,message:'최근 1·3·5거래일 중 선택해 주세요.'},400)
+      const result=await listKbRecentOrders(env,days as 1|3|5)
+      return reply({success:true,...result,
+        message:result.partial?'일부 날짜 조회가 완료되지 않았습니다. 누락된 날짜를 확인하세요.':
+          result.orders.length?'최근 국내주식 주문·체결 내역 조회 완료':
+          '조회 범위에 국내주식 주문 기록 없음 · 오래된 보유종목/해외주식은 해당하지 않을 수 있습니다.'})
     }
     if(action==='lookup'){
       if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)return reply({success:false,message:'KB 조회 인증 설정 없음'},503)
