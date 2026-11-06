@@ -4,6 +4,7 @@ import { AUTO_EVENT, AUTO_TAKE_PROFIT_PCT, newAutoAccount, readAutoAccount, runA
 import { getAutoHealth, todayActivity } from './autoStatus'
 import { runPaperEngineCheck, type EngineCheckReport } from './paperEngineCheck'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
+import { acquireTradingLease, verifyTradingLease, canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState } from './cloudAutoSync'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -31,6 +32,8 @@ export default function AutoPaperLab({
   const [trialCode, setTrialCode] = useState('')
   const [trialBusy, setTrialBusy] = useState(false)
   const [trialNotice, setTrialNotice] = useState('')
+  const [cloud, setCloud] = useState(getCloudSyncState)
+  const [startBusy, setStartBusy] = useState(false)
   const [clock, setClock] = useState(() => Date.now())
 
   useEffect(() => {
@@ -46,7 +49,10 @@ export default function AutoPaperLab({
     window.addEventListener(AUTO_EVENT, sync)
     window.addEventListener(PAPER_EVENT, sync)
     window.addEventListener('storage', sync)
+    const syncCloud = () => setCloud(getCloudSyncState())
+    window.addEventListener(CLOUD_SYNC_EVENT, syncCloud)
     return () => {
+      window.removeEventListener(CLOUD_SYNC_EVENT, syncCloud)
       window.removeEventListener(AUTO_EVENT, sync)
       window.removeEventListener(PAPER_EVENT, sync)
       window.removeEventListener('storage', sync)
@@ -80,6 +86,8 @@ export default function AutoPaperLab({
       const result = await response.json()
       if (!response.ok || !result.success) throw Error(result.message || 'KB 현재가 조회에 실패했습니다.')
       const quote = { price: Number(result.price), checkedAt: String(result.checked_at || '') }
+      if (!canExecutePaperTrade() || !(await verifyTradingLease()))
+        throw Error('D1 자동매매 실행권이 없어 시험 청산을 중지했습니다.')
       const next = runAutoTrialSell(readAutoAccount(), trialCode, quote)
       writeAutoAccount(next)
       setTrialCode('')
@@ -91,16 +99,28 @@ export default function AutoPaperLab({
     }
   }
 
-  function toggle() {
-    const enabled = !account.enabled
+  async function toggle() {
+    if (startBusy) return
+    const enabled = !readAutoAccount().enabled
+    if (enabled) {
+      setStartBusy(true)
+      try {
+        const allowed = await acquireTradingLease()
+        if (!allowed) {
+          setTrialNotice('자동매매 시작 보류 · ' + getCloudSyncState().message
+            + ' · 다른 탭이 실행 중이거나 D1 백업 상태를 확인해야 합니다.')
+          return
+        }
+      } finally { setStartBusy(false) }
+    }
+    const current = readAutoAccount()
     const next: AutoAccount = {
-      ...account,
+      ...current,
       enabled,
       lastMessage: enabled
-        ? '자동 가상매매가 활성화되었습니다. 장중에 새 시세를 확인합니다.'
+        ? 'D1 실행권 확보 · 자동 가상매매가 활성화되었습니다.'
         : '자동 가상매매가 중지되었습니다. 기존 가상 보유 종목은 유지됩니다.',
-      // Only a later quote may create a paper fill.
-      lastCycle: enabled && checkedAt ? checkedAt : account.lastCycle,
+      lastCycle: enabled && checkedAt ? checkedAt : current.lastCycle,
     }
     writeAutoAccount(next)
     if (enabled) onStart?.()
@@ -122,8 +142,8 @@ export default function AutoPaperLab({
           {account.enabled && health.inSession && <button type="button" className="outline-button" onClick={onStart} disabled={scanLoading || !onStart}>
             {scanLoading ? '조회 중...' : '지금 검사'}
           </button>}
-          <button type="button" className="outline-button" onClick={toggle}>
-            {account.enabled ? '자동매매 중지' : '자동매매 시작'}
+          <button type="button" className="outline-button" onClick={() => void toggle()} disabled={startBusy}>
+            {startBusy ? 'D1 실행권 확인 중...' : account.enabled ? '자동매매 중지' : '자동매매 시작'}
           </button>
         </div>
       </div>
@@ -133,6 +153,12 @@ export default function AutoPaperLab({
           <span>{health.detail}</span>
         </div>
         <span className="auto-health-frequency">전체시장 5분 · 보유종목 30초</span>
+      </div>
+      <div className={'auto-cloud-sync-status cloud-phase-' + cloud.phase} role="status">
+        <span><strong>D1 자동 백업·중복 체결 방지</strong>
+          <small>{cloud.message}</small></span>
+        <span>{cloud.ownsLease ? '실행권 확보' : cloud.phase === 'blocked' || cloud.phase === 'error'
+          ? '자동 체결 차단' : '연결 확인/대기'} · v{cloud.revision ?? '-'}</span>
       </div>
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
