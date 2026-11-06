@@ -150,7 +150,7 @@ export async function verifyTradingLease(): Promise<boolean> {
   inflightLease = task
   try { return await task } finally { if (inflightLease === task) inflightLease = null }
 }
-async function saveInternal(): Promise<boolean> {
+async function saveInternal(forceHistory = false): Promise<boolean> {
   if (!active || !token || state.phase !== 'ready' || state.revision === null) return false
   if (inflightBackup) return inflightBackup
   const when = generation
@@ -163,7 +163,7 @@ async function saveInternal(): Promise<boolean> {
     try {
       const result = await request('save', {
         expectedRevision: expected, snapshot: payload,
-        checkpointOnly: snapshotSignature === lastTradeSignature,
+        checkpointOnly: !forceHistory && snapshotSignature === lastTradeSignature,
         ...(state.ownsLease ? { owner } : {}),
       })
       if (!active || when !== generation) return false
@@ -196,7 +196,7 @@ async function saveInternal(): Promise<boolean> {
 export async function saveCloudBackupNow(): Promise<boolean> {
   if (!active || !token) return false
   if (state.phase !== 'ready') return false
-  return saveInternal()
+  return saveInternal(true)
 }
 function scheduleBackup() {
   if (!active || state.phase !== 'ready' || debounce !== null) return
@@ -213,7 +213,13 @@ function onAccountChange() {
   if (readAutoAccount().enabled && !state.ownsLease) {
     void acquireTradingLease()
   } else if (!readAutoAccount().enabled && state.ownsLease) {
-    void saveInternal().finally(() => { void releaseTradingLease() })
+    // Serialize a final 'stopped' checkpoint after any in-flight fill backup.
+    // This prevents publishing a stale enabled=true snapshot during shutdown.
+    void (async () => {
+      if (inflightBackup) await inflightBackup
+      if (active && state.phase === 'ready') await saveInternal()
+      await releaseTradingLease()
+    })()
   }
   onTradeChange()
 }
