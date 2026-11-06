@@ -5,7 +5,7 @@ const API='https://kb-ai-trader.ksmsy1.workers.dev/api/notifications'
 type Notice={id:number;kind:string;title:string;body:string;created_at:string;read_at:string|null}
 type Inbox={notifications:Notice[];unread:number;devices:number;vapidPublicKey:string;pushAvailable:boolean}
 const format=(raw:string)=>new Date(raw).toLocaleString('ko-KR')
-function fromBase64Url(value:string):Uint8Array<ArrayBuffer>{
+function fromBase64Url(value:string):Uint8Array{
   const padding='='.repeat((4-value.length%4)%4)
   const bytes=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/'))
   const buffer=new ArrayBuffer(bytes.length);const output=new Uint8Array(buffer)
