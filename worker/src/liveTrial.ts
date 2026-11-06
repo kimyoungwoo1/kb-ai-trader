@@ -1,6 +1,6 @@
+import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder } from './kbOrderContract'
-import type { KbCredentials } from './kbToken'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
  * readiness layer: it NEVER calls a brokerage order endpoint.
@@ -36,7 +36,7 @@ export function validateTrialCandidate(value:TrialCandidate,now=new Date()):stri
   return null
 }
 const limits={budget:LIVE_TRIAL_BUDGET,maxDailyBuys:LIVE_TRIAL_DAILY_BUYS,maxSymbols:LIVE_TRIAL_MAX_SYMBOLS,orderType:'지정가'}
-export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredentials):Promise<Response>{
+export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):Promise<Response>{
   if(!db)return reply({success:false,message:'실계좌 보호용 D1 연결이 필요합니다.'},503)
   const body=input&&typeof input==='object'?input as Record<string,unknown>:{}
   const action=String(body.action||'status')
@@ -44,9 +44,13 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredenti
     if(action==='status'){
       const settings=await db.prepare('SELECT enabled,updated_at FROM live_trial_settings WHERE id=1').first()
       const rows=await db.prepare('SELECT id,trading_day,event_id,code,name,side,quantity,limit_price,notional,reason,status,created_at FROM live_trial_candidates ORDER BY id DESC LIMIT 30').all()
-      return reply({success:true,enabled:false,brokerOrdersVerified:false,mode:'PREPARATION_ONLY',limits,
-        updatedAt:settings?.updated_at||null,candidates:rows.results||[],
-        message:'KB 공식 주문·체결·취소 응답 명세가 검증되지 않아 실주문은 서버에서 차단됩니다. 자동주문 기능은 아직 활성화할 수 없습니다.'})
+      const gate=await getLiveGate(db,env||{})
+      const journal=await db.prepare("SELECT id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at FROM live_order_journal ORDER BY created_at DESC LIMIT 20").all()
+      return reply({success:true,enabled:gate.enabled,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
+        mode:gate.enabled?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
+        candidates:rows.results||[],orders:journal.results||[],gate,
+        message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 5만 원 및 1종목·1회 제한':
+        '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
     }
     if(action==='preflight'){
       const code=String(body.code||''),quantity=Number(body.quantity),limitPrice=Number(body.limitPrice)
@@ -107,9 +111,16 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredenti
         '증권사 주문/체결 조회 결과':'조회 날짜에 일치하는 주문 없음 · 미접수 확정은 아님'})
     }
     if(action==='disable'){
+      if(!(await disarmLiveTrading(db)))return reply({success:false,message:'D1 실주문 잠금 설정 실패'},503)
       await db.prepare("INSERT INTO live_trial_settings(id,enabled,updated_at) VALUES(1,0,?) ON CONFLICT(id) DO UPDATE SET enabled=0,updated_at=excluded.updated_at")
         .bind(new Date().toISOString()).run()
-      return reply({success:true,enabled:false,message:'실주문 잠금 상태입니다. 대기 중인 실제 주문은 없습니다.'})
+      return reply({success:true,enabled:false,message:'실주문 신규 발송 차단. 기존 접수 주문은 별도 확인이 필요합니다.'})
+    }
+    if(action==='arm'){
+      const success=await armLiveTrading(db,env||{},String(body.confirmation||''))
+      return reply({success,enabled:success,message:success?
+        '실계좌 5만 원 시험 운용이 오늘 정규장 동안만 활성화됐습니다.':
+        '서버 실거래 잠금 또는 확인 조건 미충족 · 실주문 비활성화'},success?200:423)
     }
     if(action==='enable'||action==='order'||action==='buy'||action==='sell'||action==='cancel')
       return reply({success:false,enabled:false,message:'실주문 차단: KB 공식 주문·체결·취소 API 검증 전에는 활성화 및 주문을 허용하지 않습니다.'},423)
