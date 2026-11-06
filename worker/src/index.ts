@@ -543,21 +543,11 @@ export default {
       const exchange = String(input.exchange || "1");
       if (!/^\d{6}$/.test(code)) return json({ success: false, message: "종목코드는 6자리 숫자여야 합니다." }, 400);
       if (!["0", "1", "2"].includes(exchange)) return json({ success: false, message: "거래소 구분은 0(통합), 1(KRX), 2(NXT)만 가능합니다." }, 400);
-      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
-          signal: AbortSignal.timeout(15000),
-        });
-      } catch (error) { return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502); }
-      let tokenResult: any;
-      try { tokenResult = await tokenResponse.json(); }
-      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
-      const accessToken = tokenResult?.dataBody?.access_token;
-      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
+      const baseUrl = kbBaseUrl(env);
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) { return json({ success: false, stage: "authentication",
+        message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let quoteResponse: Response;
       try {
         quoteResponse = await fetch(`${baseUrl}/api/v1/ivu10140`, {
@@ -573,6 +563,7 @@ export default {
       const header = quoteResult?.dataHeader || {};
       const resultCode = String(header.resultCode ?? "");
       if (!quoteResponse.ok || (resultCode && !["0", "0000", "200"].includes(resultCode))) {
+        if (quoteResponse.status === 401 || quoteResponse.status === 403) clearKbAccessToken();
         return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
       }
       const body = quoteResult?.dataBody || {};
@@ -696,25 +687,11 @@ export default {
         .slice(0, 10);
       if (!stocks.length) return json({ success: false, message: "종목코드 6자리인 보유 종목 또는 관심 종목을 1개 이상 전달해 주세요." }, 400);
 
-      const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
-          signal: AbortSignal.timeout(15000),
-        });
-      } catch (error) {
-        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 200) : "KB 토큰 서버 연결 실패" }, 502);
-      }
-      let tokenResult: any;
-      try { tokenResult = await tokenResponse.json(); }
-      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
-      const accessToken = tokenResult?.dataBody?.access_token;
-      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
-        return json({ success: false, stage: "authentication", message: getKbErrorMessage(tokenResult) }, 502);
-      }
+      const baseUrl = kbBaseUrl(env);
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) { return json({ success: false, stage: "authentication",
+        message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
       const results = [];
       for (const stock of stocks) {
