@@ -72,7 +72,7 @@ export async function observePaperFill(db:Db|undefined,fill:any,now=new Date()):
   // At most 1 unique BUY candidate per trading day, even after Cron replays.
   // Any conflict is ignored rather than replaced or retried.
   const result=await db.prepare(
-    "INSERT OR IGNORE INTO live_trial_candidates(trading_day,event_id,code,name,side,quantity,limit_price,notional,reason,status,created_at) VALUES(?,?,?,?,?,'BUY',?,?,?,'DRY_RUN_ONLY',?)"
+    "INSERT OR IGNORE INTO live_trial_candidates(trading_day,event_id,code,name,side,quantity,limit_price,notional,reason,status,created_at) VALUES(?,?,?,?,'BUY',?,?,?,?,'DRY_RUN_ONLY',?)"
   ).bind(date,candidate.eventId,candidate.code,candidate.name,candidate.quantity,
     candidate.limitPrice,candidate.quantity*candidate.limitPrice,candidate.reason,now.toISOString()).run()
   return (result.meta?.changes||0)===1
