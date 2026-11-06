@@ -232,6 +232,9 @@ export async function suspendCloudSync(): Promise<void> {
   if (readAutoAccount().enabled) throw Error('자동매매를 먼저 중지해야 합니다.')
   if (inflightBackup) await inflightBackup
   await releaseTradingLease()
+  // A restore must not race a periodic checkpoint that reuploads the old ledger.
+  active = false
+  publish({ phase: 'inactive', ownsLease: false, message: '복원 진행 중 · 자동 백업 일시 중지' })
 }
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && active && state.phase === 'ready') {
