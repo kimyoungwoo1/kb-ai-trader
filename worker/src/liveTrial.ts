@@ -65,8 +65,14 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredenti
         db.prepare("SELECT COUNT(DISTINCT code) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first(),
         db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first()
       ])
-      const pendingWon=Number(committed?.total)
-      const countFields=[today?.total,unfinished?.total,positions?.total].map(Number)
+      // Null or omitted SQL aggregates must fail closed, never coerce to zero.
+      const requiredNonnegative=(value:unknown):number => {
+        if(value===null||value===undefined||value==='')return NaN
+        const parsed=Number(value)
+        return Number.isSafeInteger(parsed)&&parsed>=0?parsed:NaN
+      }
+      const pendingWon=requiredNonnegative(committed?.total)
+      const countFields=[today?.total,unfinished?.total,positions?.total].map(requiredNonnegative)
       if(!Number.isSafeInteger(pendingWon)||pendingWon<0||
         countFields.some(n=>!Number.isSafeInteger(n)||n<0))
         return reply({success:false,locked:true,message:'D1 실주문 원장 검증 실패 · 안전 차단'},503)
