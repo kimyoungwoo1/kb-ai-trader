@@ -120,7 +120,8 @@ async function main(){
       "CREATE INDEX IF NOT EXISTS idx_server_paper_cron_result_slot ON server_paper_cron_runs(result,slot DESC)",
       "CREATE TABLE IF NOT EXISTS paper_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT)",
       "CREATE INDEX IF NOT EXISTS idx_paper_notifications_created ON paper_notifications(id DESC)",
-      "CREATE TABLE IF NOT EXISTS paper_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+      "CREATE TABLE IF NOT EXISTS paper_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS paper_notification_settings (id INTEGER PRIMARY KEY CHECK(id=1), settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
     ]){
       const queryResult=await api(root+'/d1/database/'+paperDbId+'/query',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
