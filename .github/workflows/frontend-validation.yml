@@ -2,7 +2,7 @@ name: Frontend validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/clean-auto-paper-dashboard]
   pull_request:
     branches: [main]
 
