@@ -27,10 +27,10 @@ export default function LiveOrderLookup({token}:{token:string}){
   <div className="panel-heading"><div><h3>KB증권 주문·체결 조회</h3><span>READ ONLY · SSQM2341 · 실주문 미전송</span></div></div>
   <p className="notification-hint">기존 KB증권 주문번호를 입력하면 매수/매도 주문수량과 체결·미체결 수량을 조회해. 조회되지 않아도 주문 미접수로 확정하지 않아.</p>
   <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-    <input aria-label="주문 날짜" value={day} onChange={e=>setDay(e.target.value)} maxLength={8} placeholder="주문일 YYYYMMDD" style={{width:150}}/>
-    <input aria-label="종목 코드" value={code} onChange={e=>setCode(e.target.value)} maxLength={6} placeholder="종목코드 6자리" style={{width:145}}/>
-    <input aria-label="주문 번호" value={orderNo} onChange={e=>setOrderNo(e.target.value)} maxLength={15} placeholder="KB 주문번호" style={{width:175}}/>
-    <select aria-label="매매 구분" value={side} onChange={e=>setSide(e.target.value as 'BUY'|'SELL')}>
+    <input className="live-trial-field" aria-label="주문 날짜" value={day} onChange={e=>setDay(e.target.value)} maxLength={8} placeholder="주문일 YYYYMMDD" style={{width:150}}/>
+    <input className="live-trial-field" aria-label="종목 코드" value={code} onChange={e=>setCode(e.target.value)} maxLength={6} placeholder="종목코드 6자리" style={{width:145}}/>
+    <input className="live-trial-field" aria-label="주문 번호" value={orderNo} onChange={e=>setOrderNo(e.target.value)} maxLength={15} placeholder="KB 주문번호" style={{width:175}}/>
+    <select className="live-trial-field" aria-label="매매 구분" value={side} onChange={e=>setSide(e.target.value as 'BUY'|'SELL')}>
      <option value="BUY">매수</option><option value="SELL">매도</option>
     </select>
     <button className="outline-button" onClick={()=>void lookup()} disabled={loading||!/^20[0-9]{6}$/.test(day)||!/^[0-9]{6}$/.test(code)||!/^[0-9]{1,15}$/.test(orderNo)}>
