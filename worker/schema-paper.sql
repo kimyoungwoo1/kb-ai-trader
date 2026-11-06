@@ -88,3 +88,21 @@ CREATE TABLE IF NOT EXISTS live_trial_candidates (
  status TEXT NOT NULL CHECK(status='DRY_RUN_ONLY'),
  created_at TEXT NOT NULL
 );
+
+-- Future live-order journal is intentionally inert; no live order route exists.
+-- One BUY reservation per day, no duplicated logical order ID, no implicit retry.
+CREATE TABLE IF NOT EXISTS live_order_journal (
+ id TEXT PRIMARY KEY,
+ trading_day TEXT NOT NULL,
+ code TEXT NOT NULL,
+ side TEXT NOT NULL CHECK(side IN ('BUY','SELL')),
+ quantity INTEGER NOT NULL CHECK(quantity>0),
+ limit_price INTEGER NOT NULL CHECK(limit_price>0),
+ reserved_won INTEGER NOT NULL CHECK(reserved_won>=0 AND reserved_won<=50000),
+ state TEXT NOT NULL CHECK(state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','FILLED','REJECTED','CANCEL_REQUESTED','CANCELED')),
+ broker_order_id TEXT UNIQUE,
+ filled_quantity INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_live_order_one_buy_per_day ON live_order_journal(trading_day) WHERE side='BUY';
