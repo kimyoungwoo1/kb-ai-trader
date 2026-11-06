@@ -381,3 +381,16 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-watch-stats b{font-size:11px;color:#d7e7fa;font-weight:600;overflow-wrap:anywhere}
 .auto-watch-message{border-top:1px solid #2b425c;margin:12px 0 0;padding-top:10px;color:#93a9c7;font-size:10px;line-height:1.6}
 @media(max-width:950px){.auto-watch-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}
+
+
+/* Transparent, source-first news/DART risk gate on automatic paper entries. */
+.auto-news-risk-panel{border-color:#345072}
+.auto-news-risk-panel .auto-review-summary{margin-bottom:12px}
+.auto-news-risk-details{border:1px solid #2a3d57;border-radius:8px;margin-top:12px}
+.auto-news-risk-details>summary{padding:12px 14px;color:#a8c5e9;cursor:pointer;font-size:10px}
+.auto-news-risk-list{border-top:1px solid #2a3d57;padding:8px 12px;display:grid;gap:6px}
+.auto-news-risk-list a{display:flex;flex-wrap:wrap;gap:7px 12px;align-items:baseline;text-decoration:none;color:#b2c6df;font-size:10px;line-height:1.65;padding:7px 0;border-bottom:1px solid #24344d}
+.auto-news-risk-list a:last-child{border-bottom:none}
+.auto-news-risk-list a:hover{color:#e6f2ff}
+.auto-news-risk-list b{white-space:nowrap;color:#91bcef;font-size:10px}
+.auto-news-risk-list span{overflow-wrap:anywhere}
