@@ -356,3 +356,16 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-review-note{margin:13px 0 0;font-size:9px;color:#7f94af;line-height:1.7}
 @media(max-width:1080px){.auto-review-stock-list{grid-template-columns:1fr}}
 @media(max-width:750px){.auto-review-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.auto-review-heading{flex-direction:column}.auto-review-run{flex:1 1 120px}.auto-review-stock-info{flex-wrap:wrap}}
+
+
+/* Explicit user-confirmed trial liquidation — never confused with automated TP fills. */
+.auto-trial-button{padding:7px 11px;white-space:nowrap;color:#e5b979;border-color:#76573c}
+.auto-trial-button:disabled{opacity:.42;cursor:not-allowed}
+.auto-trial-confirm{margin-top:15px;background:#272117;border:1px solid #775531;border-radius:10px;padding:16px}
+.auto-trial-confirm>strong{font-size:12px;color:#f2d29b}
+.auto-trial-confirm>p{font-size:10px;line-height:1.8;color:#dac5ad;margin:9px 0 0}
+.auto-trial-confirm b{color:#ffd39c}
+.auto-trial-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:13px}
+.auto-trial-confirm-button{background:#654527;border-color:#b38546;color:#fff0d4}
+.auto-trial-confirm-button:disabled{opacity:.55;cursor:not-allowed}
+.auto-trial-notice{margin:12px 0 0;font-size:11px;line-height:1.75;color:#c6d9f1;overflow-wrap:anywhere}
