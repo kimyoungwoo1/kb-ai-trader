@@ -78,6 +78,13 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
     success: false, message: '알 수 없는 백업 명령입니다.',
   }, { status: 400 })
   try {
+    // Once server migration has occurred the browser may never reacquire
+    // the trading lease or overwrite the old backup, even from a stale open tab.
+    if (action === 'claim' || action === 'renew' || action === 'save') {
+      const server = await db.prepare('SELECT mode FROM server_paper_state WHERE id=1').first<{mode:string}>().catch(()=>null);
+      if (server) return Response.json({success:false,conflict:true,
+        message:'서버 가상매매로 이전되었습니다. 기존 브라우저 자동 실행과 백업 기록 변경은 차단됩니다.'},{status:409});
+    }
     if (action === 'claim' || action === 'renew' || action === 'release') {
       const owner = input.owner
       if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{20,100}$/.test(owner))
