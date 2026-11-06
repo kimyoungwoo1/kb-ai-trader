@@ -74,10 +74,42 @@ const head = (db: Db) => db.prepare('SELECT revision, updated_at, snapshot_json 
 export async function handlePaperBackup(body: unknown, db: Db): Promise<Response> {
   const input = body && typeof body === 'object' ? body as Record<string, unknown> : {}
   const action = input.action
-  if (!['status','load','save'].includes(String(action))) return Response.json({
+  if (!['status','load','save','claim','renew','release'].includes(String(action))) return Response.json({
     success: false, message: '알 수 없는 백업 명령입니다.',
   }, { status: 400 })
   try {
+    if (action === 'claim' || action === 'renew' || action === 'release') {
+      const owner = input.owner
+      if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{20,100}$/.test(owner))
+        return Response.json({ success: false, message: '감시 세션 식별자가 올바르지 않습니다.' }, { status: 400 })
+      const nowMs = Date.now()
+      if (action === 'release') {
+        await db.prepare(
+          'UPDATE paper_trade_lease SET lease_until = 0 WHERE id = 1 AND owner = ?'
+        ).bind(owner).run()
+        return Response.json({ success: true, released: true })
+      }
+      const expected = input.expectedRevision
+      if (!Number.isInteger(expected) || (expected as number) < 0)
+        return Response.json({ success: false, message: '서버 백업 버전 확인이 필요합니다.' }, { status: 400 })
+      // Single-row conditional UPDATE serializes claims across browser tabs and PCs.
+      await db.prepare(
+        "INSERT OR IGNORE INTO paper_trade_lease (id, owner, lease_until) VALUES (1, '', 0)"
+      ).bind().run()
+      const ttlMs = 90_000
+      const query = action === 'claim'
+        ? 'UPDATE paper_trade_lease SET owner = ?, lease_until = ? WHERE id = 1 AND (lease_until <= ? OR owner = ?) AND COALESCE((SELECT revision FROM paper_backup_head WHERE id = 1), 0) = ?'
+        : 'UPDATE paper_trade_lease SET owner = ?, lease_until = ? WHERE id = 1 AND owner = ? AND lease_until > ? AND COALESCE((SELECT revision FROM paper_backup_head WHERE id = 1), 0) = ?'
+      const result = action === 'claim'
+        ? await db.prepare(query).bind(owner, nowMs + ttlMs, nowMs, owner, expected).run()
+        : await db.prepare(query).bind(owner, nowMs + ttlMs, owner, nowMs, expected).run()
+      if (!result.success) throw Error('lease write failed')
+      if ((result.meta?.changes || 0) < 1)
+        return Response.json({ success: false, conflict: true,
+          message: '다른 기기가 자동매매 중이거나 서버 백업 버전이 변경되었습니다. 자동매매를 중지해 주세요.' }, { status: 409 })
+      return Response.json({ success: true, active: true,
+        lease_until: nowMs + ttlMs, revision: expected })
+    }
     if (action === 'status') {
       const current = await head(db)
       return Response.json({ success: true, configured: true,
@@ -109,14 +141,20 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
       success: false, message: '백업 용량 상한(1.7MB)을 초과했습니다.' }, { status: 413 })
     const now = new Date().toISOString()
     let result: { success: boolean; meta?: { changes?: number } }
+    const owner = typeof input.owner === 'string' && /^[a-zA-Z0-9_-]{20,100}$/.test(input.owner)
+      ? input.owner : ''
+    const nowMs = Date.now()
     if (expected === 0) {
       result = await db.prepare(
-        'INSERT OR IGNORE INTO paper_backup_head (id, revision, updated_at, snapshot_json) VALUES (1, 1, ?, ?)'
-      ).bind(now, json).run()
+        "INSERT OR IGNORE INTO paper_backup_head (id, revision, updated_at, snapshot_json) SELECT 1, 1, ?, ? WHERE " +
+        "NOT EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ? AND owner <> ?)"
+      ).bind(now, json, nowMs, owner).run()
     } else {
       result = await db.prepare(
-        'UPDATE paper_backup_head SET revision = revision + 1, updated_at = ?, snapshot_json = ? WHERE id = 1 AND revision = ?'
-      ).bind(now, json, expected).run()
+        'UPDATE paper_backup_head SET revision = revision + 1, updated_at = ?, snapshot_json = ? WHERE id = 1 AND revision = ? ' +
+        'AND (NOT EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND lease_until > ?) ' +
+        'OR EXISTS (SELECT 1 FROM paper_trade_lease WHERE id = 1 AND owner = ? AND lease_until > ?))'
+      ).bind(now, json, expected, nowMs, owner, nowMs).run()
     }
     if (!result.success) throw Error('database write failed')
     if ((result.meta?.changes || 0) < 1) {
