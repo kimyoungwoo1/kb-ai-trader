@@ -1,6 +1,6 @@
 import type { AutoAccount } from './autoPaper'
 
-export const FAST_QUOTE_INTERVAL_MS = 10_000
+export const FAST_QUOTE_INTERVAL_MS = 30_000
 export const FAST_QUOTE_MAX_CODES = 5
 export type WatchStock = { code: string; name: string; priority: '보유' | '진입 감시' }
 
