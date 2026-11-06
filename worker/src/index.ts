@@ -3,7 +3,7 @@ import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonit
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi, observePaperFill } from './liveTrial'
-import { processLiveFill, reconcileLiveOrders } from './liveExecution'
+import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -1258,6 +1258,11 @@ const service = {
         // order was rejected and never submit a duplicate order.
         try{await reconcileLiveOrders(env.PAPER_DB,env)}
         catch{console.warn('Real pilot reconciliation unavailable')}
+        // Cancel still-open limit orders at most once after 5 minutes.
+        // An irrevocable D1 cancel claim is written before any broker request.
+        // Every ordinary deployment remains hard-locked from real order writes.
+        try{await cancelStaleLiveOrders(env.PAPER_DB,env)}
+        catch{console.warn('Real pilot cancellation monitoring unavailable')}
         // A 3-error streak triggers a single event keyed by the beginning of the streak.
         // A successful scan immediately after an error streak triggers recovery.
         try{
