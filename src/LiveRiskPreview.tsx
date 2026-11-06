@@ -34,11 +34,11 @@ export default function LiveRiskPreview({token}:{token:string}){
     <div className="panel-heading"><div><h3>실계좌 매수 안전성 검사</h3><span>READ ONLY · SSQM1802 · 실주문 차단</span></div></div>
     <p className="notification-hint">5만 원 이하 지정가 매수 계획을 입력하면 KB증권의 해당 종목 주문가능금액과 D1 주문 상태를 읽어 검증해. 이 버튼은 주식을 매수하거나 주문을 예약하지 않아.</p>
     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-      <input aria-label="시험 종목코드" placeholder="종목코드 6자리" maxLength={6}
+      <input className="live-trial-field" aria-label="시험 종목코드" placeholder="종목코드 6자리" maxLength={6}
         value={code} onChange={e=>setCode(e.target.value)} style={{width:155}}/>
-      <input aria-label="시험 수량" placeholder="수량" inputMode="numeric"
+      <input className="live-trial-field" aria-label="시험 수량" placeholder="수량" inputMode="numeric"
         value={quantity} onChange={e=>setQuantity(e.target.value)} style={{width:95}}/>
-      <input aria-label="시험 지정가" placeholder="지정가(원)" inputMode="numeric"
+      <input className="live-trial-field" aria-label="시험 지정가" placeholder="지정가(원)" inputMode="numeric"
         value={price} onChange={e=>setPrice(e.target.value)} style={{width:140}}/>
       <button type="button" className="outline-button" onClick={()=>void check()} disabled={!valid||busy}>
         {busy?'실계좌 조회 중...':'매수 가능 여부 점검'}
