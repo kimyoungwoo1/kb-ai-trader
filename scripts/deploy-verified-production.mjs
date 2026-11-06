@@ -107,7 +107,7 @@ const probeVersion = async(origin,secret,label) => {
 }
 const activeWranglerVersion = async () => {
   const output=await cliRead(['wrangler','deployments','status','--name',name],'Wrangler 현재 운영 버전 조회')
-  const versions=[...output.matchAll(/Version\\(s\\):\\s*\\(100%\\)\\s*([a-f0-9-]{36})/g)]
+  const versions=[...output.matchAll(/Version\(s\):\s*\(100%\)\s*([a-f0-9-]{36})/g)]
   ensure(versions.length===1,'Wrangler 현재 운영 버전 파싱 실패 · 자동 복구 상태 불명')
   return versions[0][1].toLowerCase()
 }
