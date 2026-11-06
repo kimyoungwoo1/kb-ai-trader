@@ -237,7 +237,7 @@ export default function AutoPaperLab({
         <div className="auto-health-grid">
           <div><span>최근 서버 Cron 호출</span><strong>{formatTime(lastCronAt)}</strong><small>{cron?.last_tick ? (cronLabels[cron.last_tick.result] || cron.last_tick.result) : '서버 실행 이력 확인 전'}</small></div>
           <div><span>최근 정상 서버 검사</span><strong>{formatTime(cron?.last_success?.finished_at)}</strong><small>정규장 중 정상 완료된 검사</small></div>
-          <div><span>오늘 서버 검사</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>최근 1분 감시·5분 시장 탐색·대상 없음</small></div>
+          <div><span>오늘 서버 검사</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>정규장 1분 감시·5분 시장 탐색 완료</small></div>
           <div><span>오늘 서버 오류</span><strong>{cron?.today?.errors ?? '-'}회</strong><small>장 마감·중지·중복 건은 오류 제외</small></div>
         </div>
         {cron?.last_tick?.result === 'error' && <p className="news-message" role="alert">최근 서버 오류: {cron.last_tick.message}</p>}
