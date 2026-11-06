@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AUTO_STORAGE_KEY, readAutoAccount } from './autoPaper'
-import { PAPER_KEY, readPaperLedger } from './paperLedger'
-import { SCREENING_HISTORY_KEY, readScreeningSnapshot } from './screeningHistory'
+import { PAPER_KEY } from './paperLedger'
+import { SCREENING_HISTORY_KEY } from './screeningHistory'
 import { CLOUD_SYNC_EVENT, getCloudSyncState, saveCloudBackupNow, suspendCloudSync } from './cloudAutoSync'
 
 type ServerStatus = { revision: number; updated_at: string | null; configured: boolean; has_backup: boolean }
