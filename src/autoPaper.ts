@@ -6,6 +6,8 @@ export const AUTO_INITIAL = 1_000_000
 const MAX_POSITION = 200_000
 const MAX_POSITIONS = 3
 const MAX_DAILY_LOSS = 10_000
+const MAX_CONSECUTIVE_LOSSES = 3
+const MIN_DATA_FRESHNESS_MS = 5 * 60_000
 const BUY_SLIPPAGE = 0.001
 const SELL_SLIPPAGE = 0.001
 const BUY_FEE = 0.00015
@@ -83,7 +85,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     return { ...account, lastCycle: checkedAt, lastMessage: message,
       runs: [run, ...(account.runs || [])].slice(0, 30) }
   }
-  if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > 5 * 60000) {
+  if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > MIN_DATA_FRESHNESS_MS) {
     return completeRun('실행 보류', '시세 수집 후 5분 초과 또는 수집시각 오류 · 가상 체결 보류')
   }
   if (!inSession(now)) return completeRun('실행 보류', '정규장 외 시간 · 신호만 확인, 가상 체결 보류')
@@ -104,6 +106,12 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const dayRealized = fills.filter(f => f.side === 'SELL' && kstDate(new Date(f.at)) === currentDate)
     .reduce((sum, f) => sum + (f.pnl || 0), 0)
   let sessionPnl = dayRealized
+  // A streak is evaluated from most recent completed automated exits, never manual trades.
+  const priorSells = fills.filter(f => f.side === 'SELL' && f.pnl !== null)
+  let consecutiveLosses = 0
+  for (const fill of priorSells) { if ((fill.pnl ?? 0) < 0) consecutiveLosses++; else break }
+  const dailyLossLocked = () => sessionPnl <= -MAX_DAILY_LOSS
+  let pauseNewEntries = consecutiveLosses >= MAX_CONSECUTIVE_LOSSES
   // Existing position exits have precedence, and only verified fresh quotes may trigger them.
   positions = positions.filter(p => {
     const mark = quoteMap.get(p.code)
@@ -124,6 +132,8 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
       else ledgerPositions[idx] = { ...existing, quantity: existing.quantity - p.quantity, lastPrice: mark }
     }
     sessionPnl += pnl
+    consecutiveLosses = pnl < 0 ? consecutiveLosses + 1 : 0
+    if (consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) pauseNewEntries = true
     fills.unshift({ id: now.toISOString() + '-sell-' + p.code, at: now.toISOString(), code: p.code, name: p.name, side: 'SELL',
       quantity: p.quantity, price: sellPrice, costs, pnl, reason })
     alreadyTradedToday.add(p.code)
@@ -146,7 +156,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   }
   // Require a *later* quote to cross the watch trigger. Never fill using the creating snapshot.
   for (const item of [...pending]) {
-    if (ledgerPositions.length >= MAX_POSITIONS || sessionPnl <= -MAX_DAILY_LOSS) break
+    if (ledgerPositions.length >= MAX_POSITIONS || dailyLossLocked() || pauseNewEntries) break
     if (new Date(item.createdAt).getTime() >= checked.getTime()) continue
     if (alreadyTradedToday.has(item.code)) continue
     const mark = quoteMap.get(item.code)
@@ -178,9 +188,10 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   }
   writePaperLedger({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
   const equity = cash + ledgerPositions.reduce((sum, p) => sum + p.lastPrice * p.quantity, 0)
-  const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
+  const lockReason = pauseNewEntries ? ' · 연속 손실 ' + MAX_CONSECUTIVE_LOSSES + '회 신규매수 중단' : dailyLossLocked() ? ' · 당일 실현손실 한도 도달: 신규매수 중단' : ''
+  const summary = (executed ? '가상 체결 ' + executed + '건 · 검사 완료'
     : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
-      : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료'
+      : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료') + lockReason
   const run: AutoRun = { checkedAt, processedAt: now.toISOString(), status: '검사 완료',
     scanned: signals.length, candidates, filled: executed, message: summary, decisions }
   return { ...account, cash, positions, pending, fills: fills.slice(0, 1000),
