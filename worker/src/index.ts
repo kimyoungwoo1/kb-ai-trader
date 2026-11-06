@@ -811,29 +811,38 @@ export default {
         const combined = [...(result.list || [])];
         const pagesRequired = Math.ceil(totalReported / 100);
         let pageError = "";
-        for (let page = 2; page <= Math.min(pagesRequired, 5); page++) {
-          try {
-            const nextParams = new URLSearchParams(params);
-            nextParams.set("page_no", String(page));
-            const pageResponse = await fetch("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
-              redirect: "manual",
-              headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
-              signal: AbortSignal.timeout(12000),
-            });
-            if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
-              pageError = "DART 추가 페이지 HTTP " + pageResponse.status;
-              break;
+        // Parallelize in bounded groups (Cloudflare subrequest pressure and DART quotas).
+        // 20 pages cover up to 2,000 filings. Anything larger is explicitly incomplete
+        // and will block NEW entries instead of concealing possible adverse reports.
+        for (let startPage = 2; startPage <= Math.min(pagesRequired, 20); startPage += 4) {
+          const pages = Array.from({ length: Math.min(4, Math.min(pagesRequired, 20) - startPage + 1) },
+            (_, index) => startPage + index);
+          const batch = await Promise.all(pages.map(async page => {
+            try {
+              const nextParams = new URLSearchParams(params);
+              nextParams.set("page_no", String(page));
+              const pageResponse = await fetch("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
+                redirect: "manual",
+                headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
+                signal: AbortSignal.timeout(12000),
+              });
+              if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
+                return { page, list: [], error: "DART 추가 페이지 HTTP " + pageResponse.status };
+              }
+              const pageData = await pageResponse.json() as typeof result;
+              if (pageData.status !== "000" || !Array.isArray(pageData.list)) {
+                return { page, list: [], error: "DART 추가 페이지 오류 " + (pageData.status || "자료 없음") };
+              }
+              return { page, list: pageData.list, error: "" };
+            } catch {
+              return { page, list: [], error: "DART 추가 페이지 연결 실패" };
             }
-            const nextPage = await pageResponse.json() as typeof result;
-            if (nextPage.status !== "000" || !Array.isArray(nextPage.list)) {
-              pageError = "DART 추가 페이지 오류 " + (nextPage.status || "자료 없음");
-              break;
-            }
-            combined.push(...nextPage.list);
-          } catch {
-            pageError = "DART 추가 페이지 연결 실패";
-            break;
+          }));
+          for (const pageData of batch) {
+            if (pageData.error) pageError = pageError || pageData.error + " (" + pageData.page + "페이지)";
+            else combined.push(...pageData.list);
           }
+          if (pageError) break;
         }
         const disclosureComplete = !pageError && combined.length >= totalReported
           && (totalReported === 0 || combined.length > 0);
