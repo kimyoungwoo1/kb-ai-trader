@@ -6,7 +6,7 @@ import AutoPaperLab from './AutoPaperLab'
 import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { getAutoHealth } from './autoStatus'
-import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
+import { applyCatalystGate, catalystAllowsPending, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -320,7 +320,6 @@ export default function App() {
   }
 
   async function collectMarketCatalysts(): Promise<CatalystSnapshot> {
-    const checkedAt = new Date().toISOString()
     const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
     // Briefing AI is intentionally skipped. This refreshes only published RSS headlines
     // and official DART filings; neither AI-written text nor headline rumors make orders.
