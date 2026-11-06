@@ -87,8 +87,11 @@ async function main(){
     ]
     console.log('✓ 첫 웹 푸시 VAPID 키 생성 (키 출력 안 함)')
   }
+  // Verify the historical safety reference, but always inherit current live
+  // values. Reverting to a historical secret can silently break KB auth.
   const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
-  verifyVersion(old,'Secret 상속 기준 버전')
+  verifyVersion(old,'과거 Secret 참조 버전')
+  console.log('✓ 현재 운영 버전의 최신 인증키 사용 (과거 키로 되돌리지 않음)')
   // D1 is optional until the user runs scripts/setup-paper-cloud.mjs.
   // Once enabled, never silently deploy a new Worker version that loses it.
   const liveD1=bindingEntries(live).find(b=>b.name==='PAPER_DB'&&b.type==='d1')
@@ -183,12 +186,13 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':'paper watch + D1 backup + inherited secret bindings'},
+      annotations:{'workers/message':'paper watch + D1 backup + current live secrets + push notifications'},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
         ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
-        ...required.map(name=>({name,type:'inherit',version_id:knownGood})),
+        ...required.map(name=>({name,type:'inherit',version_id:rollbackVersion})),
+        ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...pushBindings
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
