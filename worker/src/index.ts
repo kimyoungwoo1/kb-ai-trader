@@ -562,16 +562,25 @@ export default {
           success: false, message: "수급 데이터의 유효 종목이 1,000개 미만이라 후보 탐색을 중단합니다.",
           diagnostics: ["유효 종목 " + rows.length, "자료 기준일 " + asOf],
         }, 502);
+        // Stage one surveys every valid stock IN THIS PUBLIC SOURCE, then
+        // interleaves multiple daily-flow rankings before KB intraday verification.
+        // Do NOT claim KRX-complete intraday market coverage.
+        const pools = [
+          { rank: "외국인 5일 순매수", stocks: [...rows].sort((a, b) => b.f5 - a.f5) },
+          { rank: "기관 5일 순매수", stocks: [...rows].sort((a, b) => b.i5 - a.i5) },
+          { rank: "외국인 1일 순매수", stocks: [...rows].sort((a, b) => b.f1 - a.f1) },
+        ];
         const found = new Map<string, { code: string; name: string; rankSource: string }>();
-        const add = (array: Row[], label: string, count: number) => {
-          for (const item of array.slice(0, count)) {
-            if (!found.has(item.code)) found.set(item.code, { code: item.code, name: item.name, rankSource: label });
+        for (let position = 0; position < rows.length && found.size < 150; position++) {
+          for (const pool of pools) {
+            const item = pool.stocks[position];
+            if (item && !found.has(item.code)) found.set(item.code, {
+              code: item.code, name: item.name, rankSource: pool.rank,
+            });
+            if (found.size >= 150) break;
           }
-        };
-        add([...rows].sort((a, b) => b.f5 - a.f5), "외국인 5일 순매수", 40);
-        add([...rows].sort((a, b) => b.i5 - a.i5), "기관 5일 순매수", 30);
-        add([...rows].sort((a, b) => b.f1 - a.f1), "외국인 1일 순매수", 30);
-        const candidates = [...found.values()].slice(0, 80);
+        }
+        const candidates = [...found.values()];
         diagnostics.push("공개 자료 내 유효 종목 " + rows.length, "수급 자료 기준일 " + asOf, "후보 " + candidates.length);
         return json({
           success: true, candidates, count: candidates.length, universe_count: rows.length, checked_at: new Date().toISOString(),
@@ -837,7 +846,7 @@ export default {
     }
 
     if ((url.pathname === "/api/news" || url.pathname === "/api/market/research") && request.method === "POST") {
-      let researchInput: { holdings?: unknown; watchlist?: unknown; disclosures?: unknown } = {};
+      let researchInput: { holdings?: unknown; watchlist?: unknown; disclosures?: unknown; skip_ai?: boolean } = {};
       try { researchInput = await request.clone().json() as typeof researchInput; } catch {}
       const researchHoldings = Array.isArray(researchInput.holdings) ? researchInput.holdings.slice(0, 50).map((item: any) => ({
         name: String(item?.name || "").slice(0, 80),
@@ -846,6 +855,7 @@ export default {
         yieldRate: Number(item?.yieldRate) || 0,
       })) : [];
       const researchWatchlist = Array.isArray(researchInput.watchlist) ? researchInput.watchlist.slice(0, 30).map(item => String(item || "").trim().slice(0, 80)).filter(Boolean) : [];
+      const skipAi = researchInput.skip_ai === true;
       const suppliedDisclosures = Array.isArray(researchInput.disclosures) ? researchInput.disclosures.slice(0, 100).map((item: any) => ({
         company: String(item?.company || "").slice(0, 100),
         stock_code: String(item?.stock_code || "").replace(/[^0-9]/g, "").slice(0, 6),
@@ -881,6 +891,7 @@ export default {
           const response = await fetch(feed.url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
             signal: AbortSignal.timeout(15000),
+            cf: { cacheTtl: 180, cacheEverything: true },
           });
           if (!response.ok) return { items: [], diagnostic: { source: feed.source, query: feed.category, status: response.status, count: 0, error: "RSS HTTP 오류" } };
           const xml = await response.text();
@@ -933,7 +944,7 @@ export default {
       const relevantHoldings = researchHoldings.map(item => ({ name: item.name, code: item.code, quantity: item.quantity, yieldRate: item.yieldRate }));
       let marketAnalysis = "";
       let analysisError: string | null = null;
-      if (articles.length || priorityDisclosures.length) {
+      if (!skipAi && (articles.length || priorityDisclosures.length)) {
         try {
           const prompt = [
             "너는 한국 주식 단기 스윙 투자자를 돕는 보수적인 시장 분석 보조자다.",
