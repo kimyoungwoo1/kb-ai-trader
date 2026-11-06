@@ -485,42 +485,50 @@ export default function App() {
     const failures: string[] = []
     let rateLimited = false
     try {
-      // No market discovery or investor-flow requests. These are only held/watchlist quote checks.
-      // Sequential calls avoid bursts of OAuth + quote requests against KB Open API.
-      for (const stock of tracked) {
-        try {
-          const response = await fetch(API + '/api/kb/quote', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-            body: JSON.stringify({ code: stock.code, exchange: '1' }),
-            signal: AbortSignal.timeout(12_000),
-          })
-          if (response.status === 401) {
-            logout()
-            setError('시세 감시 중 로그인 세션이 만료됐습니다. 다시 로그인해 주세요.')
-            return
-          }
-          const result = await response.json()
-          if (!response.ok || !result.success) {
-            const limited = response.status === 429 || result.http_status === 429
-              || /호출 제한|과다 호출|429/.test(String(result.message || ''))
-            if (limited) rateLimited = true
-            failures.push(stock.name + ': 현재가 조회 실패' + (limited ? ' (호출 제한)' : ''))
-            if (limited) break
-            continue
-          }
-          const price = Number(result.price)
-          const quoteTime = Date.parse(String(result.checked_at || ''))
-          if (result.code !== stock.code || !Number.isFinite(price) || price <= 0
-            || !Number.isFinite(quoteTime) || quoteTime > Date.now() + 15_000
-            || Date.now() - quoteTime > 120_000) {
-            failures.push(stock.name + ': 유효한 최신 가격 없음')
-            continue
-          }
-          valid.push({ code: stock.code, name: stock.name, price })
-        } catch {
-          failures.push(stock.name + ': 시세 요청 시간 초과 또는 연결 실패')
+      // One browser request per ten-second cycle. Worker shares OAuth and
+      // fetches up to five prices in two-at-a-time KB batches.
+      try {
+        const response = await fetch(API + '/api/kb/quotes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ stocks: tracked }),
+          signal: AbortSignal.timeout(18_000),
+          cache: 'no-store',
+        })
+        if (response.status === 401) {
+          logout()
+          setError('시세 감시 중 로그인 세션이 만료되었습니다. 다시 로그인해 주세요.')
+          return
         }
+        const result = await response.json()
+        rateLimited = response.status === 429 || result.rate_limited === true
+        if (!response.ok || !result.success || !Array.isArray(result.results)) {
+          failures.push(rateLimited ? 'KB 현재가 호출 제한' : (result.message || 'KB 일괄 현재가 조회 실패'))
+        } else {
+          const expected = new Map(tracked.map(item => [item.code, item]))
+          for (const item of result.results as Array<{
+            code: string; name: string; price: number | null; checked_at: string;
+            quoteError: string; rate_limited: boolean
+          }>) {
+            const trackedItem = expected.get(item.code)
+            if (!trackedItem) continue
+            expected.delete(item.code)
+            if (item.rate_limited) rateLimited = true
+            const price = Number(item.price)
+            const quoteTime = Date.parse(item.checked_at || '')
+            if (item.quoteError || !Number.isFinite(price) || price <= 0 ||
+              !Number.isFinite(quoteTime) || quoteTime > Date.now() + 15_000 ||
+              Date.now() - quoteTime > 30_000) {
+              failures.push(trackedItem.name + ': ' + (item.quoteError || '최신 가격 확인 실패'))
+              continue
+            }
+            valid.push({ code: item.code, name: trackedItem.name, price })
+          }
+          if (expected.size) failures.push('일부 종목 조회 누락: ' + expected.size + '개')
+          if (result.token_expired) failures.push('KB 토큰 만료 · 다음 감시에서 갱신')
+        }
+      } catch {
+        failures.push('KB 일괄 현재가 요청 시간 초과 또는 연결 실패')
       }
       if (rateLimited) fastWatchBackoffRef.current = Date.now() + 180_000
       // A manual sale, stop request or broad scan can occur during the network reads.
@@ -587,7 +595,10 @@ export default function App() {
     const poll = () => { if (readAutoAccount().enabled) void fastWatchRunner.current() }
     poll()
     const timer = window.setInterval(poll, FAST_QUOTE_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    // Tab timers may pause in the background. Resume promptly when it becomes visible.
+    const resume = () => { if (document.visibilityState === 'visible') poll() }
+    document.addEventListener('visibilitychange', resume)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', resume) }
   }, [token])
 
   async function loadDisclosures() {
