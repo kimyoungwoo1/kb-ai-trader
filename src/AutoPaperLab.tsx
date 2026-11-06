@@ -20,6 +20,13 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
   const metrics = useMemo(() => autoStats(account), [account])
   const screening = useMemo(() => analyzeSignals(signals), [signals])
   const performance = useMemo(() => analyzePerformance(account, ledger), [account, ledger])
+  // Observational only: candidate-selected symbols are not representative of the market.
+  const regime = useMemo(() => {
+    const valid = signals.filter(s => s.price !== null && s.status !== '데이터 부족')
+    if (valid.length < 8) return '판단 보류 (표본 부족)'
+    const mean = valid.reduce((n,s) => n + s.score, 0) / valid.length
+    return mean >= 4 ? '후보군 강세' : mean <= 1 ? '후보군 약세' : '후보군 혼조'
+  }, [signals])
   const historical = useMemo(() => {
     const runs = (account.runs || []).filter(run => run.status === '검사 완료')
     return {
@@ -89,9 +96,13 @@ export default function AutoPaperLab({ signals, quotes, checkedAt }: { signals: 
         <div>평균 실현손익 <strong>{performance.averagePnl === null ? '-' : money(performance.averagePnl)}</strong></div>
         <div>손익비율(PF) <strong>{performance.profitFactor === null ? '-' : performance.profitFactor.toFixed(2)}</strong></div>
         <div>전략 실현손익 <strong>{money(performance.netPnl)}</strong></div>
+        <div>평균 보유 기간 <strong>{performance.averageHoldingDays === null ? '-' : performance.averageHoldingDays.toFixed(1) + '일'}</strong></div>
+        <div>평균 이익/손실 비율 <strong>{performance.payoffRatio === null ? '-' : performance.payoffRatio.toFixed(2)}</strong></div>
+        <div>최근 연속 손실 <strong>{performance.consecutiveLosses}회</strong></div>
+        <div>수집 후보군 흐름 <strong>{regime}</strong></div>
         <div>관측 최대 낙폭 <strong>{performance.maxDrawdown === null ? '-' : performance.maxDrawdown.toFixed(2) + '%'}</strong></div>
       </div>
-      <p className="news-query">가상 수수료·세금·슬리피지 추정치를 반영한 전략 청산 기록 기준. 전체 가상잔고 수익률은 수동·자동 거래가 합쳐진 값이므로 전략 성과와 다를 수 있어. 최대 낙폭은 시장 시세 수집 시점만 기록하며, 아직 성과를 검증할 충분한 거래가 쌓이지 않았을 수 있어.</p>
+      <p className="news-query">가상 수수료·세금·슬리피지 추정치를 반영한 전략 청산 기록 기준. 전체 가상잔고 수익률은 수동·자동 거래가 합쳐진 값이므로 전략 성과와 다를 수 있어. 후보군 흐름은 선별 종목들의 점수에 대한 관측값이며 실제 시장 지수나 매수 신호가 아니야. 최대 낙폭은 시장 시세 수집 시점만 기록하며, 아직 성과를 검증할 충분한 거래가 쌓이지 않았을 수 있어.</p>
     </section>
     <div className="auto-stats">
       <div><span>가상 총자산</span><strong>{money(currentEquity)}</strong></div>
