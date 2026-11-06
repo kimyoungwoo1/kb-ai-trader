@@ -5,12 +5,14 @@ export const SERVER_PAPER_EVENT = 'kb-server-paper-updated'
 const API = 'https://kb-ai-trader.ksmsy1.workers.dev/api/paper/server'
 let active = false
 let lastRevision = -1
+let latest: ServerPaperStatus | null = null
 export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
   snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string }
 }
 export function isServerPaperMode() { return active }
+export function getServerPaperStatus() { return latest }
 export function setServerPaperMode(enabled: boolean) {
   active = enabled
   if (!enabled) lastRevision = -1
@@ -24,6 +26,7 @@ export async function serverPaperAction(token: string, action: string): Promise<
   })
   const data = await res.json() as ServerPaperStatus
   if (!res.ok || !data.success) throw Error(data.message || '서버 가상매매 요청 실패')
+  latest = data
   if (data.migrated && data.snapshot) {
     active = true
     if (lastRevision !== data.revision) {
