@@ -2,6 +2,7 @@ import { serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
+import { liveTrialApi, observePaperFill } from './liveTrial'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -123,11 +124,19 @@ const service = {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server" || url.pathname === "/api/notifications") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server" || url.pathname === "/api/notifications" || url.pathname === "/api/live/trial") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
       }
+    }
+    if (url.pathname === "/api/live/trial" && request.method === "POST") {
+      let input:unknown;
+      try{input=await request.json();}catch{return json({success:false,message:'요청 형식 오류'},400);}
+      const response=await liveTrialApi(env.PAPER_DB,input);
+      const headers=new Headers(response.headers);
+      for(const [key,value] of Object.entries(corsHeaders))headers.set(key,value);
+      return new Response(response.body,{status:response.status,headers});
     }
     if (url.pathname === "/api/notifications" && request.method === "POST") {
       let input: unknown;
@@ -1226,6 +1235,9 @@ const service = {
       const outcome=await runMonitoredPaperCron(env.PAPER_DB,post);
       if(outcome.fills?.length){
         for(const fill of outcome.fills){
+          // Audit only: no live order calls. DB uniqueness prevents duplicate
+          // candidate creation even across repeated Cron events.
+          try{await observePaperFill(env.PAPER_DB,fill);}catch{console.warn('Live trial audit write failed')}
           const notice=formatPaperFillNotification(fill);
           await publishNotification(env,{
             eventKey:'fill:'+fill.id,kind:'trade',...notice
