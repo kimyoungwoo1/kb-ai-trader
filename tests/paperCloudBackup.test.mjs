@@ -106,3 +106,11 @@ test('invalid client revision and excessively large backup both fail without wri
   assert.equal((await handlePaperBackup({action:'save',expectedRevision:0,snapshot:large},db)).status,413)
   assert.equal(db.getHead(),null)
 })
+
+test('nested API credentials are rejected before writing to Cloudflare D1',async()=>{
+  const db=fakeD1()
+  const withSecret={...snapshot(),account:{...snapshot().account,apiKey:'must-not-back-up'}}
+  const response=await handlePaperBackup({action:'save',expectedRevision:0,snapshot:withSecret},db)
+  assert.equal(response.status,400)
+  assert.equal(db.getHead(),null)
+})
