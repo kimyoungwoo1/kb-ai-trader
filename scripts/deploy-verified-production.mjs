@@ -179,6 +179,8 @@ async function main(){
   rollbackVersion=active.version_id
   const live=await api(root+'/workers/workers/'+workerId+'/versions/'+rollbackVersion)
   verifyVersion(live,'현재 운영 버전')
+  // Safety: LIVE_TRADING_HARD_ENABLE is deliberately never inherited here.
+  // Every normal deployment is intrinsically locked against broker order writes.
   const probeKey=randomBytes(32).toString('base64url')
   console.log('✓ 이번 배포 전용 KB 계좌 검사 인증키 생성 (출력하지 않음)')
   // Opt-in encrypted Web Push uses a persistent VAPID keypair. The first
@@ -245,7 +247,8 @@ async function main(){
       "CREATE TABLE IF NOT EXISTS live_trial_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled=0), updated_at TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS live_trial_candidates (id INTEGER PRIMARY KEY AUTOINCREMENT, trading_day TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE, code TEXT NOT NULL, name TEXT NOT NULL, side TEXT NOT NULL CHECK(side='BUY'), quantity INTEGER NOT NULL CHECK(quantity>0), limit_price INTEGER NOT NULL CHECK(limit_price>0), notional INTEGER NOT NULL CHECK(notional<=50000), reason TEXT NOT NULL, status TEXT NOT NULL CHECK(status='DRY_RUN_ONLY'), created_at TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS live_order_journal (id TEXT PRIMARY KEY,trading_day TEXT NOT NULL,code TEXT NOT NULL,side TEXT NOT NULL CHECK(side IN ('BUY','SELL')),quantity INTEGER NOT NULL CHECK(quantity>0),limit_price INTEGER NOT NULL CHECK(limit_price>0),reserved_won INTEGER NOT NULL CHECK(reserved_won>=0 AND reserved_won<=50000),state TEXT NOT NULL CHECK(state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','FILLED','REJECTED','CANCEL_REQUESTED','CANCELED')),broker_order_id TEXT UNIQUE,filled_quantity INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
-      "CREATE UNIQUE INDEX IF NOT EXISTS idx_live_order_one_buy_per_day ON live_order_journal(trading_day) WHERE side='BUY'"
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_live_order_one_buy_per_day ON live_order_journal(trading_day) WHERE side='BUY'",
+      "CREATE TABLE IF NOT EXISTS live_execution_gate (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), trading_day TEXT, updated_at TEXT NOT NULL)"
     ]){
       const queryResult=await api(root+'/d1/database/'+paperDbId+'/query',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
