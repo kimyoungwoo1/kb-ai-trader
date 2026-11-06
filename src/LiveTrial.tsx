@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucide-react'
+import LiveOrderLookup from './LiveOrderLookup'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
 type TrialStatus={enabled:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[]}
 const API='/api/live/trial'
@@ -44,6 +45,7 @@ export default function LiveTrial({token}:{token:string}){
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
       {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
     </div>
+    <LiveOrderLookup token={token}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>시험매매 후보 기록</h3><span>SERVER D1 · DRY RUN ONLY</span></div></div>
       <p className="notification-hint">가상매매 서버에서 확정된 매수 신호 중 5만 원 이하·정규장·2분 이내·당일 첫 종목 조건을 통과한 후보만 기록됩니다. 후보가 기록되어도 실제 매수는 실행되지 않습니다.</p>
