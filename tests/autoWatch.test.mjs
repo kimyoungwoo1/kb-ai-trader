@@ -101,3 +101,13 @@ test('held position quote errors and delays override a misleading all-green stat
   const later = new Date(time.getTime() + 4 * 60000)
   assert.equal(getAutoHealth(healthy, later, false, '').label, '빠른 시세 감시 지연')
 })
+
+
+test('held/queued quote failure takes priority over broad-market loading banner', () => {
+  const ctx = make()
+  const errored = recordAutoWatchError(ctx.account, 'KB 현재가 응답 시간 초과', 5, time)
+  const health = getAutoHealth(errored, time, true, '시장 50종목 정밀 조회 중')
+  assert.equal(health.tone, 'warning')
+  assert.equal(health.label, '보유·진입 시세 감시 실패')
+  assert.match(health.detail, /시간 초과/)
+})
