@@ -345,7 +345,7 @@ export default function App() {
     const dartComplete = dartOk && dartData?.complete === true
     const articles: MarketArticle[] = newsOk && Array.isArray(rssData?.articles)
       ? rssData.articles.filter((item: any) => item && typeof item.title === 'string')
-        .slice(0, 30).map((item: any) => ({
+        .slice(0, 200).map((item: any) => ({
           title: item.title.slice(0, 230), source: String(item.source || '').slice(0, 70),
           link: String(item.link || '').slice(0, 500), published_at: item.published_at || null,
         })) : []
