@@ -2,7 +2,7 @@
 // One-shot deployment preserving the five secrets from known-good version dafe0360.
 // Only switches traffic after the NEW version's secret bindings are verified.
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { join, relative, resolve, extname, sep } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -29,7 +29,7 @@ function verifyVersion(version,label,dbRequired=false){
   if(dbRequired) ensure(map.get('PAPER_DB')==='d1',label+': D1 PAPER_DB 바인딩 누락')
   console.log('✓ '+label+': Secret 5개·AI·ASSETS'+(dbRequired?'·D1 PAPER_DB':'')+' 확인')
 }
-const mimetype=path=>({'.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2','.webmanifest':'application/manifest+json'}[extname(path)]||'application/octet-stream')
+const mimetype=path=>({'.webmanifest':'application/manifest+json','.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2','.webmanifest':'application/manifest+json'}[extname(path)]||'application/octet-stream')
 function walk(root){
   return readdirSync(root,{withFileTypes:true}).flatMap(entry=>{
     const full=join(root,entry.name)
@@ -64,6 +64,29 @@ async function main(){
   rollbackVersion=active.version_id
   const live=await api(root+'/workers/workers/'+workerId+'/versions/'+rollbackVersion)
   verifyVersion(live,'현재 운영 버전')
+  // Opt-in encrypted Web Push uses a persistent VAPID keypair. The first
+  // release creates it inside the new Worker version; subsequent deploys
+  // inherit that SAME key from the currently active deployment.
+  const oldBindings=new Map(bindingEntries(live).map(b=>[b.name,b]))
+  const pushNames=['VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY','VAPID_SUBJECT']
+  const present=pushNames.filter(name=>oldBindings.has(name))
+  ensure(present.length===0||present.length===pushNames.length,'VAPID 키가 일부만 설정되어 있습니다. 키가 교체되지 않도록 배포 중단')
+  let pushBindings
+  if(present.length===pushNames.length){
+    pushBindings=pushNames.map(name=>({name,type:'inherit',version_id:rollbackVersion}))
+    console.log('✓ 기존 VAPID 푸시 키 보존')
+  }else{
+    const {publicKey,privateKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'})
+    const jwk=privateKey.export({format:'jwk'})
+    const x=Buffer.from(jwk.x,'base64url'),y=Buffer.from(jwk.y,'base64url')
+    const publicVapid=Buffer.concat([Buffer.from([4]),x,y]).toString('base64url')
+    pushBindings=[
+      {name:'VAPID_PUBLIC_KEY',type:'plain_text',text:publicVapid},
+      {name:'VAPID_PRIVATE_KEY',type:'secret_text',text:jwk.d},
+      {name:'VAPID_SUBJECT',type:'plain_text',text:domain},
+    ]
+    console.log('✓ 첫 웹 푸시 VAPID 키 생성 (키 출력 안 함)')
+  }
   const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
   verifyVersion(old,'Secret 상속 기준 버전')
   // D1 is optional until the user runs scripts/setup-paper-cloud.mjs.
@@ -164,7 +187,8 @@ async function main(){
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
         ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
-        ...required.map(name=>({name,type:'inherit',version_id:knownGood}))
+        ...required.map(name=>({name,type:'inherit',version_id:knownGood})),
+        ...pushBindings
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
     })
@@ -172,6 +196,12 @@ async function main(){
   ensure(created.id,'새 버전 생성 응답에 ID가 없음')
   console.log('6/7 새 버전 Secret 바인딩 검증')
   verifyVersion(await api(root+'/workers/workers/'+workerId+'/versions/'+created.id),'신규 버전',!!paperDbId)
+  const newVersion=await api(root+'/workers/workers/'+workerId+'/versions/'+created.id)
+  const newBindings=new Map(bindings(newVersion).map(x=>[x.name,x.type]))
+  ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
+    &&newBindings.has('VAPID_PUBLIC_KEY')&&newBindings.has('VAPID_SUBJECT'),
+    '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
+  console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인')
   console.log('7/7 검증 완료. 운영에 새 버전 배포')
   await api(root+'/workers/scripts/'+name+'/deployments',{
     method:'POST',headers:{'Content-Type':'application/json'},
