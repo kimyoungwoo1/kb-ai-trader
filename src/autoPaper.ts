@@ -6,7 +6,7 @@ export const AUTO_EVENT = 'kb-auto-account-changed'
 export const AUTO_INITIAL = 1_000_000
 export const AUTO_TAKE_PROFIT_PCT = 5
 /** Conservative interval pending verification of KB Open API rate limits. */
-export const AUTO_WATCH_INTERVAL_MS = 60_000
+export const AUTO_WATCH_INTERVAL_MS = 10_000
 const MAX_POSITION = 200_000
 export const MAX_POSITIONS = 5
 const MAX_DAILY_LOSS = 10_000
