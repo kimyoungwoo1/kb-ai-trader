@@ -181,7 +181,7 @@ export default function AutoPaperLab({
           {account.enabled && !serverMode && health.inSession && <button type="button" className="outline-button" onClick={onStart} disabled={scanLoading || !onStart}>
             {scanLoading ? '조회 중...' : '지금 검사'}
           </button>}
-          <button type="button" className="outline-button" onClick={() => void toggle()} disabled={startBusy}>
+          <button type="button" className="outline-button" onClick={() => void toggle()} disabled={startBusy || (serverMode && !serverInfo?.migrated)}>
             {startBusy ? '상태 확인 중...' : account.enabled ? '자동매매 중지' : '자동매매 시작'}
           </button>
         </div>
