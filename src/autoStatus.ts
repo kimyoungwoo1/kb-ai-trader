@@ -23,9 +23,6 @@ export function getAutoHealth(
     const label = weekday === 0 || weekday === 6 ? '주말 대기' : minute < 540 ? '개장 전 대기' : '장 마감'
     return { tone: 'idle', label, detail: '정규장 시간에만 가상 체결을 평가합니다. (공휴일 여부는 별도 확인하지 않음)', inSession }
   }
-  if (loading) return { tone: 'working', label: '시세 수집 중', detail: '시장 후보와 KB 시세를 조회하고 있습니다.', inSession }
-  if (/실패|오류/.test(scanMessage)) return { tone: 'warning', label: '시장 조회 오류', detail: scanMessage, inSession }
-
   const watchListSize = (account.positions?.length || 0) + (account.pending?.length || 0)
   if (watchListSize > 0) {
     const watch = account.watchStatus
@@ -34,7 +31,8 @@ export function getAutoHealth(
     const at = Date.parse(watch.processedAt)
     const age = now.getTime() - at
     if (watch.status === '오류' || watch.status === '일부 오류') {
-      return { tone: 'warning', label: '보유 시세 일부 확인 실패',
+      return { tone: 'warning',
+        label: watch.status === '오류' ? '보유·진입 시세 감시 실패' : '보유·진입 시세 일부 확인 실패',
         detail: watch.message, inSession }
     }
     if (!Number.isFinite(at) || age < -60_000 || age > 90_000) {
@@ -42,6 +40,9 @@ export function getAutoHealth(
         detail: '보유·진입 감시 종목의 최근 가격 조회가 90초 이상 갱신되지 않았습니다.', inSession }
     }
   }
+
+  if (loading) return { tone: 'working', label: '시세 수집 중', detail: '시장 후보와 KB 시세를 조회하고 있습니다.', inSession }
+  if (/실패|오류/.test(scanMessage)) return { tone: 'warning', label: '시장 조회 오류', detail: scanMessage, inSession }
 
   const last = (account.runs || [])[0]
   if (!last) return { tone: 'working', label: '첫 검사 대기', detail: '검사 시작 후 결과가 기록되면 상태가 바뀝니다.', inSession }
