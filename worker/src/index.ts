@@ -9,6 +9,38 @@ export interface Env {
   AI: Ai;
 }
 
+// Per-isolate token cache. Bound by the broker expiry and an 8-hour ceiling.
+// Cloudflare may recycle isolates, so this is a best-effort optimization, NOT durable storage.
+type KbTokenCache = { key: string; body: unknown; status: number; until: number };
+let kbTokenCache: KbTokenCache | null = null;
+let kbTokenInFlight: Promise<Response> | null = null;
+let kbTokenInFlightKey = "";
+async function fetchKbToken(env: Env, baseUrl: string, init: RequestInit): Promise<Response> {
+  const key = [baseUrl, env.KB_APP_KEY, env.KB_APP_SECRET].join("|");
+  const now = Date.now();
+  if (kbTokenCache?.key === key && kbTokenCache.until > now) {
+    return Response.json(kbTokenCache.body, { status: kbTokenCache.status });
+  }
+  if (kbTokenInFlight && kbTokenInFlightKey === key) return (await kbTokenInFlight).clone();
+  const task = (async () => {
+    const response = await fetch(`${baseUrl}/oauth2/token`, init);
+    // Keep a copy for existing callers, without ever logging or returning tokens to clients.
+    const body: unknown = await response.clone().json().catch(() => null);
+    const payload = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    const raw = payload.dataBody && typeof payload.dataBody === "object"
+      ? payload.dataBody as Record<string, unknown> : payload;
+    if (response.ok && typeof raw.access_token === "string" && raw.access_token.length) {
+      const expires = Number(raw.expires_in ?? raw.expiresIn ?? 1800);
+      const ttl = Number.isFinite(expires) && expires > 0 ? Math.min(8 * 3600, Math.max(0, expires - 300)) : 1500;
+      if (ttl > 0) kbTokenCache = { key, body, status: response.status, until: Date.now() + ttl * 1000 };
+    }
+    return body === null ? response : Response.json(body, { status: response.status });
+  })();
+  kbTokenInFlight = task; kbTokenInFlightKey = key;
+  try { return (await task).clone(); }
+  finally { if (kbTokenInFlight === task) { kbTokenInFlight = null; kbTokenInFlightKey = ""; } }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -112,7 +144,7 @@ export default {
 
       let response: Response;
       try {
-        response = await fetch(`${baseUrl}/oauth2/token`, {
+        response = await fetchKbToken(env, baseUrl, {
           method: "POST",
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(15000),
@@ -176,7 +208,7 @@ export default {
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+        tokenResponse = await fetchKbToken(env, baseUrl, {
           method: "POST",
           body: JSON.stringify({
             dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
@@ -280,7 +312,7 @@ export default {
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+        tokenResponse = await fetchKbToken(env, baseUrl, {
           method: "POST",
           body: JSON.stringify({
             dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
@@ -329,7 +361,7 @@ export default {
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+        tokenResponse = await fetchKbToken(env, baseUrl, {
           method: "POST",
           body: JSON.stringify({
             dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
@@ -458,7 +490,7 @@ export default {
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+        tokenResponse = await fetchKbToken(env, baseUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
@@ -602,7 +634,7 @@ export default {
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
       let tokenResponse: Response;
       try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
+        tokenResponse = await fetchKbToken(env, baseUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dataHeader: { ipAddr: "", macAddr: "" }, dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" } }),
