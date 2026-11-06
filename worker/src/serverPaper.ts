@@ -130,6 +130,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       };
       const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
       snapshot.catalyst = catalyst;
+      snapshot.screening = { checkedAt, signals };
       nextAccount = runAutoCycle(snapshot.account,signals,quotes,checkedAt,now,store);
       message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
     } else {
