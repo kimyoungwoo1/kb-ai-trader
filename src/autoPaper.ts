@@ -1,10 +1,14 @@
 import type { TradeSignal } from './tradeSignals'
-import { readPaperLedger, writePaperLedger, type PaperTrade } from './paperLedger'
+import { readPaperLedger, writePaperLedger, type PaperTrade, type PaperLedger } from './paperLedger'
 
 export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
+export const AUTO_EVENT = 'kb-auto-account-changed'
 export const AUTO_INITIAL = 1_000_000
+export const AUTO_TAKE_PROFIT_PCT = 5
+/** Conservative interval pending verification of KB Open API rate limits. */
+export const AUTO_WATCH_INTERVAL_MS = 10_000
 const MAX_POSITION = 200_000
-const MAX_POSITIONS = 3
+export const MAX_POSITIONS = 5
 const MAX_DAILY_LOSS = 10_000
 const BUY_SLIPPAGE = 0.001
 const SELL_SLIPPAGE = 0.001
@@ -19,16 +23,41 @@ export type AutoPending = { code: string; name: string; trigger: number; stop: n
 export type AutoFill = {
   id: string; at: string; code: string; name: string; side: 'BUY' | 'SELL'
   quantity: number; price: number; costs: number; pnl: number | null; reason: string
+  test?: boolean
+}
+export type AutoRunDecision = {
+  code: string; name: string; status: string; reason: string
+  /** Optional fields keep older, locally stored scan results readable. */
+  price?: number | null
+  score?: number
+  entryTrigger?: number | null
+  maxQuantity?: number
+  outcome?: string
 }
 export type AutoRun = {
   checkedAt: string; processedAt: string; status: '검사 완료' | '실행 보류'
   scanned: number; candidates: number; filled: number; message: string
-  decisions: { code: string; name: string; status: string; reason: string }[]
+  decisions: AutoRunDecision[]
+}
+export type AutoDailyStats = {
+  date: string; checked: number; completed: number; deferred: number; filled: number
+}
+export type AutoWatchStatus = {
+  checkedAt: string
+  processedAt: string
+  watched: number
+  received: number
+  filled: number
+  status: '정상' | '일부 오류' | '오류'
+  message: string
 }
 export type AutoAccount = {
   enabled: boolean; cash: number; positions: AutoPosition[]; pending: AutoPending[]
   fills: AutoFill[]; equityHistory: { at: string; value: number }[]
   lastCycle: string; lastMessage: string; runs: AutoRun[]
+  dailyStats?: AutoDailyStats
+  watchStatus?: AutoWatchStatus
+  watchDaily?: { date: string; checked: number; filled: number }
 }
 export const newAutoAccount = (): AutoAccount => ({
   enabled: false, cash: AUTO_INITIAL, positions: [], pending: [], fills: [],
@@ -48,7 +77,7 @@ export function autoEquity(account: AutoAccount): number {
   return account.cash + account.positions.reduce((sum, p) => sum + p.last * p.quantity, 0)
 }
 export function autoStats(account: AutoAccount) {
-  const sells = account.fills.filter(f => f.side === 'SELL' && f.pnl !== null)
+  const sells = account.fills.filter(f => f.side === 'SELL' && f.pnl !== null && !f.test)
   const realized = sells.reduce((sum, f) => sum + (f.pnl || 0), 0)
   const winners = sells.filter(f => (f.pnl || 0) > 0).length
   const equity = autoEquity(account)
@@ -61,33 +90,65 @@ export function autoStats(account: AutoAccount) {
   return { equity, realized, closed: sells.length, winRate: sells.length ? winners / sells.length * 100 : null,
     returnRate: (equity / AUTO_INITIAL - 1) * 100, maxDrawdown }
 }
+function dailyStatsAfterRun(account: AutoAccount, status: AutoRun['status'], filled: number, now: Date): AutoDailyStats {
+  const date = kstDate(now)
+  const previous = account.dailyStats?.date === date ? account.dailyStats : (() => {
+    // Preserve counts available from older localStorage accounts during migration.
+    const records = (account.runs || []).filter(item => {
+      const parsed = new Date(item.processedAt)
+      return Number.isFinite(parsed.getTime()) && kstDate(parsed) === date
+    })
+    return {
+      date,
+      checked: records.length,
+      completed: records.filter(item => item.status === '검사 완료').length,
+      deferred: records.filter(item => item.status === '실행 보류').length,
+      filled: records.reduce((total, item) => total + item.filled, 0),
+    }
+  })()
+  return {
+    date, checked: previous.checked + 1,
+    completed: previous.completed + (status === '검사 완료' ? 1 : 0),
+    deferred: previous.deferred + (status === '실행 보류' ? 1 : 0),
+    filled: previous.filled + filled,
+  }
+}
+
 export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quotes: {
   code: string; name: string; price: number | null; quoteError?: string
-}[], checkedAt: string, now = new Date()): AutoAccount {
+}[], checkedAt: string, now = new Date(), paperStore: { read: () => PaperLedger; write: (ledger: PaperLedger) => void } = { read: readPaperLedger, write: writePaperLedger }): AutoAccount {
   if (!account.enabled || account.lastCycle === checkedAt) return account
   const checked = new Date(checkedAt)
-  const decisions = signals.map(signal => ({
+  const decisions: AutoRunDecision[] = signals.map(signal => ({
     code: signal.code,
     name: signal.name,
     status: signal.status,
+    price: signal.price,
+    score: signal.score,
+    entryTrigger: signal.entryTrigger,
+    maxQuantity: signal.maxQuantity,
     reason: signal.status === '관찰 후보'
-      ? signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요'
+      ? (signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요')
+        + (signal.reasons.length ? ' / ' + signal.reasons.join(' / ') : '')
       : signal.reasons.join(' / ') || '진입 조건 미충족',
   }))
-  const candidates = signals.filter(signal => signal.status === '관찰 후보' && signal.flowReliable && signal.maxQuantity > 0).length
+  // Foreign-flow validation contributes optional signal score, not a mandatory trade filter.
+  // Count the same eligible observations that the pending-entry engine actually uses.
+  const candidates = signals.filter(signal => signal.status === '관찰 후보' && signal.maxQuantity > 0 && positive(signal.entryTrigger) && positive(signal.stopReference)).length
   const completeRun = (status: AutoRun['status'], message: string, filled = 0): AutoAccount => {
     const run: AutoRun = {
       checkedAt, processedAt: now.toISOString(), status, scanned: signals.length,
       candidates, filled, message, decisions,
     }
     return { ...account, lastCycle: checkedAt, lastMessage: message,
+      dailyStats: dailyStatsAfterRun(account, status, filled, now),
       runs: [run, ...(account.runs || [])].slice(0, 30) }
   }
   if (!Number.isFinite(checked.getTime()) || Math.abs(now.getTime() - checked.getTime()) > 5 * 60000) {
     return completeRun('실행 보류', '시세 수집 후 5분 초과 또는 수집시각 오류 · 가상 체결 보류')
   }
   if (!inSession(now)) return completeRun('실행 보류', '정규장 외 시간 · 신호만 확인, 가상 체결 보류')
-  const ledger = readPaperLedger()
+  const ledger = paperStore.read()
   const ledgerPositions = ledger.positions.map(p => ({ ...p }))
   const quoteMap = new Map<string, number>(quotes.filter(q => positive(q.price) && !q.quoteError).map(q => [q.code, q.price as number] as [string, number]))
   let cash = ledger.cash
@@ -101,7 +162,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const currentDate = kstDate(now)
   const alreadyTradedToday = new Set(fills.filter(f => kstDate(new Date(f.at)) === currentDate).map(f => f.code))
   let executed = 0
-  const dayRealized = fills.filter(f => f.side === 'SELL' && kstDate(new Date(f.at)) === currentDate)
+  const dayRealized = fills.filter(f => f.side === 'SELL' && !f.test && kstDate(new Date(f.at)) === currentDate)
     .reduce((sum, f) => sum + (f.pnl || 0), 0)
   let sessionPnl = dayRealized
   // Existing position exits have precedence, and only verified fresh quotes may trigger them.
@@ -109,6 +170,8 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     const mark = quoteMap.get(p.code)
     if (mark === undefined) return true
     p.last = mark
+    // Migrate positions created with the old +6% target without altering entry price.
+    p.target = won(p.entry * (1 + AUTO_TAKE_PROFIT_PCT / 100))
     const holdingDays = (now.getTime() - new Date(p.openedAt).getTime()) / 86400000
     const reason = mark <= p.stop ? '손절 참고값 도달' : mark >= p.target ? '익절 참고값 도달' : holdingDays >= 15 ? '보유기간 15일 경과' : ''
     if (!reason) return true
@@ -160,7 +223,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     cash -= cost + fee
     ledgerPositions.push({ code: item.code, name: item.name, quantity, averagePrice: fillPrice, lastPrice: mark })
     positions.push({ code: item.code, name: item.name, quantity, entry: fillPrice, last: mark,
-      stop: Math.min(item.stop, won(fillPrice * 0.97)), target: won(fillPrice * 1.06), openedAt: now.toISOString(), buyCost: fee })
+      stop: Math.min(item.stop, won(fillPrice * 0.97)), target: won(fillPrice * (1 + AUTO_TAKE_PROFIT_PCT / 100)), openedAt: now.toISOString(), buyCost: fee })
     fills.unshift({ id: now.toISOString() + '-buy-' + item.code, at: now.toISOString(), code: item.code, name: item.name,
       side: 'BUY', quantity, price: fillPrice, costs: fee, pnl: null, reason: '다음 시세에서 진입 참고값 돌파' })
     pending = pending.filter(p => p.code !== item.code)
@@ -174,23 +237,181 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   } satisfies PaperTrade))
   for (const position of ledgerPositions) {
     const updatedQuote = quoteMap.get(position.code)
-    if (updatedQuote !== undefined) position.lastPrice = updatedQuote
+    if (updatedQuote !== undefined) {
+      position.lastPrice = updatedQuote
+      position.quoteUpdatedAt = checkedAt
+    }
   }
-  writePaperLedger({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
+  paperStore.write({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
   const equity = cash + ledgerPositions.reduce((sum, p) => sum + p.lastPrice * p.quantity, 0)
   const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
     : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
       : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료'
+  const decisionsWithOutcome = decisions.map(decision => {
+    const trade = autoOrders.find(order => order.code === decision.code)
+    const outcome = trade ? (trade.side === 'BUY' ? '가상 매수 체결' : '가상 매도 체결')
+      : pending.some(item => item.code === decision.code) ? '진입 감시 중'
+      : positions.some(item => item.code === decision.code) ? '보유 중'
+      : decision.status === '관찰 후보' ? '관찰 후보 · 미체결'
+      : decision.status
+    return { ...decision, outcome }
+  })
   const run: AutoRun = { checkedAt, processedAt: now.toISOString(), status: '검사 완료',
-    scanned: signals.length, candidates, filled: executed, message: summary, decisions }
+    scanned: signals.length, candidates, filled: executed, message: summary, decisions: decisionsWithOutcome }
   return { ...account, cash, positions, pending, fills: fills.slice(0, 1000),
     equityHistory: [...account.equityHistory, { at: checkedAt, value: equity }].slice(-1000),
-    lastCycle: checkedAt, lastMessage: summary, runs: [run, ...(account.runs || [])].slice(0, 30) }
+    lastCycle: checkedAt, lastMessage: summary,
+    dailyStats: dailyStatsAfterRun(account, '검사 완료', executed, now),
+    runs: [run, ...(account.runs || [])].slice(0, 30) }
 }
+/**
+ * Price-only fast monitoring uses the same BUY/SELL conditions as the 5-minute
+ * market scanner. It deliberately keeps zero-symbol monitoring cycles OUT of the
+ * 30-item screening history and its daily inspection totals.
+ */
+export function runAutoWatchCycle(
+  account: AutoAccount,
+  quotes: { code: string; name: string; price: number | null; quoteError?: string }[],
+  checkedAt: string,
+  now = new Date(),
+  paperStore: { read: () => PaperLedger; write: (ledger: PaperLedger) => void } =
+    { read: readPaperLedger, write: writePaperLedger },
+  requested = quotes.length,
+): AutoAccount {
+  const checked = Date.parse(checkedAt)
+  if (!account.enabled || !inSession(now) || !quotes.length || account.lastCycle === checkedAt
+    || !Number.isFinite(checked) || Math.abs(now.getTime() - checked) > 120_000) return account
+  const next = runAutoCycle(account, [], quotes, checkedAt, now, paperStore)
+  if (next === account) return account
+  const oldIds = new Set(account.fills.map(item => item.id))
+  const filled = next.fills.filter(item => !oldIds.has(item.id)).length
+  const received = quotes.length
+  const status: AutoWatchStatus['status'] = received < requested ? '일부 오류' : '정상'
+  const message = filled > 0
+    ? '빠른 시세 감시 중 가상 체결 ' + filled + '건'
+    : '보유·진입 감시 종목 ' + received + '개 가격 점검 · 체결 없음'
+  return {
+    ...next,
+    runs: account.runs,
+    dailyStats: {
+      ...(account.dailyStats?.date === kstDate(now) ? account.dailyStats : {
+        date: kstDate(now),
+        checked: (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        completed: (account.runs || []).filter(run => run.status === '검사 완료'
+          && Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        deferred: (account.runs || []).filter(run => run.status === '실행 보류'
+          && Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now)).length,
+        filled: (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now))
+          .reduce((sum, run) => sum + run.filled, 0),
+      }),
+      filled: (account.dailyStats?.date === kstDate(now) ? account.dailyStats.filled
+        : (account.runs || []).filter(run => Number.isFinite(Date.parse(run.processedAt))
+          && kstDate(new Date(run.processedAt)) === kstDate(now))
+          .reduce((sum, run) => sum + run.filled, 0)) + filled,
+    },
+    watchDaily: {
+      date: kstDate(now),
+      checked: (account.watchDaily?.date === kstDate(now) ? account.watchDaily.checked : 0) + 1,
+      filled: (account.watchDaily?.date === kstDate(now) ? account.watchDaily.filled : 0) + filled,
+    },
+    lastMessage: filled > 0 ? message : account.lastMessage,
+    watchStatus: {
+      checkedAt, processedAt: now.toISOString(), watched: requested,
+      received, filled, status, message,
+    },
+  }
+}
+export function recordAutoWatchError(
+  account: AutoAccount, message: string, requested: number, now = new Date(),
+): AutoAccount {
+  return {
+    ...account,
+    watchStatus: {
+      checkedAt: '',
+      processedAt: now.toISOString(),
+      watched: requested,
+      received: 0, filled: 0, status: '오류', message,
+    },
+  }
+}
+
+/**
+ * Explicit, user-confirmed trial liquidation using a VERIFIED current KB quote.
+ * Unlike a synthetic engine rehearsal, this settles the selected holding in the
+ * shared paper ledger. The separate test flag keeps strategy KPIs honest.
+ * Real brokerage trading endpoints are never called.
+ */
+export function runAutoTrialSell(
+  account: AutoAccount,
+  code: string,
+  quote: { price: number; checkedAt: string },
+  now = new Date(),
+  paperStore: { read: () => PaperLedger; write: (value: PaperLedger) => void } =
+    { read: readPaperLedger, write: writePaperLedger },
+): AutoAccount {
+  if (!account.enabled) throw Error('자동 가상매매가 중지되어 있습니다.')
+  if (!inSession(now)) throw Error('시험 청산은 정규장에만 실행할 수 있습니다.')
+  if (!/^\d{6}$/.test(code)) throw Error('종목코드가 올바르지 않습니다.')
+  if (!positive(quote.price)) throw Error('유효한 KB 현재가를 확인하지 못했습니다.')
+  const at = Date.parse(quote.checkedAt)
+  if (!Number.isFinite(at) || at > now.getTime() + 15_000 || now.getTime() - at > 120_000)
+    throw Error('조회한 시세가 2분 이내의 최신 가격이 아닙니다.')
+  const position = account.positions.find(p => p.code === code)
+  if (!position) throw Error('자동 전략 보유 종목이 아니거나 이미 청산되었습니다.')
+  if (!(position.quantity > 0 && positive(position.entry))) throw Error('가상 보유 정보가 올바르지 않습니다.')
+  const ledger = paperStore.read()
+  const idx = ledger.positions.findIndex(p => p.code === code)
+  if (idx < 0 || ledger.positions[idx].quantity < position.quantity)
+    throw Error('공유 가상계좌의 보유 수량이 맞지 않아 시험 청산을 취소했습니다.')
+
+  const mark = quote.price
+  const sellPrice = won(mark * (1 - SELL_SLIPPAGE))
+  const amount = sellPrice * position.quantity
+  const costs = won(amount * SELL_COST)
+  const pnl = amount - costs - position.entry * position.quantity - position.buyCost
+  const reason = '시험 청산 · 사용자 확인 후 KB 현재가 기준 가상매도'
+  const id = now.toISOString() + '-trial-sell-' + code
+  const remaining = ledger.positions[idx].quantity - position.quantity
+  const nextLedgerPositions = ledger.positions.map((p, i) =>
+    i === idx ? { ...p, quantity: remaining, lastPrice: mark, quoteUpdatedAt: quote.checkedAt } : p,
+  ).filter(p => p.quantity > 0)
+  const fill: AutoFill = { id, at: now.toISOString(), code, name: position.name,
+    side: 'SELL', quantity: position.quantity, price: sellPrice, costs, pnl, reason, test: true }
+  const trade: PaperTrade = { id, time: now.toISOString(), side: 'SELL', code,
+    name: position.name, quantity: position.quantity, price: sellPrice,
+    amount, realizedPnl: pnl, source: 'test', costs, reason }
+  paperStore.write({
+    ...ledger,
+    cash: ledger.cash + amount - costs,
+    positions: nextLedgerPositions,
+    trades: [trade, ...ledger.trades],
+  })
+  return {
+    ...account,
+    cash: ledger.cash + amount - costs,
+    positions: account.positions.filter(p => p.code !== code),
+    fills: [fill, ...account.fills].slice(0, 1000),
+    lastMessage: position.name + ' ' + position.quantity + '주 시험 청산 완료 · '
+      + '자동 전략 성과에서는 제외됩니다.',
+  }
+}
+
 export function readAutoAccount(): AutoAccount {
   try {
     const saved = JSON.parse(localStorage.getItem(AUTO_STORAGE_KEY) || 'null') as AutoAccount | null
-    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved, runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
+    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved,
+      positions: saved.positions.map(p => ({ ...p, target: won(p.entry * (1 + AUTO_TAKE_PROFIT_PCT / 100)) })),
+      runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
   } catch { /* ignore invalid local data */ }
   return newAutoAccount()
+}
+
+/** Notify other parts of the same browser tab when an automatic paper cycle changes. */
+export function writeAutoAccount(next: AutoAccount): void {
+  localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify(next))
+  window.dispatchEvent(new CustomEvent(AUTO_EVENT))
 }
