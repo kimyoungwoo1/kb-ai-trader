@@ -114,3 +114,20 @@ test('nested API credentials are rejected before writing to Cloudflare D1',async
   assert.equal(response.status,400)
   assert.equal(db.getHead(),null)
 })
+
+test('periodic no-trade checkpoint advances HEAD without multiplying complete history snapshots',async()=>{
+  const db=fakeD1()
+  await handlePaperBackup({action:'save',expectedRevision:0,snapshot:snapshot()},db)
+  const response=await handlePaperBackup({
+    action:'save',expectedRevision:1,snapshot:snapshot(),checkpointOnly:true,
+  },db)
+  assert.equal(response.status,200)
+  const data=await response.json()
+  assert.equal(data.revision,2)
+  assert.equal(data.checkpoint_only,true)
+  assert.equal(db.history.length,1)
+  assert.equal(db.getHead().revision,2)
+  const third=await handlePaperBackup({action:'save',expectedRevision:2,snapshot:snapshot()},db)
+  assert.equal(third.status,200)
+  assert.equal(db.history.length,2)
+})
