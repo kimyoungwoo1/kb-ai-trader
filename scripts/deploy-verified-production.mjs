@@ -66,7 +66,7 @@ async function main(){
   const old=await api(root+'/workers/workers/'+workerId+'/versions/'+knownGood)
   verifyVersion(old,'Secret 상속 기준 버전')
   console.log('2/7 테스트 및 프런트엔드 빌드')
-  exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs'])
+  exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs', 'tests/tradingAnalytics.test.mjs'])
   exec('npm',['run','build'])
   const dir=resolve(cwd,'dist')
   ensure(existsSync(join(dir,'index.html')),'index.html 빌드 누락')
