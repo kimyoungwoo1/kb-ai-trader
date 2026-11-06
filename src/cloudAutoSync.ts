@@ -1,4 +1,4 @@
-import { AUTO_EVENT, readAutoAccount, writeAutoAccount } from './autoPaper'
+import { AUTO_EVENT, readAutoAccount } from './autoPaper'
 import { PAPER_EVENT, readPaperLedger } from './paperLedger'
 import { readScreeningSnapshot } from './screeningHistory'
 
@@ -121,7 +121,7 @@ export async function acquireTradingLease(): Promise<boolean> {
   if (!active || !token) return false
   if (initializing && state.phase === 'starting') {
     await initializing
-    if (state.phase !== 'ready') return false
+    if (getCloudSyncState().phase !== 'ready') return false
   }
   if (state.phase !== 'ready' || state.revision === null) return false
   return verifyTradingLease()
