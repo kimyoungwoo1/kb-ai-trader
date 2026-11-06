@@ -8,7 +8,7 @@ export const AUTO_TAKE_PROFIT_PCT = 5
 /** Conservative interval pending verification of KB Open API rate limits. */
 export const AUTO_WATCH_INTERVAL_MS = 60_000
 const MAX_POSITION = 200_000
-const MAX_POSITIONS = 3
+export const MAX_POSITIONS = 5
 const MAX_DAILY_LOSS = 10_000
 const BUY_SLIPPAGE = 0.001
 const SELL_SLIPPAGE = 0.001
