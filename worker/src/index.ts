@@ -964,7 +964,7 @@ export default {
       for (const result of feedResults) for (const item of result.items) if (!unique.has(item.link)) unique.set(item.link, item);
       const articles = [...unique.values()]
         .sort((a, b) => b.published_ms - a.published_ms)
-        .slice(0, 30)
+        .slice(0, skipAi ? 200 : 30)
         .map(({ published_ms, ...item }) => item);
       const classifyDisclosure = (item: typeof suppliedDisclosures[number]) => {
         const title = item.title;
