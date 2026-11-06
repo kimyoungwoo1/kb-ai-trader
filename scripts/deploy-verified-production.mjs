@@ -92,8 +92,10 @@ async function main(){
       'CREATE TABLE IF NOT EXISTS paper_backup_history (revision INTEGER PRIMARY KEY, updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)',
       'CREATE INDEX IF NOT EXISTS idx_paper_backup_updated ON paper_backup_history(updated_at)'
     ]){
-      await api(root+'/d1/database/'+paperDbId+'/query',{
+      const queryResult=await api(root+'/d1/database/'+paperDbId+'/query',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
+      const results=Array.isArray(queryResult)?queryResult:[queryResult]
+      ensure(results.every(x=>x?.success!==false),'D1 초기 테이블 SQL 실행 실패')
     }
     console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
   }else{
