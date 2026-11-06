@@ -6,7 +6,7 @@ import AutoPaperLab from './AutoPaperLab'
 import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { getAutoHealth } from './autoStatus'
-import { applyCatalystGate, catalystAllowsPending, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
+import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -600,7 +600,12 @@ export default function App() {
 
   function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null); setAccountSummary(null) }
 
-  const autoHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
+  const baseHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
+  const autoHealth = readAutoAccount().enabled && isKrxSession(new Date(autoHeartbeat))
+    && !catalystReady(catalysts, new Date(autoHeartbeat))
+    ? { ...baseHealth, tone: 'warning' as const, label: '뉴스·공시 신규 매수 보류',
+      detail: '뉴스·공시 수집이 미완료입니다. 기존 보유 종목의 가상매도 감시는 지속합니다.' }
+    : baseHealth
 
   if (!token) return <main className="login-page"><form className="login-card" onSubmit={login}><div className="brand-mark">KB</div><h1>KB AI TRADER</h1><p>대시보드 비밀번호로 로그인하세요.</p><input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="대시보드 비밀번호" required /><button type="submit">로그인</button>{error && <p className="error">{error}</p>}</form></main>
 
