@@ -39,7 +39,7 @@ export function getAutoHealth(
     }
     if (!Number.isFinite(at) || age < -60_000 || age > 45_000) {
       return { tone: 'warning', label: '빠른 시세 감시 지연',
-        detail: '보유·진입 감시 종목의 최근 가격 조회가 3분 이상 갱신되지 않았습니다.', inSession }
+        detail: '보유·진입 감시 종목의 최근 가격 조회가 45초 이상 갱신되지 않았습니다.', inSession }
     }
   }
 
