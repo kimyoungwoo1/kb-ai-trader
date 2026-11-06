@@ -6,12 +6,28 @@
 import { buildPushPayload } from '@block65/webcrypto-web-push';
 
 type Db = any;
+export type NoticeKind = 'trade'|'error'|'recovery'|'daily'|'test';
+export type PushPreferences = Record<NoticeKind, boolean>;
+export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {trade:true,error:true,recovery:true,daily:true,test:true};
+const configurable = ['trade','error','recovery','daily'] as const;
+function parsePreferences(value:unknown):PushPreferences {
+  const input=value && typeof value==='object'?value as Record<string,unknown>:{};
+  const result={...DEFAULT_PUSH_PREFERENCES};
+  for(const key of configurable) if(typeof input[key]==='boolean') result[key]=input[key] as boolean;
+  return result;
+}
+export async function readPushPreferences(db:Db):Promise<PushPreferences>{
+  const row=await db.prepare('SELECT settings_json FROM paper_notification_settings WHERE id=1').first<{settings_json:string}>();
+  if(!row)return {...DEFAULT_PUSH_PREFERENCES};
+  try{return parsePreferences(JSON.parse(row.settings_json));}catch{return {...DEFAULT_PUSH_PREFERENCES};}
+}
+
 type PushEnv = { PAPER_DB?: Db; VAPID_PUBLIC_KEY?: string; VAPID_PRIVATE_KEY?: string; VAPID_SUBJECT?: string };
 type Subscription = {
   endpoint:string; expirationTime?:number|null;
   keys:{p256dh:string;auth:string};
 };
-export type NotificationInput = { eventKey:string; kind:'trade'|'error'|'recovery'|'daily'|'test'; title:string; body:string };
+export type NotificationInput = { eventKey:string; kind:NoticeKind; title:string; body:string };
 type Notice = {id:number;kind:string;title:string;body:string;created_at:string;read_at:string|null};
 const respond = (data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const MAX_SUBSCRIPTIONS=8;
@@ -42,8 +58,19 @@ export async function handleNotifications(env:PushEnv,body:unknown):Promise<Resp
       const rows=await db.prepare('SELECT id,kind,title,body,created_at,read_at FROM paper_notifications ORDER BY id DESC LIMIT 80').all();
       const unread=await db.prepare('SELECT COUNT(*) AS n FROM paper_notifications WHERE read_at IS NULL').first<{n:number}>();
       const devices=await db.prepare('SELECT COUNT(*) AS n FROM paper_push_subscriptions').first<{n:number}>();
+      const preferences=await readPushPreferences(db);
       return respond({success:true,notifications:rows.results||[],unread:Number(unread?.n)||0,devices:Number(devices?.n)||0,
-        vapidPublicKey:env.VAPID_PUBLIC_KEY||'',pushAvailable:!!(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)});
+        preferences, vapidPublicKey:env.VAPID_PUBLIC_KEY||'',pushAvailable:!!(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT)});
+    }
+    if(action==='preferences'){
+      const candidate=input.preferences;
+      if(!candidate||typeof candidate!=='object'||Array.isArray(candidate)||
+        configurable.some(key=>typeof candidate[key]!=='boolean'))
+        return respond({success:false,message:'알림 설정 값이 올바르지 않습니다.'},400);
+      const preferences=parsePreferences(candidate);
+      await db.prepare('INSERT INTO paper_notification_settings(id,settings_json,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET settings_json=excluded.settings_json,updated_at=excluded.updated_at')
+        .bind(JSON.stringify(preferences),new Date().toISOString()).run();
+      return respond({success:true,preferences,message:'푸시 알림 설정이 서버에 저장되었습니다. 알림 이력은 계속 저장됩니다.'});
     }
     if(action==='subscribe'){
       if(!env.VAPID_PUBLIC_KEY||!env.VAPID_PRIVATE_KEY) return respond({success:false,message:'서버 웹 푸시 키가 아직 설정되지 않았습니다.'},503);
@@ -86,6 +113,13 @@ export async function publishNotification(env:PushEnv,notice:NotificationInput):
   const insert=await db.prepare('INSERT OR IGNORE INTO paper_notifications(event_key,kind,title,body,created_at) VALUES(?,?,?,?,?)')
     .bind(notice.eventKey,notice.kind,notice.title.slice(0,130),notice.body.slice(0,1400),new Date().toISOString()).run();
   if((insert.meta?.changes||0)!==1)return false; // D1 deduplicates event and delivery.
+  // Store every event in the inbox, even when the user disables its push category.
+  if(notice.kind!=='test'){
+    try{
+      const preferences=await readPushPreferences(db);
+      if(!preferences[notice.kind])return true;
+    }catch{console.warn('Notification settings unavailable; skip push to respect preferences');return true;}
+  }
   if(!env.VAPID_PRIVATE_KEY||!env.VAPID_PUBLIC_KEY||!env.VAPID_SUBJECT)return true;
   try{
     const rows=await db.prepare('SELECT endpoint,subscription_json FROM paper_push_subscriptions ORDER BY updated_at DESC LIMIT 8').all();
