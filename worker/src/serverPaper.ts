@@ -168,11 +168,12 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       nextAccount.pending = [...nextAccount.pending,...paused];
       message = '보유·감시 종목 '+validQuotes.length+'/'+symbols.length+'건';
     }
+    const executedFills = Math.max(0,nextAccount.fills.length - snapshot.account.fills.length);
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
     const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=NULL, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(JSON.stringify(snapshot),new Date().toISOString(),writeRevision,slot).run();
     if ((res.meta?.changes ?? 0)!==1) return {result:'busy',message:'원장 변경 경합 · 거래 결과 반영 안 함',filled:0,scanned:0};
-    return {result:doScan ? 'scanned' : 'watched',message,filled:Math.max(0,nextAccount.fills.length-snapshot.account.fills.length),scanned:symbols.length};
+    return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length};
   } catch (error) {
     const diagnostic = error instanceof Error ? error.message.slice(0,180) : '서버 감시 실패';
     await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
