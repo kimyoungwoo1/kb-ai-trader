@@ -60,3 +60,10 @@ CREATE TABLE IF NOT EXISTS paper_push_subscriptions (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
+
+-- Global push preferences for this single-user private dashboard.
+CREATE TABLE IF NOT EXISTS paper_notification_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ settings_json TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
