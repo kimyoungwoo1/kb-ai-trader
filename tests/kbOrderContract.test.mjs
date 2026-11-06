@@ -1,9 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-const out=await build({entryPoints:['worker/src/kbOrderContract.ts'],bundle:true,platform:'node',format:'esm',write:false,
- external:['./kbToken']})
-// esbuild external depends on import; bundle in CJS for local test
 const mod=await build({entryPoints:['worker/src/kbOrderContract.ts'],bundle:true,platform:'node',format:'esm',write:false})
 const {makeLimitOrder,makeCancelOrder,makeOrderInquiry,parseOrderAck,parseCancelAck,parseOrderLines,findOrder,lookupKbOrder}=
  await import('data:text/javascript;base64,'+Buffer.from(mod.outputFiles[0].contents).toString('base64'))
