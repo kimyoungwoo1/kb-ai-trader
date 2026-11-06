@@ -113,7 +113,8 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     entryTrigger: signal.entryTrigger,
     maxQuantity: signal.maxQuantity,
     reason: signal.status === '관찰 후보'
-      ? signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요'
+      ? (signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요')
+        + (signal.reasons.length ? ' / ' + signal.reasons.join(' / ') : '')
       : signal.reasons.join(' / ') || '진입 조건 미충족',
   }))
   // Foreign-flow validation contributes optional signal score, not a mandatory trade filter.
