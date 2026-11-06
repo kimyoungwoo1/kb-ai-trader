@@ -456,7 +456,7 @@ export default {
       catch { return json({ success: false, message: "요청 형식 오류" }, 400); }
       const stocks = (Array.isArray(input.stocks) ? input.stocks : [])
         .map(item => ({ code: String(item?.code || "").trim(), name: String(item?.name || "").slice(0, 80) }))
-        .filter(item => /^\\d{6}$/.test(item.code))
+        .filter(item => /^\d{6}$/.test(item.code))
         .filter((item, index, all) => all.findIndex(other => other.code === item.code) === index)
         .slice(0, 5);
       if (!stocks.length) return json({ success: false, message: "감시할 종목이 없습니다." }, 400);
