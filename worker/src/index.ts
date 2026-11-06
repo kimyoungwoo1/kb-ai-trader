@@ -1,6 +1,7 @@
 import { serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
+import { formatPaperFillNotification } from './paperFillNotice'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -1196,12 +1197,9 @@ const service = {
       const outcome=await runMonitoredPaperCron(env.PAPER_DB,post);
       if(outcome.fills?.length){
         for(const fill of outcome.fills){
-          const isBuy=fill.side==='BUY';
+          const notice=formatPaperFillNotification(fill);
           await publishNotification(env,{
-            eventKey:'fill:'+fill.id,kind:'trade',
-            title:'KB AI TRADER · 가상'+(isBuy?'매수':'매도')+' 체결',
-            body:fill.name+' ('+fill.code+') · '+fill.quantity+'주 · '+Math.round(fill.price).toLocaleString('ko-KR')+'원'+
-              (fill.pnl===null?'':' · 손익 '+Math.round(fill.pnl).toLocaleString('ko-KR')+'원')+' · 실제 주문 아님',
+            eventKey:'fill:'+fill.id,kind:'trade',...notice
           });
         }
       }
