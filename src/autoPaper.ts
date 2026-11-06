@@ -4,6 +4,7 @@ import { readPaperLedger, writePaperLedger, type PaperTrade, type PaperLedger } 
 export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
 export const AUTO_EVENT = 'kb-auto-account-changed'
 export const AUTO_INITIAL = 1_000_000
+export const AUTO_TAKE_PROFIT_PCT = 5
 const MAX_POSITION = 200_000
 const MAX_POSITIONS = 3
 const MAX_DAILY_LOSS = 10_000
@@ -20,6 +21,7 @@ export type AutoPending = { code: string; name: string; trigger: number; stop: n
 export type AutoFill = {
   id: string; at: string; code: string; name: string; side: 'BUY' | 'SELL'
   quantity: number; price: number; costs: number; pnl: number | null; reason: string
+  test?: boolean
 }
 export type AutoRunDecision = {
   code: string; name: string; status: string; reason: string
@@ -62,7 +64,7 @@ export function autoEquity(account: AutoAccount): number {
   return account.cash + account.positions.reduce((sum, p) => sum + p.last * p.quantity, 0)
 }
 export function autoStats(account: AutoAccount) {
-  const sells = account.fills.filter(f => f.side === 'SELL' && f.pnl !== null)
+  const sells = account.fills.filter(f => f.side === 'SELL' && f.pnl !== null && !f.test)
   const realized = sells.reduce((sum, f) => sum + (f.pnl || 0), 0)
   const winners = sells.filter(f => (f.pnl || 0) > 0).length
   const equity = autoEquity(account)
@@ -155,6 +157,8 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     const mark = quoteMap.get(p.code)
     if (mark === undefined) return true
     p.last = mark
+    // Migrate positions created with the old +6% target without altering entry price.
+    p.target = won(p.entry * (1 + AUTO_TAKE_PROFIT_PCT / 100))
     const holdingDays = (now.getTime() - new Date(p.openedAt).getTime()) / 86400000
     const reason = mark <= p.stop ? '손절 참고값 도달' : mark >= p.target ? '익절 참고값 도달' : holdingDays >= 15 ? '보유기간 15일 경과' : ''
     if (!reason) return true
@@ -206,7 +210,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     cash -= cost + fee
     ledgerPositions.push({ code: item.code, name: item.name, quantity, averagePrice: fillPrice, lastPrice: mark })
     positions.push({ code: item.code, name: item.name, quantity, entry: fillPrice, last: mark,
-      stop: Math.min(item.stop, won(fillPrice * 0.97)), target: won(fillPrice * 1.06), openedAt: now.toISOString(), buyCost: fee })
+      stop: Math.min(item.stop, won(fillPrice * 0.97)), target: won(fillPrice * (1 + AUTO_TAKE_PROFIT_PCT / 100)), openedAt: now.toISOString(), buyCost: fee })
     fills.unshift({ id: now.toISOString() + '-buy-' + item.code, at: now.toISOString(), code: item.code, name: item.name,
       side: 'BUY', quantity, price: fillPrice, costs: fee, pnl: null, reason: '다음 시세에서 진입 참고값 돌파' })
     pending = pending.filter(p => p.code !== item.code)
@@ -247,7 +251,9 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
 export function readAutoAccount(): AutoAccount {
   try {
     const saved = JSON.parse(localStorage.getItem(AUTO_STORAGE_KEY) || 'null') as AutoAccount | null
-    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved, runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
+    if (saved && Number.isFinite(saved.cash) && saved.cash >= 0 && Array.isArray(saved.positions) && Array.isArray(saved.pending) && Array.isArray(saved.fills) && Array.isArray(saved.equityHistory)) return { ...newAutoAccount(), ...saved,
+      positions: saved.positions.map(p => ({ ...p, target: won(p.entry * (1 + AUTO_TAKE_PROFIT_PCT / 100)) })),
+      runs: Array.isArray(saved.runs) ? saved.runs.slice(0, 30) : [] }
   } catch { /* ignore invalid local data */ }
   return newAutoAccount()
 }
