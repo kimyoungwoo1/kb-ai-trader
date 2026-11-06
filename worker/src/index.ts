@@ -1215,7 +1215,10 @@ const service = {
           const recent=(rows.results||[]) as Array<{slot:number;result:string;message:string}>;
           const current=recent[0];
           if(current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
-            await publishNotification(env,{eventKey:'error:'+recent[2].slot,kind:'error',
+            const cooldownAt=new Date(Date.now()-30*60_000).toISOString();
+            const recentAlert=await env.PAPER_DB.prepare("SELECT id FROM paper_notifications WHERE kind='error' AND created_at>? ORDER BY id DESC LIMIT 1")
+              .bind(cooldownAt).first();
+            if(!recentAlert)await publishNotification(env,{eventKey:'error:'+current.slot,kind:'error',
               title:'KB AI TRADER · 서버/API 연속 오류',
               body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
           }
@@ -1234,7 +1237,10 @@ const service = {
             if(server?.snapshot_json){
               const snapshot=JSON.parse(server.snapshot_json);
               const dateKey=kst.toISOString().slice(0,10);
-              const fills=(snapshot.account?.fills||[]).filter((f:any)=>f.at?.slice(0,10)===new Date(Date.parse(dateKey+'T00:00:00+09:00')).toISOString().slice(0,10));
+              const fills=(snapshot.account?.fills||[]).filter((f:any)=>{
+                const ms=Date.parse(String(f.at||''));
+                return Number.isFinite(ms)&&new Date(ms+9*3600_000).toISOString().slice(0,10)===dateKey;
+              });
               const closed=fills.filter((f:any)=>f.side==='SELL'&&!f.test);
               const realized=closed.reduce((n:number,f:any)=>n+(Number(f.pnl)||0),0);
               await publishNotification(env,{eventKey:'daily:'+dateKey,kind:'daily',
