@@ -37,7 +37,7 @@ export function getAutoHealth(
       return { tone: 'warning', label: '보유 시세 일부 확인 실패',
         detail: watch.message, inSession }
     }
-    if (!Number.isFinite(at) || age < -60_000 || age > 3 * 60_000) {
+    if (!Number.isFinite(at) || age < -60_000 || age > 45_000) {
       return { tone: 'warning', label: '빠른 시세 감시 지연',
         detail: '보유·진입 감시 종목의 최근 가격 조회가 3분 이상 갱신되지 않았습니다.', inSession }
     }
