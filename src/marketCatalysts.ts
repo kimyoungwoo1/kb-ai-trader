@@ -53,6 +53,18 @@ export function catalystReady(snapshot: CatalystSnapshot | null, now = new Date(
   return !!snapshot && snapshot.newsOk && snapshot.dartOk && snapshot.dartComplete
     && validTime(snapshot.checkedAt, now, MAX_AGE_MS)
 }
+/** Used by the faster price-only watch: no new entry if fresh context is missing. */
+export function catalystAllowsPending(
+  code: string, name: string, snapshot: CatalystSnapshot | null, now = new Date(),
+): boolean {
+  if (!catalystReady(snapshot, now)) return false
+  const badNews = snapshot!.articles.some(article =>
+    validTime(article.published_at, now, NEWS_AGE_MS)
+    && articleMatchesCompany(article.title, name) && severe.test(article.title))
+  const badFilings = snapshot!.disclosures.some(item =>
+    item.stock_code === code && recentFiling(item.date, now) && severe.test(item.title))
+  return !badNews && !badFilings
+}
 export function applyCatalystGate(signals: TradeSignal[], snapshot: CatalystSnapshot | null, now = new Date()): {
   signals: TradeSignal[]
   allowed: number
