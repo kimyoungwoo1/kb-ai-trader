@@ -21,10 +21,19 @@ export type AutoFill = {
   id: string; at: string; code: string; name: string; side: 'BUY' | 'SELL'
   quantity: number; price: number; costs: number; pnl: number | null; reason: string
 }
+export type AutoRunDecision = {
+  code: string; name: string; status: string; reason: string
+  /** Optional fields keep older, locally stored scan results readable. */
+  price?: number | null
+  score?: number
+  entryTrigger?: number | null
+  maxQuantity?: number
+  outcome?: string
+}
 export type AutoRun = {
   checkedAt: string; processedAt: string; status: '검사 완료' | '실행 보류'
   scanned: number; candidates: number; filled: number; message: string
-  decisions: { code: string; name: string; status: string; reason: string }[]
+  decisions: AutoRunDecision[]
 }
 export type AutoDailyStats = {
   date: string; checked: number; completed: number; deferred: number; filled: number
@@ -95,10 +104,14 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
 }[], checkedAt: string, now = new Date(), paperStore: { read: () => PaperLedger; write: (ledger: PaperLedger) => void } = { read: readPaperLedger, write: writePaperLedger }): AutoAccount {
   if (!account.enabled || account.lastCycle === checkedAt) return account
   const checked = new Date(checkedAt)
-  const decisions = signals.map(signal => ({
+  const decisions: AutoRunDecision[] = signals.map(signal => ({
     code: signal.code,
     name: signal.name,
     status: signal.status,
+    price: signal.price,
+    score: signal.score,
+    entryTrigger: signal.entryTrigger,
+    maxQuantity: signal.maxQuantity,
     reason: signal.status === '관찰 후보'
       ? signal.maxQuantity < 1 ? '종목당 20만원 한도로 1주 매수 불가' : '진입 감시 대상 · 다음 신규 시세에서 가격 돌파 확인 필요'
       : signal.reasons.join(' / ') || '진입 조건 미충족',
@@ -213,8 +226,17 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const summary = executed ? '가상 체결 ' + executed + '건 · 검사 완료'
     : candidates ? '관찰 후보 ' + candidates + '건 · 현재가/진입 조건 미충족으로 가상 체결 0건'
       : '매수 후보 없음 · 가상 체결 0건 · 정상 검사 완료'
+  const decisionsWithOutcome = decisions.map(decision => {
+    const trade = autoOrders.find(order => order.code === decision.code)
+    const outcome = trade ? (trade.side === 'BUY' ? '가상 매수 체결' : '가상 매도 체결')
+      : pending.some(item => item.code === decision.code) ? '진입 감시 중'
+      : positions.some(item => item.code === decision.code) ? '보유 중'
+      : decision.status === '관찰 후보' ? '관찰 후보 · 미체결'
+      : decision.status
+    return { ...decision, outcome }
+  })
   const run: AutoRun = { checkedAt, processedAt: now.toISOString(), status: '검사 완료',
-    scanned: signals.length, candidates, filled: executed, message: summary, decisions }
+    scanned: signals.length, candidates, filled: executed, message: summary, decisions: decisionsWithOutcome }
   return { ...account, cash, positions, pending, fills: fills.slice(0, 1000),
     equityHistory: [...account.equityHistory, { at: checkedAt, value: equity }].slice(-1000),
     lastCycle: checkedAt, lastMessage: summary,
