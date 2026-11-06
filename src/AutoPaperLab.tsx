@@ -160,7 +160,7 @@ export default function AutoPaperLab({
           <strong>{health.label}</strong>
           <span>{health.detail}</span>
         </div>
-        <span className="auto-health-frequency">전체시장 5분 · 보유종목 10초</span>
+        <span className="auto-health-frequency">전체시장 5분 · 보유종목 30초</span>
       </div>
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
@@ -169,7 +169,7 @@ export default function AutoPaperLab({
         <div><span>최근 전략 판단</span><strong>{lastRun ? lastRun.status : '아직 없음'}</strong><small>{lastRun ? formatTime(lastRun.processedAt) : '첫 검사 후 기록됩니다'}</small></div>
       </div>
       <div className="auto-watch-panel">
-        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 10초 간격 · KB 현재가 확인</span></div>
+        <div className="auto-watch-title"><strong>보유·진입 감시 종목 빠른 대응</strong><span>정규장 약 30초 간격 · KB 현재가 확인</span></div>
         <div className="auto-watch-stats">
           <span>상태 <b>{account.positions.length + account.pending.length === 0 ? '감시 대상 없음'
             : account.watchStatus?.status || '시작 대기'}</b></span>
@@ -203,7 +203,7 @@ export default function AutoPaperLab({
         <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
         <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
-      <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 10초마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
+      <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 30초마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
     </div>
 
     <section className="panel auto-main-panel auto-news-risk-panel">
