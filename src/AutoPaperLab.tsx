@@ -65,7 +65,11 @@ export default function AutoPaperLab({
   const lastRun = (account.runs || [])[0]
   const autoOwned = new Set(account.positions.map(item => item.code))
   const runCount = (account.runs || []).filter(item => item.status === '검사 완료').length
-  const health = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
+  const baseHealth = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
+  const health = account.enabled && baseHealth.inSession && !catalystReady(catalysts, new Date(clock))
+    ? { ...baseHealth, tone: 'warning' as const, label: '뉴스·공시 신규 매수 보류',
+      detail: '시세 검사는 작동하지만 뉴스·공시 확인이 불완전해 신규 매수만 보류합니다.' }
+    : baseHealth
   const activity = todayActivity(account, new Date(clock))
   const lastCompleted = (account.runs || []).find(item => item.status === '검사 완료')
   const visibleRuns = (account.runs || []).slice(0, 6)
