@@ -160,7 +160,7 @@ export default function AutoPaperLab({
           <strong>{health.label}</strong>
           <span>{health.detail}</span>
         </div>
-        <span className="auto-health-frequency">전체시장 5분 · 보유종목 30초</span>
+        <span className="auto-health-frequency">전체시장 5분 · 보유종목 10초</span>
       </div>
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>
