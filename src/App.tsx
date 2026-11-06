@@ -412,22 +412,37 @@ export default function App() {
       const collected: MarketStock[] = []
       let firstCheckedAt = ''
       const batchErrors: string[] = []
-      for (let i = 0; i < selected.length; i += 10) {
-        try {
-          const response = await fetch(API + '/api/market/investor-flow', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-            body: JSON.stringify({ stocks: selected.slice(i, i + 10) }),
-          })
-          const result = await response.json()
-          if (!response.ok || !result.success || !Array.isArray(result.results)) {
-            batchErrors.push((i / 10 + 1) + '차: ' + (result.message || 'KB 조회 실패'))
-            continue
+      // At most two investor-flow requests in parallel; each Worker call handles
+      // ten symbols and shares one KB token. Avoid serially blocking fast exits.
+      const batches = Array.from({ length: Math.ceil(selected.length / 10) },
+        (_, index) => ({ index, stocks: selected.slice(index * 10, index * 10 + 10) }))
+      for (let i = 0; i < batches.length; i += 2) {
+        const replies = await Promise.all(batches.slice(i, i + 2).map(async batch => {
+          try {
+            const response = await fetch(API + '/api/market/investor-flow', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+              body: JSON.stringify({ stocks: batch.stocks }),
+              signal: AbortSignal.timeout(80_000),
+            })
+            const result = await response.json()
+            if (!response.ok || !result.success || !Array.isArray(result.results)) {
+              return { index: batch.index, results: [] as MarketStock[], checkedAt: '',
+                error: String(result.message || 'KB 조회 실패') }
+            }
+            return { index: batch.index, results: result.results as MarketStock[],
+              checkedAt: String(result.checked_at || ''), error: '' }
+          } catch (error) {
+            return { index: batch.index, results: [] as MarketStock[], checkedAt: '',
+              error: error instanceof Error ? error.message : '네트워크 오류' }
           }
-          collected.push(...result.results)
-          if (!firstCheckedAt) firstCheckedAt = result.checked_at || ''
-        } catch (error) {
-          batchErrors.push((i / 10 + 1) + '차: ' + (error instanceof Error ? error.message : '네트워크 오류'))
+        }))
+        for (const reply of replies) {
+          if (reply.error) batchErrors.push((reply.index + 1) + '차: ' + reply.error)
+          else {
+            collected.push(...reply.results)
+            if (!firstCheckedAt) firstCheckedAt = reply.checkedAt
+          }
         }
       }
       if (!collected.length) {
@@ -459,7 +474,7 @@ export default function App() {
     } finally { marketScanRef.current = false; setMarketDataLoading(false) }
   }
   async function refreshTrackedPrices() {
-    if (!token || fastWatchBusyRef.current || marketScanRef.current || !isKrxSession()
+    if (!token || fastWatchBusyRef.current || !isKrxSession()
       || Date.now() < fastWatchBackoffRef.current) return
     const account = readAutoAccount()
     if (!account.enabled) return
@@ -511,7 +526,7 @@ export default function App() {
       // A manual sale, stop request or broad scan can occur during the network reads.
       // Re-read account after awaits and never write stale positions back over user actions.
       const latest = readAutoAccount()
-      if (!latest.enabled || !isKrxSession() || marketScanRef.current) return
+      if (!latest.enabled || !isKrxSession()) return
       if (!valid.length) {
         writeAutoAccount(recordAutoWatchError(latest,
           rateLimited ? 'KB API 호출 제한 · 3분 후 재시도' : failures.join(' / ') || '조회된 가격 없음',
