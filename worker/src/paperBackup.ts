@@ -99,10 +99,10 @@ export async function handlePaperBackup(body: unknown, db: Db): Promise<Response
       const ttlMs = 90_000
       const query = action === 'claim'
         ? 'UPDATE paper_trade_lease SET owner = ?, lease_until = ? WHERE id = 1 AND (lease_until <= ? OR owner = ?) AND COALESCE((SELECT revision FROM paper_backup_head WHERE id = 1), 0) = ?'
-        : 'UPDATE paper_trade_lease SET owner = ?, lease_until = ? WHERE id = 1 AND owner = ? AND lease_until > ? AND COALESCE((SELECT revision FROM paper_backup_head WHERE id = 1), 0) = ?'
+        : 'UPDATE paper_trade_lease SET owner = ?, lease_until = ? WHERE id = 1 AND owner = ? AND lease_until > ?'
       const result = action === 'claim'
         ? await db.prepare(query).bind(owner, nowMs + ttlMs, nowMs, owner, expected).run()
-        : await db.prepare(query).bind(owner, nowMs + ttlMs, owner, nowMs, expected).run()
+        : await db.prepare(query).bind(owner, nowMs + ttlMs, owner, nowMs).run()
       if (!result.success) throw Error('lease write failed')
       if ((result.meta?.changes || 0) < 1)
         return Response.json({ success: false, conflict: true,
