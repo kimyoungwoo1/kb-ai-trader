@@ -66,7 +66,7 @@ const versionOrigin = (id) => {
   ensure(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id),'신규 버전 UUID 형식 오류')
   return 'https://'+id.slice(0,8).toLowerCase()+'-'+name+'.ksmsy1.workers.dev'
 }
-const probeVersion = async(origin,secret,label) => {
+const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
   let last='연결되지 않음'
   for(let attempt=1;attempt<=5;attempt++){
     try{
@@ -84,6 +84,14 @@ const probeVersion = async(origin,secret,label) => {
       ensure(login.status===400,label+': 로그인 Secret 검사 실패 (HTTP '+login.status+')')
       const page=await fetch(origin+'/',{cache:'no-store',signal:AbortSignal.timeout(15000)})
       ensure(page.ok&&(await page.text()).includes('<html'),label+': 정적 대시보드 검사 실패')
+      // The NEW isolated version has already passed a full KB-account check.
+      // After switching traffic, repeat infrastructure checks only: a fresh
+      // Worker isolate may need a new OAuth token. Repeating full KB OAuth
+      // probes after a verified pass can falsely roll back a healthy release.
+      if(!checkAccount){
+        console.log('✓ '+label+': API 헬스·로그인·정적파일 정상 · KB 실조회는 배포 전 검증 결과 사용')
+        return
+      }
       const reply=await fetch(origin+'/api/deploy/verify',{
         method:'POST',cache:'no-store',headers:{'X-Deploy-Probe':secret},
         signal:AbortSignal.timeout(65000)
@@ -104,7 +112,7 @@ const probeVersion = async(origin,secret,label) => {
       if(attempt<5)await delay(1500*attempt)
     }
   }
-  throw Error(label+' 검증 실패 · '+last+' · 운영 트래픽 변경 없음(배포 전이면)')
+  throw Error(label+' 검증 실패 · '+last+(checkAccount?' · 운영 전환 전 검사 실패':' · 운영 전환 후 서비스 구조 검사 실패'))
 }
 const activeWranglerVersion = async () => {
   const output=await cliRead(['wrangler','deployments','status','--name',name],'Wrangler 현재 운영 버전 조회')
@@ -378,9 +386,11 @@ async function main(){
   ensure(activeAfter===createdId,
     '운영 전환 후 실제 버전 불일치 · 확인된 버전 '+activeAfter)
   console.log('✓ Wrangler 운영 버전 ID 확인: '+activeAfter)
-  // Production smoke is still required, but only after the newly uploaded
-  // version passed the complete KB account check *before* traffic switching.
-  await probeVersion(domain,probeKey,'운영 전환 후 재검사')
+  // The specific new Worker version passed KB holdings+valuation before
+  // switching, and Wrangler confirms this exact version is now serving 100%.
+  // Validate production health/login/assets without a second wave of KB
+  // OAuth requests. Transient token issuance must not cause false rollback.
+  await probeVersion(domain,probeKey,'운영 전환 후 구조 재검사',{checkAccount:false})
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
   // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
   if(paperDbId){
