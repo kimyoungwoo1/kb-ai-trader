@@ -50,9 +50,13 @@ const db = () => {
                 return { success: true, meta: { changes: allowed ? 1 : 0 } }
               }
               if (sql.startsWith('UPDATE paper_backup_head')) {
-                const [updatedAt, snapshot, revision, now, owner] = params
-                const authorized = !lease || lease.until <= now ||
-                  (lease.owner === owner && lease.until > now)
+                const [updatedAt, snapshot, revision, fourth, fifth] = params
+                const automated = sql.includes('AND EXISTS ')
+                const owner = automated ? fourth : ''
+                const now = automated ? fifth : fourth
+                const authorized = automated
+                  ? lease?.owner === owner && lease.until > now
+                  : !lease || lease.until <= now
                 if (!head || head.revision !== revision || !authorized) {
                   return { success: true, meta: { changes: 0 } }
                 }
