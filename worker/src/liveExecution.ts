@@ -186,8 +186,9 @@ async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'
  }
  const state=result.state==='ACCEPTED'?'ACCEPTED':result.state==='REJECTED'?'REJECTED':'UNKNOWN'
  try{
-  await db.prepare("UPDATE live_order_journal SET state=?,broker_order_id=?,updated_at=? WHERE id=? AND state='SENDING'")
+  const stored=await db.prepare("UPDATE live_order_journal SET state=?,broker_order_id=?,updated_at=? WHERE id=? AND state='SENDING'")
    .bind(state,result.state==='ACCEPTED'?result.brokerOrderNo:null,new Date().toISOString(),id).run()
+  if(!changed(stored))return 'unknown_order_result'
  }catch{return 'unknown_order_result'}
  return result.state==='ACCEPTED'?'accepted_not_filled':result.state==='REJECTED'?'rejected':'unknown_order_result'
 }
