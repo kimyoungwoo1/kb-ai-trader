@@ -115,3 +115,13 @@ CREATE TABLE IF NOT EXISTS live_execution_gate (
  trading_day TEXT,
  updated_at TEXT NOT NULL
 );
+
+-- Irrevocable one-time broker cancellation claim. Never delete to "retry".
+CREATE TABLE IF NOT EXISTS live_cancel_journal (
+ order_id TEXT PRIMARY KEY,
+ broker_order_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('CLAIMED','ACKNOWLEDGED','UNKNOWN','REJECTED')),
+ cancel_order_no TEXT UNIQUE,
+ claimed_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
