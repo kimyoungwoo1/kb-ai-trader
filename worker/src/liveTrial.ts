@@ -22,7 +22,7 @@ export function isRegularSession(at=new Date()):boolean{
 }
 export function validateTrialCandidate(value:TrialCandidate,now=new Date()):string|null{
   if(!value||value.side!=='BUY')return '실매수 후보만 허용'
-  if(!/^\\d{6}$/.test(value.code))return '유효하지 않은 종목코드'
+  if(!/^[0-9]{6}$/.test(value.code))return '유효하지 않은 종목코드'
   if(!Number.isSafeInteger(value.quantity)||value.quantity<1)return '수량 오류'
   if(!Number.isSafeInteger(value.limitPrice)||value.limitPrice<1)return '지정가 오류'
   if(value.limitPrice*value.quantity>LIVE_TRIAL_BUDGET)return '5만 원 한도 초과'
