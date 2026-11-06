@@ -6,6 +6,7 @@ import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { join, relative, resolve, extname, sep } from 'node:path'
 import { tmpdir } from 'node:os'
+import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const name = 'kb-ai-trader'
@@ -107,9 +108,7 @@ const probeVersion = async(origin,secret,label) => {
 }
 const activeWranglerVersion = async () => {
   const output=await cliRead(['wrangler','deployments','status','--name',name],'Wrangler 현재 운영 버전 조회')
-  const versions=[...output.matchAll(/Version\(s\):\s*\(100%\)\s*([a-f0-9-]{36})/g)]
-  ensure(versions.length===1,'Wrangler 현재 운영 버전 파싱 실패 · 자동 복구 상태 불명')
-  return versions[0][1].toLowerCase()
+  return parseActiveVersion(output)
 }
 async function main(){
   ensure(existsSync('worker/wrangler.jsonc'),'저장소 루트에서 실행해야 합니다.')
