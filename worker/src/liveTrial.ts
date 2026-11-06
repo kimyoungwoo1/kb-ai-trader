@@ -1,3 +1,4 @@
+import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder } from './kbOrderContract'
 import type { KbCredentials } from './kbToken'
 /**
@@ -46,6 +47,46 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:KbCredenti
       return reply({success:true,enabled:false,brokerOrdersVerified:false,mode:'PREPARATION_ONLY',limits,
         updatedAt:settings?.updated_at||null,candidates:rows.results||[],
         message:'KB 공식 주문·체결·취소 응답 명세가 검증되지 않아 실주문은 서버에서 차단됩니다. 자동주문 기능은 아직 활성화할 수 없습니다.'})
+    }
+    if(action==='preflight'){
+      const code=String(body.code||''),quantity=Number(body.quantity),limitPrice=Number(body.limitPrice)
+      if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
+        return reply({success:false,message:'KB 실계좌 인증 설정이 없어 주문 안전성 점검을 중단합니다.'},503)
+      if(!/^[0-9]{6}$/.test(code)||!Number.isSafeInteger(quantity)||quantity<1||
+        !Number.isSafeInteger(limitPrice)||limitPrice<1||
+        quantity*limitPrice>LIVE_TRIAL_BUDGET)
+        return reply({success:false,locked:true,message:'종목코드·주문 수량·지정가·5만 원 한도를 확인해 주세요.'},400)
+      const day=kstTradingDay()
+      // Read authoritative order journal first. Never infer safety from a
+      // browser-local balance or uncommitted simulated position.
+      const [today,unfinished,positions,committed]=await Promise.all([
+        db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE side='BUY' AND trading_day=?").bind(day).first(),
+        db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
+        db.prepare("SELECT COUNT(DISTINCT code) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first(),
+        db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first()
+      ])
+      const pendingWon=Number(committed?.total)
+      const countFields=[today?.total,unfinished?.total,positions?.total].map(Number)
+      if(!Number.isSafeInteger(pendingWon)||pendingWon<0||
+        countFields.some(n=>!Number.isSafeInteger(n)||n<0))
+        return reply({success:false,locked:true,message:'D1 실주문 원장 검증 실패 · 안전 차단'},503)
+      // Read-only request against KB's per-symbol buying power endpoint.
+      // A provider error is a rejection of this preflight, NEVER a trade trigger.
+      let balances
+      try{balances=await readKbBuyingPower(env,code)}
+      catch{return reply({success:false,locked:true,message:'KB 주문가능금액 실조회 실패 · 주문 안전성 점검 보류'},503)}
+      const preview=evaluateBuyPreview(code,limitPrice,quantity,balances,{
+        dailyBuys:countFields[0],activeTrialOrders:countFields[1],
+        otherTrialSymbols:countFields[2],
+      })
+      if(pendingWon+preview.requiredCash>LIVE_TRIAL_BUDGET){
+        preview.permitted=false
+        preview.reasons.push('기존 시험 주문 예약금 포함 5만 원 한도 초과')
+      }
+      return reply({success:true,locked:true,executionEnabled:false,mode:'READ_ONLY_PREFLIGHT',
+        preview,message:preview.permitted?
+          '실계좌 주문가능금액·시험 한도 점검 통과. 실제 주문은 잠금 상태로 전송되지 않았습니다.':
+          '실계좌 주문 안전성 점검에서 차단 조건이 발견됐습니다. 실제 주문은 전송되지 않았습니다.'})
     }
     if(action==='lookup'){
       if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)return reply({success:false,message:'KB 조회 인증 설정 없음'},503)
