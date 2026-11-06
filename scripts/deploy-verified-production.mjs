@@ -70,7 +70,7 @@ async function main(){
   const live=await api(root+'/workers/workers/'+workerId+'/versions/'+rollbackVersion)
   verifyVersion(live,'현재 운영 버전')
   const probeKey=randomBytes(32).toString('base64url')
-  console.log('✓ 배포 후 KB 계좌 검사 전용 일회성 인증키 생성 (출력하지 않음)')
+  console.log('✓ 이번 배포 전용 KB 계좌 검사 인증키 생성 (출력하지 않음)')
   // Opt-in encrypted Web Push uses a persistent VAPID keypair. The first
   // release creates it inside the new Worker version; subsequent deploys
   // inherit that SAME key from the currently active deployment.
@@ -238,6 +238,12 @@ async function main(){
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
   console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인')
   console.log('7/7 검증 완료. 운영에 새 버전 배포')
+  // Guard against another deployment switching the live Worker while we build.
+  const latest=await api(root+'/workers/scripts/'+name+'/deployments')
+  const latestSorted=(latest.deployments||[]).sort((a,b)=>Date.parse(b.created_on)-Date.parse(a.created_on))
+  const currentVersion=latestSorted[0]?.versions?.find(v=>v.percentage===100)?.version_id
+  ensure(currentVersion===rollbackVersion,
+    '배포 중 다른 운영 버전이 반영됐습니다. 최신 버전과 Secret 상속을 다시 확인하기 위해 안전 중단합니다.')
   await api(root+'/workers/scripts/'+name+'/deployments',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({strategy:'percentage',versions:[{percentage:100,version_id:created.id}]})
@@ -252,7 +258,7 @@ async function main(){
   // or API payloads leave the Worker. A failure triggers the existing rollback.
   console.log('✓ 배포 후 KB 보유종목·계좌 평가 실연결 검사 시작')
   let checked=false
-  for(let attempt=0;attempt<2;attempt++){
+  for(let attempt=0;attempt<3;attempt++){
     let summary
     try{
       const response=await fetch(domain+'/api/deploy/verify',{
@@ -268,13 +274,13 @@ async function main(){
         break
       }
       const h=summary?.checks?.holdings, v=summary?.checks?.valuation
-      console.warn('○ KB 배포 검사 실패 ('+(attempt+1)+'/2) · 보유 '+(h?.stage||'unknown')
+      console.warn('○ KB 배포 검사 실패 ('+(attempt+1)+'/3) · 보유 '+(h?.stage||'unknown')
         +' HTTP '+(h?.http_status||response.status)
         +' · 평가 '+(v?.stage||'unknown')+' HTTP '+(v?.http_status||response.status))
     }catch(error){
       console.warn('○ KB 배포 검사 연결 실패 ('+(attempt+1)+'/2) · '+(error?.name||'network'))
     }
-    if(attempt===0)await new Promise(resolve=>setTimeout(resolve,1500))
+    if(attempt<2)await new Promise(resolve=>setTimeout(resolve,2000))
   }
   ensure(checked,'KB 계좌 실조회 실패 · 배포 자동 복구 시도 (인증키·계좌 데이터는 로그에 출력하지 않음)')
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
