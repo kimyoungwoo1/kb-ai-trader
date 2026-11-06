@@ -152,7 +152,13 @@ export async function verifyTradingLease(): Promise<boolean> {
 }
 async function saveInternal(forceHistory = false): Promise<boolean> {
   if (!active || !token || state.phase !== 'ready' || state.revision === null) return false
-  if (inflightBackup) return inflightBackup
+  if (inflightBackup) {
+    const result = await inflightBackup
+    if (!result || !forceHistory) return result
+    // A manual button press following a periodic checkpoint still gets its
+    // own archived revision rather than silently reusing a no-trade write.
+    return saveInternal(true)
+  }
   const when = generation
   const operation = (async (): Promise<boolean> => {
     if (readAutoAccount().enabled && !(await verifyTradingLease())) return false
