@@ -154,12 +154,12 @@ async function saveInternal(): Promise<boolean> {
   if (!active || !token || state.phase !== 'ready' || state.revision === null) return false
   if (inflightBackup) return inflightBackup
   const when = generation
-  const expected = state.revision
-  const isAuto = readAutoAccount().enabled
-  if (isAuto && !(await verifyTradingLease())) return false
-  if (!active || when !== generation) return false
-  const payload = snapshot()
-  const operation = (async () => {
+  const operation = (async (): Promise<boolean> => {
+    if (readAutoAccount().enabled && !(await verifyTradingLease())) return false
+    if (!active || when !== generation || state.phase !== 'ready') return false
+    const expected = state.revision
+    const payload = snapshot()
+    const snapshotSignature = signature()
     try {
       const result = await request('save', {
         expectedRevision: expected, snapshot: payload,
@@ -168,7 +168,9 @@ async function saveInternal(): Promise<boolean> {
       if (!active || when !== generation) return false
       if (!Number.isInteger(result.revision)) throw Error('새 백업 버전 확인 실패')
       lastSaveAt = Date.now()
-      lastTradeSignature = signature()
+      // Another trade may occur while D1 is saving; never mark that later fill
+      // as backed up just because the older snapshot completed successfully.
+      lastTradeSignature = snapshotSignature
       publish({ phase: 'ready', revision: result.revision!, lastBackupAt: result.updated_at || null,
         lastError: '', message: '자동 백업 완료 · v' + result.revision })
       return true
@@ -182,7 +184,13 @@ async function saveInternal(): Promise<boolean> {
     }
   })()
   inflightBackup = operation
-  try { return await operation } finally { if (inflightBackup === operation) inflightBackup = null }
+  try {
+    return await operation
+  } finally {
+    if (inflightBackup === operation) inflightBackup = null
+    if (active && when === generation && state.phase === 'ready'
+      && signature() !== lastTradeSignature) scheduleBackup()
+  }
 }
 export async function saveCloudBackupNow(): Promise<boolean> {
   if (!active || !token) return false
