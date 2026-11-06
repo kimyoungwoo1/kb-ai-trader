@@ -145,7 +145,10 @@ export default function App() {
       }
     }
     try {
-      const holdingsResult = await requestAccount('holdings', '보유 종목')
+      let holdingsResult = await requestAccount('holdings', '보유 종목')
+      let valuationWorked = false
+      let valuationProvidedRows = false
+      let depositWorked = false
       if (holdingsResult) {
         const rows = holdingsResult.data?.dataBody?.Record1
         if (Array.isArray(rows)) {
@@ -161,6 +164,7 @@ export default function App() {
       if (!sessionExpired) {
         const valuationResult = await requestAccount('valuation', '계좌 평가')
         if (valuationResult) {
+          valuationWorked = true
           const valuationBody = valuationResult.data?.dataBody || {}
           const valuationHeader = valuationResult.data?.dataHeader || {}
           const summarySource = { ...valuationHeader, ...valuationBody }
@@ -173,6 +177,7 @@ export default function App() {
           })
           const valuationRows = valuationBody.Record1
           if (Array.isArray(valuationRows) && valuationRows.length) {
+            valuationProvidedRows = true
             setHoldings(valuationRows.map((row: any) => ({
               name: row.is_nm || '종목명 없음',
               code: row.is_cd || '',
@@ -193,11 +198,36 @@ export default function App() {
       if (!sessionExpired) {
         const depositResult = await requestAccount('deposit', '예수금')
         if (depositResult) {
+          depositWorked = true
           setDeposit(depositResult.data?.dataBody || {})
           setDepositMessage('예수금 조회 성공 · ' + new Date().toLocaleString('ko-KR'))
         } else {
           setDeposit(null)
           setDepositMessage(failures.filter(item => item.startsWith('예수금:')).join(' / ') || '예수금 조회 실패')
+        }
+      }
+      // If the first holdings request failed transiently while another account
+      // endpoint succeeded, the KB token may now be warm in the Worker isolate.
+      // Retry only this read-only endpoint once, never an order, and never
+      // overwrite valuation's richer position rows with holdings-only fields.
+      if (!sessionExpired && !holdingsResult && (valuationWorked || depositWorked)) {
+        const earlierHoldingsFailures = failures.filter(item => item.startsWith('보유 종목:'))
+        holdingsResult = await requestAccount('holdings', '보유 종목')
+        for (const earlier of earlierHoldingsFailures) {
+          const index = failures.indexOf(earlier)
+          if (index !== -1) failures.splice(index, 1)
+        }
+        if (holdingsResult && !valuationProvidedRows) {
+          const rows = holdingsResult.data?.dataBody?.Record1
+          if (Array.isArray(rows)) {
+            setHoldings(rows.map((row: any) => ({
+              name: row.is_nm || '종목명 없음', code: row.is_no || '',
+              quantity: Number(row.gnrl_q || 0),
+              orderable: Number(row.ordr_psbl_q || 0),
+            })))
+          } else {
+            failures.push('보유 종목: 재조회 응답 Record1 형식 확인 필요')
+          }
         }
       }
       if (sessionExpired) {
