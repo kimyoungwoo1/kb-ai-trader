@@ -15,13 +15,14 @@ const formatTime = (value?: string) => {
 }
 
 export default function AutoPaperLab({
-  signals, checkedAt, token, catalysts, catalystSummary, onStart, scanLoading = false, scanMessage = '',
+  signals, checkedAt, token, catalysts, catalystSummary, marketCoverage, onStart, scanLoading = false, scanMessage = '',
 }: {
   signals: TradeSignal[]
   checkedAt: string
   token: string
   catalysts: CatalystSnapshot | null
   catalystSummary: string
+  marketCoverage: string
   onStart?: () => void
   scanLoading?: boolean
   scanMessage?: string
@@ -226,6 +227,10 @@ export default function AutoPaperLab({
       </div>
       <p className="auto-review-result">{catalystSummary}</p>
       <p className="auto-review-note">뉴스 제목만으로 호재·악재를 확정하지 않으며, 실제 종목코드가 일치하는 공시를 우선 반영합니다. 부정적인 중대 이슈가 감지되면 신규 가상매수를 보류합니다. 뉴스·공시 확인에 실패해도 보유 종목의 익절·손절 감시는 계속합니다.</p>
+      <details className="auto-news-risk-details">
+        <summary>시장 1차 탐색 범위 및 데이터 기준일</summary>
+        <p className="auto-review-note auto-market-coverage">{marketCoverage} · 현재 실시간 전 상장종목을 전수 조회하는 방식은 아닙니다.</p>
+      </details>
       {catalysts && (catalysts.articles.length || catalysts.disclosures.length) > 0 &&
         <details className="auto-news-risk-details">
           <summary>최근 수집 자료 원문 확인</summary>
