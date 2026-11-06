@@ -525,3 +525,18 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .notification-kind-recovery{color:#88df9f;border-color:#437c50}
 .notification-kind-trade{color:#83ceff;border-color:#426a90}
 @media(max-width:760px){.notification-settings{padding:16px}.notification-item-heading{flex-direction:column}.notification-page .page-heading{gap:12px}}
+
+/* Persistent per-category Web Push controls. */
+.notification-preferences{padding:20px}
+.notification-pref-list{display:grid;gap:9px;margin-top:16px}
+.notification-pref-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid #2b435c;border-radius:9px;background:#14253a;padding:12px 14px;cursor:pointer}
+.notification-pref-row>span{display:grid;gap:4px;min-width:0}
+.notification-pref-row strong{font-size:12px;color:#e6f1ff}
+.notification-pref-row small{font-size:10px;color:#95b1cc;line-height:1.6}
+.notification-pref-row input[type=checkbox]{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 auto;width:36px;height:21px;border-radius:999px;border:1px solid #455b75;background:#364458;cursor:pointer;transition:background .15s}
+.notification-pref-row input[type=checkbox]:checked{background:#1d9c85;border-color:#2dd0ae}
+.notification-pref-row input[type=checkbox]:after{content:'';position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#e8f3ff;transition:transform .15s}
+.notification-pref-row input[type=checkbox]:checked:after{transform:translateX(15px)}
+.notification-pref-row input[type=checkbox]:disabled{opacity:.5;cursor:default}
+.notification-pref-row input[type=checkbox]:focus-visible{outline:2px solid #9bdcfe;outline-offset:3px}
+.notification-unsaved{color:#eac17a;font-size:11px}
