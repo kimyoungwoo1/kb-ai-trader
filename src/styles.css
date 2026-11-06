@@ -315,3 +315,44 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-engine-check-scenario b{font-size:11px;color:#e3f0ff}
 .auto-engine-check-scenario small,.auto-engine-check-scenario span{font-size:9px;color:#aebed4;line-height:1.6}
 @media(max-width:700px){.auto-engine-check-heading{align-items:flex-start;flex-direction:column}.auto-engine-check-list{grid-template-columns:1fr}}
+
+
+/* Visible proof of the last real market scan and its inspected symbols. */
+.auto-scan-review{border-color:#304967}
+.auto-review-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;margin-bottom:16px}
+.auto-review-heading h3{font-size:13px;margin:0 0 6px;color:#e7f0ff}
+.auto-review-heading p{margin:0;color:#8fa7c6;font-size:10px;line-height:1.7}
+.auto-review-collecting{display:inline-flex;align-items:center;white-space:nowrap;font-size:10px;border:1px solid #3e689b;border-radius:20px;background:#162b44;color:#9fcbf9;padding:6px 9px}
+.auto-review-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:16px}
+.auto-review-summary>div{display:flex;flex-direction:column;min-width:0;gap:7px;padding:13px;border:1px solid #2c3d56;border-radius:8px;background:#0d192a}
+.auto-review-summary span{font-size:10px;color:#95aac5}
+.auto-review-summary strong{font-size:14px;line-height:1.35;color:#e2ecfd;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.auto-review-history{display:grid;gap:8px;margin-bottom:14px}
+.auto-review-history>span{font-size:10px;color:#9fb4d1}
+.auto-review-run-picker{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
+.auto-review-run{border:1px solid #34465d;border-radius:8px;padding:9px 11px;display:flex;flex-direction:column;gap:4px;align-items:flex-start;color:#b5c6dd;background:#101d2e;font-size:10px;text-align:left}
+.auto-review-run small{color:#8297b4;font-size:9px}
+.auto-review-run.selected{background:#1c3555;border-color:#4d86c5;color:#dfedff}
+.auto-review-run.selected small{color:#adc7e8}
+.auto-review-result{border-left:3px solid #467fbd;padding:7px 12px;background:#142337;color:#bdd1e8;font-size:10px;line-height:1.6;margin:0 0 13px}
+.auto-review-stock-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.auto-review-stock{border:1px solid #2a3b51;border-radius:9px;background:#0c1827;padding:13px 14px;min-width:0}
+.auto-review-stock-info{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.auto-review-stock-info strong{font-size:11px;line-height:1.5;color:#e2ecfa;min-width:0;overflow-wrap:anywhere}
+.auto-review-stock-info strong small{font-size:9px;font-weight:400;color:#849ab7;margin-left:3px}
+.auto-review-decision{display:inline-flex;white-space:nowrap;align-items:center;border-radius:20px;font-size:9px;padding:5px 8px;border:1px solid #445067;color:#b1bfd2}
+.auto-review-decision-watch{border-color:#6c5834;background:#282316;color:#e6c587}
+.auto-review-decision-filled{border-color:#30765c;background:#112f24;color:#87e7b7}
+.auto-review-decision-risk{border-color:#7b4b4b;background:#331e24;color:#f2a9a9}
+.auto-review-decision-rejected{border-color:#394961;background:#1b2636;color:#a5b9d5}
+.auto-review-stock-metrics{display:flex;flex-wrap:wrap;gap:6px 13px;margin:0 0 10px;color:#89a1c0;font-size:9px}
+.auto-review-stock-metrics span{display:flex;gap:4px;align-items:baseline}
+.auto-review-stock-metrics b{font-size:10px;color:#d4e2f6;font-variant-numeric:tabular-nums}
+.auto-review-stock>p{font-size:10px;line-height:1.65;color:#a5b8d0;margin:0;overflow-wrap:anywhere}
+.auto-review-stock-details{border-top:1px solid #2c3d54;margin-top:9px;padding-top:8px}
+.auto-review-stock-details summary{font-size:9px;color:#8fb9ec;cursor:pointer}
+.auto-review-stock-details p{margin:7px 0 0;font-size:10px;color:#a2b6d0;line-height:1.7;overflow-wrap:anywhere}
+.auto-review-more{margin-top:12px;justify-content:center;width:100%}
+.auto-review-note{margin:13px 0 0;font-size:9px;color:#7f94af;line-height:1.7}
+@media(max-width:1080px){.auto-review-stock-list{grid-template-columns:1fr}}
+@media(max-width:750px){.auto-review-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.auto-review-heading{flex-direction:column}.auto-review-run{flex:1 1 120px}.auto-review-stock-info{flex-wrap:wrap}}
