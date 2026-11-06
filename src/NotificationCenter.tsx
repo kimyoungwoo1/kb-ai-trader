@@ -3,7 +3,16 @@ import { Bell, BellRing, CheckCheck, RefreshCw, Smartphone, Send, ShieldAlert } 
 import './styles.css'
 const API='https://kb-ai-trader.ksmsy1.workers.dev/api/notifications'
 type Notice={id:number;kind:string;title:string;body:string;created_at:string;read_at:string|null}
-type Inbox={notifications:Notice[];unread:number;devices:number;vapidPublicKey:string;pushAvailable:boolean}
+type PushKind='trade'|'error'|'recovery'|'daily'
+type PushPrefs=Record<PushKind,boolean>
+const DEFAULT_PREFS:PushPrefs={trade:true,error:true,recovery:true,daily:true}
+const PREF_KINDS:{kind:PushKind;label:string;hint:string}[]=[
+  {kind:'trade',label:'가상매수·매도 체결',hint:'종목, 수량, 가격, 매매 사유 및 실현손익'},
+  {kind:'error',label:'서버/API 장애',hint:'연속 오류 및 데이터 검사 실패'},
+  {kind:'recovery',label:'장애 복구',hint:'서버 검사 정상화 알림'},
+  {kind:'daily',label:'일일 가상매매 요약',hint:'장 마감 이후 매매 결과 요약'},
+]
+type Inbox={notifications:Notice[];unread:number;devices:number;vapidPublicKey:string;pushAvailable:boolean;preferences:PushPrefs}
 const format=(raw:string)=>new Date(raw).toLocaleString('ko-KR')
 function fromBase64Url(value:string):Uint8Array{
   const padding='='.repeat((4-value.length%4)%4)
@@ -26,18 +35,22 @@ export default function NotificationCenter({token}:{token:string}){
   const [subscribed,setSubscribed]=useState(false)
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
+  const [preferences,setPreferences]=useState<PushPrefs>(DEFAULT_PREFS)
+  const [prefsSaving,setPrefsSaving]=useState(false)
+  const [prefsDirty,setPrefsDirty]=useState(false)
   const load=useCallback(async()=>{
     if(!token)return
     try{
       const data=await call(token,'list') as Inbox
       setInbox(data)
+      if(!prefsDirty)setPreferences({...DEFAULT_PREFS,...data.preferences})
       if('serviceWorker' in navigator){
         const registration=await navigator.serviceWorker.getRegistration('/')
         const sub=await registration?.pushManager?.getSubscription()
         setSubscribed(!!sub)
       }
     }catch(error){setMessage('알림 조회 실패 · '+(error instanceof Error?error.message:'네트워크 오류'))}
-  },[token])
+  },[token,prefsDirty])
   useEffect(()=>{
     void load()
     const id=window.setInterval(()=>void load(),30000)
@@ -82,6 +95,17 @@ export default function NotificationCenter({token}:{token:string}){
     }catch(error){setMessage(error instanceof Error?error.message:'푸시 해제 실패')}
     finally{setBusy(false)}
   }
+  const savePreferences=async()=>{
+    setPrefsSaving(true);setMessage('')
+    try{
+      const result=await call(token,'preferences',{preferences})
+      setPreferences(result.preferences as PushPrefs)
+      setPrefsDirty(false)
+      setMessage('알림 종류별 설정이 D1 서버에 저장됐습니다.')
+      await load()
+    }catch(error){setMessage('설정 저장 실패 · '+(error instanceof Error?error.message:'서버 오류'))}
+    finally{setPrefsSaving(false)}
+  }
   const kindLabel:Record<string,string>={trade:'가상 체결',error:'서버 장애',recovery:'장애 복구',daily:'일일 요약',test:'테스트'}
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">SERVER ALERTS · PUSH NOTIFICATIONS</div>
@@ -104,6 +128,22 @@ export default function NotificationCenter({token}:{token:string}){
       {!inbox?.pushAvailable&&<p className="notification-hint"><ShieldAlert size={15}/> 웹 푸시 발송키 확인 전입니다. 알림함 자체는 사용할 수 있습니다.</p>}
       <p className="notification-hint">iPhone은 Safari에서 홈 화면에 추가한 웹 앱을 열어 알림을 켜야 합니다. Android는 Chrome 등 지원 브라우저에서 권한을 허용하세요. 기기별 알림 차단 설정도 적용됩니다.</p>
       {message&&<p className="news-message" role="status">{message}</p>}
+    </div>
+    <div className="panel notification-preferences">
+      <div className="panel-heading"><div><h3>푸시 알림 수신 설정</h3>
+        <span>서버에 저장 · 등록한 모든 기기에 동일하게 적용</span></div></div>
+      <p className="notification-hint">알림 종류를 꺼도 D1 알림함에는 기록됩니다. 테스트 알림은 연결 확인을 위해 항상 발송됩니다.</p>
+      <div className="notification-pref-list">{PREF_KINDS.map(item=><label className="notification-pref-row" key={item.kind}>
+        <span><strong>{item.label}</strong><small>{item.hint}</small></span>
+        <input type="checkbox" checked={preferences[item.kind]} disabled={prefsSaving||!inbox}
+          onChange={event=>{setPreferences(current=>({...current,[item.kind]:event.target.checked}));setPrefsDirty(true)}} />
+      </label>)}</div>
+      <div className="notification-actions">
+        <button className="outline-button" disabled={!inbox||!prefsDirty||prefsSaving} onClick={()=>void savePreferences()}>
+          {prefsSaving?'설정 저장 중...':'알림 설정 저장'}
+        </button>
+        {prefsDirty&&<span className="notification-unsaved">저장되지 않은 변경사항이 있습니다.</span>}
+      </div>
     </div>
     <div className="panel notification-list-panel">
       <div className="panel-heading"><div><h3>알림 이력 <span className="notification-count">{inbox?.unread??0} 읽지 않음</span></h3>
