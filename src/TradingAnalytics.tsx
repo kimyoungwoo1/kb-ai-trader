@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AUTO_EVENT, readAutoAccount, type AutoRunDecision, type AutoRun } from './autoPaper'
 import { PAPER_EVENT, readPaperLedger } from './paperLedger'
 import type { TradeSignal } from './tradeSignals'
-import { analyzeSignals } from './strategyDiagnostics'
+import { readScreeningSnapshot, selectScreeningView } from './screeningHistory'
 import { summarizeTradingAnalytics, journalTrades, type AnalyticsPeriod, type JournalGroup } from './tradingAnalytics'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
 
@@ -84,14 +84,16 @@ function Decision({ item }: { item: AutoRunDecision }) {
     </details>
   </div>
 }
-export default function TradingAnalytics({ signals, catalysts, marketCoverage, onGoAuto }: {
+export default function TradingAnalytics({ signals, catalysts, marketCoverage, liveCheckedAt, onGoAuto }: {
   signals: TradeSignal[]
   catalysts: CatalystSnapshot | null
   marketCoverage: string
+  liveCheckedAt: string
   onGoAuto: () => void
 }) {
   const [account, setAccount] = useState(readAutoAccount)
   const [ledger, setLedger] = useState(readPaperLedger)
+  const [screeningSnapshot, setScreeningSnapshot] = useState(readScreeningSnapshot)
   const [period, setPeriod] = useState<AnalyticsPeriod>('30')
   const [group, setGroup] = useState<JournalGroup>('all')
   const [runIndex, setRunIndex] = useState(0)
@@ -103,6 +105,7 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, o
     const update = () => {
       setAccount(readAutoAccount())
       setLedger(readPaperLedger())
+      setScreeningSnapshot(readScreeningSnapshot())
     }
     window.addEventListener(AUTO_EVENT, update)
     window.addEventListener(PAPER_EVENT, update)
@@ -118,7 +121,10 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, o
   const now = useMemo(() => new Date(time), [time])
   const report = useMemo(() => summarizeTradingAnalytics(account, ledger, period, now),
     [account, ledger, period, now])
-  const screening = useMemo(() => analyzeSignals(signals), [signals])
+  const screeningView = useMemo(() => selectScreeningView(
+    signals, screeningSnapshot, account.runs, liveCheckedAt,
+  ), [signals, screeningSnapshot, account.runs, liveCheckedAt])
+  const screening = screeningView.report
   const visibleTrades = useMemo(() => journalTrades(ledger, period, group, now),
     [ledger, period, group, now])
   const runs = report.recentRuns
@@ -215,20 +221,33 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, o
 
       <section className="panel analysis-section">
         <div className="panel-heading"><div><h3>최근 종목 선별 진단</h3><span>SCREENING SNAPSHOT</span></div></div>
-        <div className="analysis-mini-stats">
-          <div><span>정밀 분석 종목</span><b>{screening.inspected} / 50종목</b></div>
-          <div><span>진입 관찰 후보</span><b>{screening.candidates}종목</b></div>
-          <div><span>위험 주의</span><b>{screening.risky}종목</b></div>
-          <div><span>데이터 부족</span><b>{screening.insufficient}종목</b></div>
+        <div className="analysis-screening-source">
+          <strong>{screeningView.source === 'live' ? '현재 화면 분석' : screeningView.source === 'snapshot'
+            ? '마지막 분석 저장본' : screeningView.source === 'run' ? '자동 검사 기록 복원' : '분석 자료 없음'}</strong>
+          <span>기준 {formatTime(screeningView.checkedAt)}</span>
         </div>
-        <div className="analysis-breakdown">{screening.breakdown.map(item =>
-          <div key={item.key} className="analysis-breakdown-row">
-            <div><strong>{item.label}</strong><small>{item.description}</small></div>
-            <div className="analysis-bar"><span style={{ width: (screening.inspected
-              ? Math.min(100, 100 * item.count / screening.inspected) : 0) + '%' }}/></div>
-            <b>{item.count}</b>
-          </div>)}</div>
-        <p className="analysis-footnote">선별 제외 원인은 중복으로 계산될 수 있어. 이 진단은 현재 브라우저에서 마지막으로 수집한 종목 기준이야.</p>
+        <p className="analysis-footnote">{screeningView.note}</p>
+        {screening ? <>
+          <div className="analysis-mini-stats">
+            <div><span>정밀 분석 종목</span><b>{screening.inspected} / 50종목</b></div>
+            <div><span>진입 관찰 후보</span><b>{screening.candidates}종목</b></div>
+            <div><span>위험 주의</span><b>{screeningView.breakdownAvailable ? screening.risky + '종목' : '기록 일부만 확인'}</b></div>
+            <div><span>데이터 부족</span><b>{screeningView.breakdownAvailable ? screening.insufficient + '종목' : '기록 일부만 확인'}</b></div>
+          </div>
+          {screeningView.breakdownAvailable ? <div className="analysis-breakdown">{screening.breakdown.map(item =>
+            <div key={item.key} className="analysis-breakdown-row">
+              <div><strong>{item.label}</strong><small>{item.description}</small></div>
+              <div className="analysis-bar"><span style={{ width: (screening.inspected
+                ? Math.min(100, 100 * item.count / screening.inspected) : 0) + '%' }}/></div>
+              <b>{item.count}</b>
+            </div>)}</div> : <p className="analysis-screening-empty">
+              이전 기록에는 가격·수급별 제외 원인 집계가 저장되지 않아 막대그래프를 복원할 수 없습니다.
+              다음 정상 분석부터 전체 신호를 보관해 정확하게 표시합니다.
+            </p>}
+        </> : <p className="analysis-screening-empty">
+          아직 저장된 종목 분석이 없습니다. 장중 첫 정밀 분석이 끝난 뒤 자동으로 표시됩니다.
+        </p>}
+        <p className="analysis-footnote">제외 원인은 중복 집계될 수 있습니다. 과거 기록과 현재 시장 조회를 구분해서 표시하며 데이터를 임의로 생성하지 않습니다.</p>
       </section>
     </div>
 
