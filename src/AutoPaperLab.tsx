@@ -5,6 +5,7 @@ import type { TradeSignal } from './tradeSignals'
 import { analyzeSignals, analyzePerformance } from './strategyDiagnostics'
 import { getAutoHealth, todayActivity } from './autoStatus'
 import { runPaperEngineCheck, type EngineCheckReport } from './paperEngineCheck'
+import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const percent = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
@@ -14,11 +15,13 @@ const formatTime = (value?: string) => {
 }
 
 export default function AutoPaperLab({
-  signals, checkedAt, token, onStart, scanLoading = false, scanMessage = '',
+  signals, checkedAt, token, catalysts, catalystSummary, onStart, scanLoading = false, scanMessage = '',
 }: {
   signals: TradeSignal[]
   checkedAt: string
   token: string
+  catalysts: CatalystSnapshot | null
+  catalystSummary: string
   onStart?: () => void
   scanLoading?: boolean
   scanMessage?: string
@@ -197,6 +200,43 @@ export default function AutoPaperLab({
       </div>
       <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 1분마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
     </div>
+
+    <section className="panel auto-main-panel auto-news-risk-panel">
+      <div className="auto-review-heading">
+        <div>
+          <h3>자동매매 뉴스·공시 교차 검증</h3>
+          <p>최근 언론사 RSS 제목과 금융감독원 DART 공시를 매수 후보에 연결해 위험 신호를 확인합니다.</p>
+        </div>
+        <span className={'auto-review-decision ' + (catalystReady(catalysts, new Date(clock))
+          ? 'auto-review-decision-filled' : 'auto-review-decision-risk')}>
+          {catalystReady(catalysts, new Date(clock)) ? '정보 수집 정상' : '신규 매수 보류'}
+        </span>
+      </div>
+      <div className="auto-review-summary">
+        <div><span>이번 정밀 분석</span><strong>{signals.length} / 50종목</strong></div>
+        <div><span>언론 뉴스</span><strong>{catalysts?.newsOk ? catalysts.articles.length + '건' : '확인 불가'}</strong></div>
+        <div><span>DART 공시</span><strong>{catalysts?.dartOk
+          ? catalysts.disclosures.length + '/' + catalysts.dartReported + '건'
+          : '확인 불가'}</strong></div>
+        <div><span>마지막 교차 확인</span><strong>{formatTime(catalysts?.checkedAt)}</strong></div>
+      </div>
+      <p className="auto-review-result">{catalystSummary}</p>
+      <p className="auto-review-note">뉴스 제목만으로 호재·악재를 확정하지 않으며, 실제 종목코드가 일치하는 공시를 우선 반영합니다. 부정적인 중대 이슈가 감지되면 신규 가상매수를 보류합니다. 뉴스·공시 확인에 실패해도 보유 종목의 익절·손절 감시는 계속합니다.</p>
+      {catalysts && (catalysts.articles.length || catalysts.disclosures.length) > 0 &&
+        <details className="auto-news-risk-details">
+          <summary>최근 수집 자료 원문 확인</summary>
+          <div className="auto-news-risk-list">
+            {catalysts.disclosures.slice(0, 6).map(item =>
+              <a key={'dart'+item.receipt_no} href={item.link} target="_blank" rel="noopener noreferrer">
+                <b>DART · {item.company}</b><span>{item.title}</span>
+              </a>)}
+            {catalysts.articles.slice(0, 6).map(item =>
+              <a key={'rss'+item.link} href={item.link} target="_blank" rel="noopener noreferrer">
+                <b>{item.source}</b><span>{item.title}</span>
+              </a>)}
+          </div>
+        </details>}
+    </section>
 
     <section className="panel auto-main-panel auto-scan-review">
       <div className="auto-review-heading">
