@@ -5,6 +5,8 @@ export const AUTO_STORAGE_KEY = 'kb-ai-trader-autopaper-v1'
 export const AUTO_EVENT = 'kb-auto-account-changed'
 export const AUTO_INITIAL = 1_000_000
 export const AUTO_TAKE_PROFIT_PCT = 5
+/** Conservative interval pending verification of KB Open API rate limits. */
+export const AUTO_WATCH_INTERVAL_MS = 60_000
 const MAX_POSITION = 200_000
 const MAX_POSITIONS = 3
 const MAX_DAILY_LOSS = 10_000
@@ -40,11 +42,21 @@ export type AutoRun = {
 export type AutoDailyStats = {
   date: string; checked: number; completed: number; deferred: number; filled: number
 }
+export type AutoWatchStatus = {
+  checkedAt: string
+  processedAt: string
+  watched: number
+  received: number
+  filled: number
+  status: '정상' | '일부 오류' | '오류'
+  message: string
+}
 export type AutoAccount = {
   enabled: boolean; cash: number; positions: AutoPosition[]; pending: AutoPending[]
   fills: AutoFill[]; equityHistory: { at: string; value: number }[]
   lastCycle: string; lastMessage: string; runs: AutoRun[]
   dailyStats?: AutoDailyStats
+  watchStatus?: AutoWatchStatus
 }
 export const newAutoAccount = (): AutoAccount => ({
   enabled: false, cash: AUTO_INITIAL, positions: [], pending: [], fills: [],
@@ -224,7 +236,10 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   } satisfies PaperTrade))
   for (const position of ledgerPositions) {
     const updatedQuote = quoteMap.get(position.code)
-    if (updatedQuote !== undefined) position.lastPrice = updatedQuote
+    if (updatedQuote !== undefined) {
+      position.lastPrice = updatedQuote
+      position.quoteUpdatedAt = checkedAt
+    }
   }
   paperStore.write({ ...ledger, cash, positions: ledgerPositions, trades: [...autoOrders, ...ledger.trades] })
   const equity = cash + ledgerPositions.reduce((sum, p) => sum + p.lastPrice * p.quantity, 0)
@@ -248,6 +263,54 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
     dailyStats: dailyStatsAfterRun(account, '검사 완료', executed, now),
     runs: [run, ...(account.runs || [])].slice(0, 30) }
 }
+/**
+ * Price-only fast monitoring uses the same BUY/SELL conditions as the 5-minute
+ * market scanner. It deliberately keeps zero-symbol monitoring cycles OUT of the
+ * 30-item screening history and its daily inspection totals.
+ */
+export function runAutoWatchCycle(
+  account: AutoAccount,
+  quotes: { code: string; name: string; price: number | null; quoteError?: string }[],
+  checkedAt: string,
+  now = new Date(),
+  paperStore: { read: () => PaperLedger; write: (ledger: PaperLedger) => void } =
+    { read: readPaperLedger, write: writePaperLedger },
+  requested = quotes.length,
+): AutoAccount {
+  if (!account.enabled || !quotes.length || account.lastCycle === checkedAt) return account
+  const next = runAutoCycle(account, [], quotes, checkedAt, now, paperStore)
+  if (next === account) return account
+  const filled = next.fills.length - account.fills.length
+  const received = quotes.length
+  const status: AutoWatchStatus['status'] = received < requested ? '일부 오류' : '정상'
+  const message = filled > 0
+    ? '빠른 시세 감시 중 가상 체결 ' + filled + '건'
+    : '보유·진입 감시 종목 ' + received + '개 가격 점검 · 체결 없음'
+  return {
+    ...next,
+    runs: account.runs,
+    dailyStats: account.dailyStats,
+    lastMessage: filled > 0 ? message : account.lastMessage,
+    watchStatus: {
+      checkedAt, processedAt: now.toISOString(), watched: requested,
+      received, filled, status, message,
+    },
+  }
+}
+export function recordAutoWatchError(
+  account: AutoAccount, message: string, requested: number, now = new Date(),
+): AutoAccount {
+  return {
+    ...account,
+    watchStatus: {
+      checkedAt: '',
+      processedAt: now.toISOString(),
+      watched: requested,
+      received: 0, filled: 0, status: '오류', message,
+    },
+  }
+}
+
 /**
  * Explicit, user-confirmed trial liquidation using a VERIFIED current KB quote.
  * Unlike a synthetic engine rehearsal, this settles the selected holding in the
