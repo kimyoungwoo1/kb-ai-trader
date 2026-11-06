@@ -3,7 +3,8 @@ import './styles.css'
 import PaperTrading from './PaperTrading'
 import { generateTradeSignals } from './tradeSignals'
 import AutoPaperLab from './AutoPaperLab'
-import { AUTO_EVENT, readAutoAccount, runAutoCycle, writeAutoAccount } from './autoPaper'
+import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
+import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { getAutoHealth } from './autoStatus'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
@@ -57,6 +58,9 @@ export default function App() {
   const [marketDiscoveryInfo, setMarketDiscoveryInfo] = useState('수급 후보 탐색 전 · 코스피·코스닥 공개 데이터에 포함된 종목을 대상으로 선별합니다(전체 상장종목 전수 아님).')
   const marketScanRef = useRef(false)
   const marketScanRunner = useRef<() => Promise<void>>(async () => {})
+  const fastWatchBusyRef = useRef(false)
+  const fastWatchRunner = useRef<() => Promise<void>>(async () => {})
+  const fastWatchBackoffRef = useRef(0)
   const [signalSnapshot, setSignalSnapshot] = useState<ReturnType<typeof generateTradeSignals>>([])
   const [signalCheckedAt, setSignalCheckedAt] = useState('')
   const [marketDataLoading, setMarketDataLoading] = useState(false)
@@ -386,6 +390,84 @@ export default function App() {
       setMarketDataMessage('전체시장 수급 후보 탐색 실패 · 기존 데이터 유지')
     } finally { marketScanRef.current = false; setMarketDataLoading(false) }
   }
+  async function refreshTrackedPrices() {
+    if (!token || fastWatchBusyRef.current || marketScanRef.current || !isKrxSession()
+      || Date.now() < fastWatchBackoffRef.current) return
+    const account = readAutoAccount()
+    if (!account.enabled) return
+    const tracked = selectAutoWatchStocks(account)
+    if (!tracked.length) return
+    fastWatchBusyRef.current = true
+    const valid: { code: string; name: string; price: number }[] = []
+    const failures: string[] = []
+    let rateLimited = false
+    try {
+      // No market discovery or investor-flow requests. These are only held/watchlist quote checks.
+      // Sequential calls avoid bursts of OAuth + quote requests against KB Open API.
+      for (const stock of tracked) {
+        try {
+          const response = await fetch(API + '/api/kb/quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ code: stock.code, exchange: '1' }),
+            signal: AbortSignal.timeout(12_000),
+          })
+          if (response.status === 401) {
+            logout()
+            setError('시세 감시 중 로그인 세션이 만료됐습니다. 다시 로그인해 주세요.')
+            return
+          }
+          const result = await response.json()
+          if (!response.ok || !result.success) {
+            const limited = response.status === 429 || result.http_status === 429
+              || /호출 제한|과다 호출|429/.test(String(result.message || ''))
+            if (limited) rateLimited = true
+            failures.push(stock.name + ': 현재가 조회 실패' + (limited ? ' (호출 제한)' : ''))
+            if (limited) break
+            continue
+          }
+          const price = Number(result.price)
+          const quoteTime = Date.parse(String(result.checked_at || ''))
+          if (result.code !== stock.code || !Number.isFinite(price) || price <= 0
+            || !Number.isFinite(quoteTime) || quoteTime > Date.now() + 15_000
+            || Date.now() - quoteTime > 120_000) {
+            failures.push(stock.name + ': 유효한 최신 가격 없음')
+            continue
+          }
+          valid.push({ code: stock.code, name: stock.name, price })
+        } catch {
+          failures.push(stock.name + ': 시세 요청 시간 초과 또는 연결 실패')
+        }
+      }
+      if (rateLimited) fastWatchBackoffRef.current = Date.now() + 180_000
+      // A manual sale, stop request or broad scan can occur during the network reads.
+      // Re-read account after awaits and never write stale positions back over user actions.
+      const latest = readAutoAccount()
+      if (!latest.enabled || !isKrxSession() || marketScanRef.current) return
+      if (!valid.length) {
+        writeAutoAccount(recordAutoWatchError(latest,
+          rateLimited ? 'KB API 호출 제한 · 3분 후 재시도' : failures.join(' / ') || '조회된 가격 없음',
+          tracked.length))
+        return
+      }
+      const now = new Date()
+      const next = runAutoWatchCycle(latest, valid, now.toISOString(), now, undefined, tracked.length)
+      if (next !== latest) {
+        if (failures.length && next.watchStatus) {
+          next.watchStatus = {
+            ...next.watchStatus,
+            status: '일부 오류',
+            message: next.watchStatus.message + ' · ' + failures.join(' / '),
+          }
+        }
+        writeAutoAccount(next)
+      }
+    } finally {
+      fastWatchBusyRef.current = false
+    }
+  }
+  fastWatchRunner.current = refreshTrackedPrices
+
   marketScanRunner.current = loadBroadMarketData
   useEffect(() => {
     if (!token) return
@@ -396,6 +478,16 @@ export default function App() {
     // Market scans no longer depend on the visible page. Browser must remain open.
     poll()
     const timer = window.setInterval(poll, 5 * 60 * 1000)
+    return () => window.clearInterval(timer)
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
+    // One minute monitoring only for held/queued securities, independent of page navigation.
+    // Browser tabs can throttle timers; this is not a server-side stop order.
+    const poll = () => { if (readAutoAccount().enabled) void fastWatchRunner.current() }
+    poll()
+    const timer = window.setInterval(poll, FAST_QUOTE_INTERVAL_MS)
     return () => window.clearInterval(timer)
   }, [token])
 
