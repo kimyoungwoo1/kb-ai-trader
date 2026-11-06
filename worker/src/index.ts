@@ -18,6 +18,7 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  DEPLOY_PROBE_TOKEN?: string;
 }
 
 const corsHeaders = {
@@ -81,6 +82,34 @@ const service = {
         status: "healthy",
         checked_at: new Date().toISOString(),
       });
+    }
+
+    // One-time deployment smoke probe. The random secret is replaced on every
+    // deployment, never printed or exposed through the dashboard/login API.
+    // Reuse existing authenticated read-only routes to verify the same KB
+    // holdings/valuation path the account dashboard actually uses.
+    if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
+      if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
+        return json({ success:false, message:"Not Found" },404);
+      const checks: Record<string, {success:boolean;stage:string;http_status:number}> = {};
+      for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
+        try {
+          const reply=await service.fetch(new Request('https://localhost'+route,{
+            method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
+            body:'{}',
+          }),env);
+          const result=await reply.json() as Record<string,unknown>;
+          checks[name]={success:reply.ok&&result.success===true,
+            stage:typeof result.stage==='string'?result.stage:(reply.ok?'ok':'unknown'),
+            http_status:reply.status};
+        } catch {
+          checks[name]={success:false,stage:'network',http_status:502};
+        }
+      }
+      const success=checks.holdings.success&&checks.valuation.success;
+      return new Response(JSON.stringify({
+        success,stage:success?'ok':'kb_account_probe',checks,checked_at:new Date().toISOString(),
+      }),{status:success?200:503,headers:{...corsHeaders,'Cache-Control':'no-store'}});
     }
 
     if (url.pathname === "/api/auth/login" && request.method === "POST") {
