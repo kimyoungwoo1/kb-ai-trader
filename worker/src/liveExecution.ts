@@ -5,7 +5,7 @@
  */
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
 import {lookupKbOrder} from './kbOrderContract'
-import {submitKbLimitOnce} from './kbOrderSubmit'
+import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
 import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
 import {transitionOrder,type OrderRecord} from './liveOrderJournal'
 
@@ -192,6 +192,76 @@ async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'
  }catch{return 'unknown_order_result'}
  return result.state==='ACCEPTED'?'accepted_not_filled':result.state==='REJECTED'?'rejected':'unknown_order_result'
 }
+/**
+ * Cancel unresolved BUY/SELL limit orders after 5 minutes of age.
+ * A durable UNIQUE cancel claim is persisted BEFORE contacting KB.
+ * Lost ACK, a crash or duplicated Cron invocation NEVER sends another cancel.
+ * An accepted cancel request is NOT proof that the remaining shares were canceled.
+ */
+export async function cancelStaleLiveOrders(
+ db:Db|undefined,env:LiveEnv,now=new Date()
+):Promise<{attempted:number;accepted:number;unknown:number;skipped:number}>{
+ const result={attempted:0,accepted:0,unknown:0,skipped:0}
+ if(!db||!hardSwitch(env)||!(await getLiveGate(db,env,now)).enabled)return result
+ const rowsResult=await db.prepare(
+  "SELECT * FROM live_order_journal WHERE state IN ('ACCEPTED','PARTIAL') AND broker_order_id IS NOT NULL AND created_at<=? ORDER BY created_at ASC LIMIT 10"
+ ).bind(new Date(now.getTime()-5*60_000).toISOString()).all()
+ const rows=Array.isArray(rowsResult?.results)?rowsResult.results:[]
+ for(const raw of rows){
+  const row=rowFromDb(raw)
+  if(!/^[0-9]{1,15}$/.test(row.brokerOrderId||'')||!Number.isSafeInteger(row.filledQuantity)||
+      row.filledQuantity>=row.quantity||row.filledQuantity<0){
+   result.skipped++;continue
+  }
+  // IMPORTANT: an ACK may be stale. Read the broker status before claiming.
+  // If the broker reports a fill, let reconciliation settle it first.
+  let broker
+  try{broker=await lookupKbOrder(env,dateToKb(row.tradingDay),row.brokerOrderId!,row.code,row.side)}
+  catch{result.skipped++;continue}
+  if(!broker.found||!broker.order||broker.order.filledQuantity<row.filledQuantity||
+     broker.order.orderQuantity!==row.quantity||broker.order.orderPrice!==row.limitPrice||
+     broker.order.remainingQuantity<=0){
+   result.skipped++;continue
+  }
+  // Conditional claim: ensures the same order cannot be cancelled twice,
+  // even with simultaneous Cron executions. The UNIQUE primary key persists
+  // indefinitely and is NOT cleared by a timeout.
+  const claim=await db.prepare(
+   "INSERT OR IGNORE INTO live_cancel_journal(order_id,broker_order_id,status,cancel_order_no,claimed_at,updated_at) "+
+   "SELECT id,broker_order_id,'CLAIMED',NULL,?,? FROM live_order_journal "+
+   "WHERE id=? AND state IN ('ACCEPTED','PARTIAL') AND broker_order_id=? "+
+   "AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE order_id=?)"
+  ).bind(now.toISOString(),now.toISOString(),row.id,row.brokerOrderId,row.id).run()
+  if(!changed(claim)){result.skipped++;continue}
+  // First claim is irrevocable: a crash here leaves the order for manual review.
+  result.attempted++
+  try{
+   await db.prepare(
+    "UPDATE live_order_journal SET state='CANCEL_REQUESTED',updated_at=? "+
+    "WHERE id=? AND state IN ('ACCEPTED','PARTIAL') AND broker_order_id=?"
+   ).bind(new Date().toISOString(),row.id,row.brokerOrderId).run()
+  }catch{result.unknown++;continue}
+  // If the user disarms in the interim, NEVER send a cancel write. Claim remains.
+  if(!(await getLiveGate(db,env,new Date())).enabled){result.unknown++;continue}
+  let status:'ACKNOWLEDGED'|'UNKNOWN'|'REJECTED'='UNKNOWN'
+  let cancelNo:string|null=null
+  try{
+   const ack=await submitKbCancelOnce(env,row.code,row.brokerOrderId!)
+   status=ack.state==='ACCEPTED'?'ACKNOWLEDGED':ack.state==='REJECTED'?'REJECTED':'UNKNOWN'
+   if(ack.state==='ACCEPTED')cancelNo=ack.brokerOrderNo
+  }catch{status='UNKNOWN'}
+  try{
+   await db.prepare(
+    "UPDATE live_cancel_journal SET status=?,cancel_order_no=?,updated_at=? "+
+    "WHERE order_id=? AND status='CLAIMED'"
+   ).bind(status,cancelNo,new Date().toISOString(),row.id).run()
+  }catch{status='UNKNOWN'}
+  if(status==='ACKNOWLEDGED')result.accepted++
+  else result.unknown++
+ }
+ return result
+}
+
 /** Reconciliation never sends an order; it only reads records with KB order IDs. */
 export async function reconcileLiveOrders(db:Db|undefined,env:LiveEnv):Promise<{checked:number;updated:number;unresolved:number}>{
  if(!db)return {checked:0,updated:0,unresolved:0}
@@ -210,9 +280,10 @@ export async function reconcileLiveOrders(db:Db|undefined,env:LiveEnv):Promise<{
   if(actual.orderQuantity!==row.quantity||actual.orderPrice!==row.limitPrice||actual.filledQuantity<row.filledQuantity){
     unresolved++;continue
   }
-  let next:'ACCEPTED'|'PARTIAL'|'FILLED'|'UNKNOWN'
+  let next:'ACCEPTED'|'PARTIAL'|'FILLED'|'CANCEL_REQUESTED'
   if(actual.filledQuantity===row.quantity&&actual.remainingQuantity===0)next='FILLED'
-  else if(actual.remainingQuantity>0)next=actual.filledQuantity>0?'PARTIAL':'ACCEPTED'
+  else if(actual.remainingQuantity>0)
+   next=row.state==='CANCEL_REQUESTED'?'CANCEL_REQUESTED':actual.filledQuantity>0?'PARTIAL':'ACCEPTED'
   else{unresolved++;continue} // Final cancellation not inferred from absence/zero remaining.
   if(next===row.state&&actual.filledQuantity===row.filledQuantity)continue
   try{
