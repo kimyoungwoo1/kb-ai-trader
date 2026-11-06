@@ -1,0 +1,16 @@
+{
+  "name": "KB AI TRADER",
+  "short_name": "KB Trader",
+  "start_url": "/?page=notifications",
+  "display": "standalone",
+  "background_color": "#101f32",
+  "theme_color": "#101f32",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
