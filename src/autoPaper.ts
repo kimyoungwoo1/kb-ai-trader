@@ -10,6 +10,7 @@ export const AUTO_WATCH_INTERVAL_MS = 30_000
 const MAX_POSITION = 200_000
 export const MAX_POSITIONS = 5
 const MAX_DAILY_LOSS = 10_000
+const MAX_DAILY_LOSS_STREAK = 3
 const BUY_SLIPPAGE = 0.001
 const SELL_SLIPPAGE = 0.001
 const BUY_FEE = 0.00015
@@ -165,6 +166,12 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   const dayRealized = fills.filter(f => f.side === 'SELL' && !f.test && kstDate(new Date(f.at)) === currentDate)
     .reduce((sum, f) => sum + (f.pnl || 0), 0)
   let sessionPnl = dayRealized
+  let lossStreak = 0
+  for (const fill of fills.filter(f=>f.side==='SELL' && !f.test &&
+    kstDate(new Date(f.at))===currentDate)) {
+    if ((fill.pnl ?? 0) < 0) lossStreak++
+    else break
+  }
   // Existing position exits have precedence, and only verified fresh quotes may trigger them.
   positions = positions.filter(p => {
     const mark = quoteMap.get(p.code)
@@ -187,6 +194,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
       else ledgerPositions[idx] = { ...existing, quantity: existing.quantity - p.quantity, lastPrice: mark }
     }
     sessionPnl += pnl
+    lossStreak = pnl < 0 ? lossStreak + 1 : 0
     fills.unshift({ id: now.toISOString() + '-sell-' + p.code, at: now.toISOString(), code: p.code, name: p.name, side: 'SELL',
       quantity: p.quantity, price: sellPrice, costs, pnl, reason })
     alreadyTradedToday.add(p.code)
@@ -209,7 +217,7 @@ export function runAutoCycle(account: AutoAccount, signals: TradeSignal[], quote
   }
   // Require a *later* quote to cross the watch trigger. Never fill using the creating snapshot.
   for (const item of [...pending]) {
-    if (ledgerPositions.length >= MAX_POSITIONS || sessionPnl <= -MAX_DAILY_LOSS) break
+    if (ledgerPositions.length >= MAX_POSITIONS || sessionPnl <= -MAX_DAILY_LOSS || lossStreak >= MAX_DAILY_LOSS_STREAK) break
     if (new Date(item.createdAt).getTime() >= checked.getTime()) continue
     if (alreadyTradedToday.has(item.code)) continue
     const mark = quoteMap.get(item.code)
