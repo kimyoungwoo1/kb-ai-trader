@@ -497,3 +497,31 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-cloud-sync-status.cloud-phase-error,.auto-cloud-sync-status.cloud-phase-blocked{border-color:#925347;background:#302123;color:#f7c2b6}
 .auto-cloud-sync-status.cloud-phase-error small,.auto-cloud-sync-status.cloud-phase-blocked small{color:#edb8ac}
 .auto-cloud-sync-status.cloud-phase-starting{border-color:#536580;background:#1b283d;color:#bdcde3}
+
+/* Dedicated server notifications inbox; visually isolated from automatic trading controls. */
+.notification-page{display:flex;flex-direction:column;gap:18px}
+.notification-settings{padding:22px}
+.notification-settings-heading{display:flex;align-items:flex-start;gap:12px;color:#69dbc9}
+.notification-settings-heading strong{color:#f0f6ff;font-size:15px}
+.notification-settings-heading p{color:#a0b6cf;font-size:12px;margin:5px 0 0;line-height:1.7}
+.notification-meta,.notification-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:16px}
+.notification-meta span{padding:7px 11px;border-radius:8px;background:#14253b;color:#abc3da;font-size:11px}
+.notification-actions button,.notification-list-panel button,.notification-page .page-heading button{display:inline-flex;align-items:center;gap:7px}
+.notification-hint{display:flex;align-items:center;gap:7px;color:#9eb5d0;font-size:11px;line-height:1.65;margin:12px 0 0}
+.notification-list-panel{padding:18px}
+.notification-count{display:inline-flex;margin-left:8px;padding:3px 8px;background:#284454;color:#85e6d5;border-radius:12px;font-size:10px;font-weight:500}
+.notification-list{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.notification-item{border:1px solid #2a3d55;border-radius:9px;padding:15px;background:#142136}
+.notification-item.is-unread{border-color:#37796f;background:#172d3a}
+.notification-item.is-read{opacity:.75}
+.notification-item-heading{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.notification-item-heading>div{display:flex;align-items:center;flex-wrap:wrap;gap:9px}
+.notification-item-heading strong{color:#e6f1ff;font-size:12px}
+.notification-item-heading>span{color:#849fbc;font-size:10px}
+.notification-item p{white-space:pre-wrap;font-size:12px;line-height:1.7;color:#b5c7dd;margin:10px 0 0}
+.notification-item button{margin-top:10px;font-size:10px;padding:5px 10px}
+.notification-tag{border:1px solid #355a68;border-radius:5px;color:#8fd5c9;padding:3px 7px;font-size:10px}
+.notification-kind-error{color:#ffafa2;border-color:#925347}
+.notification-kind-recovery{color:#88df9f;border-color:#437c50}
+.notification-kind-trade{color:#83ceff;border-color:#426a90}
+@media(max-width:760px){.notification-settings{padding:16px}.notification-item-heading{flex-direction:column}.notification-page .page-heading{gap:12px}}
