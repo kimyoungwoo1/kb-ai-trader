@@ -30,3 +30,15 @@ CREATE TABLE IF NOT EXISTS server_paper_state (
   snapshot_json TEXT NOT NULL,
   last_error TEXT
 );
+
+-- Cron invocation audit only; it never changes the trading ledger.
+CREATE TABLE IF NOT EXISTS server_paper_cron_runs (
+ slot INTEGER PRIMARY KEY,
+ started_at TEXT NOT NULL,
+ finished_at TEXT NOT NULL,
+ result TEXT NOT NULL,
+ message TEXT NOT NULL,
+ scanned INTEGER NOT NULL DEFAULT 0,
+ filled INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_server_paper_cron_result_slot ON server_paper_cron_runs(result,slot DESC);
