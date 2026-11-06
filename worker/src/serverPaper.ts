@@ -5,14 +5,14 @@
 import { generateTradeSignals } from '../../src/tradeSignals';
 import { runAutoCycle, runAutoWatchCycle } from '../../src/autoPaper';
 import { applyCatalystGate, catalystAllowsPending, type CatalystSnapshot } from '../../src/marketCatalysts';
-import type { AutoAccount } from '../../src/autoPaper';
+import type { AutoAccount, AutoFill } from '../../src/autoPaper';
 import type { PaperLedger } from '../../src/paperLedger';
 
 type Db = any;
 type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
-export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'error'; message:string; filled:number; scanned:number };
+export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[] };
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error FROM server_paper_state WHERE id=1').first<StateRow>();
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
@@ -168,12 +168,14 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       nextAccount.pending = [...nextAccount.pending,...paused];
       message = '보유·감시 종목 '+validQuotes.length+'/'+symbols.length+'건';
     }
-    const executedFills = Math.max(0,nextAccount.fills.length - snapshot.account.fills.length);
+    const oldFills = new Set(snapshot.account.fills.map(f=>f.id));
+    const newFills=nextAccount.fills.filter(f=>!oldFills.has(f.id));
+    const executedFills = newFills.length;
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
     const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=NULL, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(JSON.stringify(snapshot),new Date().toISOString(),writeRevision,slot).run();
     if ((res.meta?.changes ?? 0)!==1) return {result:'busy',message:'원장 변경 경합 · 거래 결과 반영 안 함',filled:0,scanned:0};
-    return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length};
+    return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length,fills:newFills};
   } catch (error) {
     const diagnostic = error instanceof Error ? error.message.slice(0,180) : '서버 감시 실패';
     await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
