@@ -67,3 +67,24 @@ CREATE TABLE IF NOT EXISTS paper_notification_settings (
  settings_json TEXT NOT NULL,
  updated_at TEXT NOT NULL
 );
+
+-- Separate real-money trial readiness log; does NOT place brokerage orders.
+CREATE TABLE IF NOT EXISTS live_trial_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled=0),
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS live_trial_candidates (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ trading_day TEXT NOT NULL UNIQUE,
+ event_id TEXT NOT NULL UNIQUE,
+ code TEXT NOT NULL,
+ name TEXT NOT NULL,
+ side TEXT NOT NULL CHECK(side='BUY'),
+ quantity INTEGER NOT NULL CHECK(quantity>0),
+ limit_price INTEGER NOT NULL CHECK(limit_price>0),
+ notional INTEGER NOT NULL CHECK(notional<=50000),
+ reason TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status='DRY_RUN_ONLY'),
+ created_at TEXT NOT NULL
+);
