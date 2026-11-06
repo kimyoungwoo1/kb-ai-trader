@@ -1,4 +1,5 @@
-import { serverPaperApi, serverPaperTick } from './serverPaper'
+import { serverPaperApi } from './serverPaper'
+import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -99,6 +100,16 @@ const service = {
       try { const body = await request.json() as {action?:string;signature?:string}; action = String(body.action || ""); signature = String(body.signature || "").slice(0,800); }
       catch { return json({ success:false, message:"요청 JSON 오류" },400); }
       const response = await serverPaperApi(env.PAPER_DB,action,signature);
+      if (action === 'status' && response.ok && env.PAPER_DB) {
+        const body = await response.json() as Record<string,unknown>;
+        try {
+          body.cron = await readServerCronMonitor(env.PAPER_DB);
+          body.cron_monitor_available = true;
+        } catch {
+          body.cron_monitor_available = false;
+        }
+        return json(body,200);
+      }
       const headers = new Headers(response.headers);
       for (const [k,v] of Object.entries(corsHeaders)) headers.set(k,v);
       return new Response(response.body,{status:response.status,headers});
@@ -1168,7 +1179,7 @@ const service = {
       if (!response.ok || result?.success !== true) throw Error(String(result?.message||'내부 KB 조회 실패').slice(0,180));
       return result;
     };
-    context.waitUntil(serverPaperTick(env.PAPER_DB,post));
+    context.waitUntil(runMonitoredPaperCron(env.PAPER_DB,post));
   },
 };
 export default service;
