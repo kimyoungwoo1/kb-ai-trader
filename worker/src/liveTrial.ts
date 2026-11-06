@@ -45,7 +45,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const settings=await db.prepare('SELECT enabled,updated_at FROM live_trial_settings WHERE id=1').first()
       const rows=await db.prepare('SELECT id,trading_day,event_id,code,name,side,quantity,limit_price,notional,reason,status,created_at FROM live_trial_candidates ORDER BY id DESC LIMIT 30').all()
       const gate=await getLiveGate(db,env||{})
-      const journal=await db.prepare("SELECT id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at FROM live_order_journal ORDER BY created_at DESC LIMIT 20").all()
+      const journal=await db.prepare("SELECT j.id,j.trading_day,j.code,j.side,j.quantity,j.limit_price,j.reserved_won,j.state,j.broker_order_id,j.filled_quantity,j.created_at,j.updated_at,c.status AS cancel_status,c.cancel_order_no FROM live_order_journal j LEFT JOIN live_cancel_journal c ON c.order_id=j.id ORDER BY j.created_at DESC LIMIT 20").all()
       return reply({success:true,enabled:gate.enabled,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
         mode:gate.enabled?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
         candidates:rows.results||[],orders:journal.results||[],gate,
