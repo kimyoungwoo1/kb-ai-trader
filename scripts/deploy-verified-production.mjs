@@ -91,7 +91,8 @@ async function main(){
       'CREATE TABLE IF NOT EXISTS paper_backup_head (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>0), updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)',
       'CREATE TABLE IF NOT EXISTS paper_backup_history (revision INTEGER PRIMARY KEY, updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)',
       'CREATE INDEX IF NOT EXISTS idx_paper_backup_updated ON paper_backup_history(updated_at)',
-      'CREATE TABLE IF NOT EXISTS paper_trade_lease (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, lease_until INTEGER NOT NULL)'
+      'CREATE TABLE IF NOT EXISTS paper_trade_lease (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, lease_until INTEGER NOT NULL)',
+      "CREATE TABLE IF NOT EXISTS server_paper_state (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('running','stopped')), cycle_slot INTEGER NOT NULL DEFAULT -1, updated_at TEXT NOT NULL, snapshot_json TEXT NOT NULL, last_error TEXT)"
     ]){
       const queryResult=await api(root+'/d1/database/'+paperDbId+'/query',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
@@ -177,6 +178,18 @@ async function main(){
   ensure(login.status===400,'로그인 Secret 동작 검사 실패: HTTP '+login.status)
   const page=await fetch(domain,{cache:'no-store'})
   ensure(page.ok&&(await page.text()).includes('<html'),'대시보드 정적 파일 응답 검사 실패')
+  // This uploader uses the Cloudflare Versions API, not wrangler deploy.
+  // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
+  if(paperDbId){
+    await api(root+'/workers/scripts/'+name+'/schedules',{
+      method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({schedules:[{cron:'* * * * *'}]})
+    })
+    const currentSchedules=await api(root+'/workers/scripts/'+name+'/schedules')
+    ensure((currentSchedules.schedules||[]).some(item=>item.cron==='* * * * *'),
+      '서버 감시 Cron 등록 확인 실패')
+    console.log('✓ 매 1분 서버 가상매매 Cron 활성화 확인')
+  }
   console.log('✅ 운영 반영 성공: '+domain)
 }
 try {await main()} catch(e){
