@@ -97,3 +97,40 @@ test('the quote endpoint refuses unauthenticated requests before hitting KB API'
     assert.equal(result.status, 401)
   } finally { globalThis.fetch = fetchOriginal }
 })
+
+test('a transient KB authentication transport failure retries once without exposing credentials',async()=>{
+ const previous=globalThis.fetch
+ let authCalls=0
+ globalThis.fetch=async(input)=>{
+   if(String(input).endsWith('/oauth2/token')){
+     authCalls++
+     if(authCalls===1)throw new TypeError('temporary network failure')
+     return Response.json({dataBody:{access_token:'retry-token',expires_in:3600}})
+   }
+   return Response.json({dataHeader:{resultCode:'0'},dataBody:{now_prc:'80000',is_nm:'TEST'}})
+ }
+ try{
+   const isolatedEnv={...env,KB_APP_KEY:'retry-key'}
+   const res=await worker.fetch(quote(),isolatedEnv)
+   assert.equal(res.status,200)
+   assert.equal(authCalls,2)
+ }finally{globalThis.fetch=previous}
+})
+
+test('a KB-issued authentication rejection is not retried',async()=>{
+ const previous=globalThis.fetch
+ let authCalls=0
+ globalThis.fetch=async(input)=>{
+   if(String(input).endsWith('/oauth2/token')){
+     authCalls++
+     return Response.json({message:'bad credentials'},{status:401})
+   }
+   throw Error('should not request a quote without an auth token')
+ }
+ try{
+   const rejectedEnv={...env,KB_APP_KEY:'rejected-token-key'}
+   const res=await worker.fetch(quote(),rejectedEnv)
+   assert.equal(res.status,502)
+   assert.equal(authCalls,1)
+ }finally{globalThis.fetch=previous}
+})
