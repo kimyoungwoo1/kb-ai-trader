@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS server_paper_state (
   revision INTEGER NOT NULL,
   mode TEXT NOT NULL CHECK(mode IN ('running','stopped')),
   cycle_slot INTEGER NOT NULL DEFAULT -1,
+  busy_until INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   snapshot_json TEXT NOT NULL,
   last_error TEXT
