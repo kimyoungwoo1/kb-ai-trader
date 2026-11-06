@@ -15,7 +15,30 @@ const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
 let token = '', accountId = '', switched = false, rollbackVersion = '', paperDbId = ''
 const exec = (program,args,dir=cwd) => execFileSync(program,args,{cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']})
 const ensure = (ok,msg) => { if(!ok) throw Error(msg) }
-const parseJson = text => JSON.parse(text.slice(text.indexOf('{')))
+const parseJson = (value, label='CLI') => {
+  const raw=String(value||'')
+  const at=raw.indexOf('{')
+  if(at<0)throw Error(label+' JSON 응답 없음 · '+(raw.toLowerCase().includes('no healthy upstream')?'Cloudflare upstream 장애':'CLI 응답 형식 오류'))
+  try {return JSON.parse(raw.slice(at))}
+  catch {throw Error(label+' JSON 파싱 실패 · 응답 형식 오류')}
+}
+const delay = ms => new Promise(resolve => setTimeout(resolve,ms))
+const upstreamError = error => /no healthy upstream|upstream connect|502|503|504|ETIMEDOUT|ECONNRESET|fetch failed/i.test(String(error?.message||error))
+const cliRead=async(args,label)=>{
+  for(let attempt=1;attempt<=4;attempt++){
+    try{
+      const output=exec('npx',args,join(cwd,'worker'))
+      if(/no healthy upstream/i.test(output))throw Error('no healthy upstream')
+      return output
+    }catch(error){
+      if(!upstreamError(error)||attempt===4)
+        throw Error(label+' 실패 · '+(upstreamError(error)?'Cloudflare 연결 장애':'CLI 실행 오류')+' (운영 미변경)')
+      console.warn('○ '+label+' 서버 응답 지연 · 재시도 '+attempt+'/4')
+      await delay(800*attempt)
+    }
+  }
+  throw Error(label+' 실패')
+}
 const bindingEntries = value => {
   const opts=[value?.resources?.bindings,value?.bindings,value?.result?.resources?.bindings,value?.result?.bindings]
   const v=opts.find(x=>x&&typeof x==='object')
@@ -46,19 +69,55 @@ async function main(){
   console.log('✓ 기존 운영 Worker 응답 정상 (KB 실계좌 연결은 배포 후 별도 검사)')
   // A rollback or an automatic deployment can change the currently active version.
   // The source version only needs to exist with the expected bindings.
-  const auth=parseJson(exec('npx',['wrangler','auth','token','--json'],join(cwd,'worker')))
+  const auth=parseJson(await cliRead(['wrangler','auth','token','--json'],'Wrangler 인증 토큰 조회'),'Wrangler auth token')
   ensure(['oauth','api_token'].includes(auth.type)&&auth.token,'Wrangler 인증 조회 실패')
   token=auth.token
-  const ids=[...new Set(exec('npx',['wrangler','whoami'],join(cwd,'worker')).match(/\b[a-f0-9]{32}\b/gi)||[])]
+  const ids=[...new Set((await cliRead(['wrangler','whoami'],'Wrangler 계정 조회')).match(/\b[a-f0-9]{32}\b/gi)||[])]
   ensure(ids.length===1||process.env.CLOUDFLARE_ACCOUNT_ID,'Cloudflare 계정이 하나로 식별되지 않았습니다.')
   accountId=process.env.CLOUDFLARE_ACCOUNT_ID||ids[0]
   const root='https://api.cloudflare.com/client/v4/accounts/'+accountId
   async function api(url,{method='GET',body,authToken=token,headers={}}={}){
-    const response=await fetch(url,{method,headers:{Authorization:'Bearer '+authToken,...headers},body})
-    const value=await response.json()
-    if(!response.ok||value.success===false)
-      throw Error('Cloudflare HTTP '+response.status+': '+(value.errors||[]).map(x=>x.code+': '+x.message).join(' / '))
-    return value.result??value
+    // Only retry idempotent GET requests. Retrying D1 writes, asset uploads,
+    // or deployment mutations could duplicate changes.
+    const step=new URL(url).pathname.split('/').slice(-3).join('/')
+    const maxAttempts=method==='GET'?4:1
+    for(let attempt=1;attempt<=maxAttempts;attempt++){
+      let response,raw
+      try{
+        response=await fetch(url,{method,headers:{Authorization:'Bearer '+authToken,...headers},body,signal:AbortSignal.timeout(30000)})
+        raw=await response.text()
+      }catch(error){
+        if(method==='GET'&&attempt<maxAttempts){
+          console.warn('○ Cloudflare API 연결 지연 ('+step+') · 재시도 '+attempt+'/'+maxAttempts)
+          await delay(attempt*800)
+          continue
+        }
+        throw Error('Cloudflare API 통신 실패 ('+step+', '+method+') · 운영 상태 확인 필요')
+      }
+      let value
+      try {value=JSON.parse(raw)}
+      catch {
+        const upstream=/no healthy upstream|upstream connect/i.test(raw)
+        if(method==='GET'&&attempt<maxAttempts&&(upstream||[502,503,504].includes(response.status))){
+          console.warn('○ Cloudflare API upstream 지연 ('+step+', HTTP '+response.status+') · 재시도 '+attempt+'/'+maxAttempts)
+          await delay(attempt*800)
+          continue
+        }
+        throw Error('Cloudflare API 비JSON 응답 ('+step+', HTTP '+response.status+') · '+
+          (upstream?'no healthy upstream':'예상하지 못한 응답')+' · 운영 변경 여부는 배포 단계에 따름')
+      }
+      if(!response.ok||value?.success===false){
+        if(method==='GET'&&attempt<maxAttempts&&[502,503,504].includes(response.status)){
+          console.warn('○ Cloudflare API 오류 ('+step+', HTTP '+response.status+') · 재시도 '+attempt+'/'+maxAttempts)
+          await delay(attempt*800)
+          continue
+        }
+        const errors=Array.isArray(value?.errors)?value.errors:[]
+        throw Error('Cloudflare HTTP '+response.status+' ('+step+'): '+errors.map(x=>x.code+': '+x.message).join(' / ').slice(0,300))
+      }
+      return value.result??value
+    }
+    throw Error('Cloudflare API 재시도 초과 ('+step+')')
   }
   // The API accepts the Worker name directly as worker_id. Avoid fetching unrelated account data.
   const workerId=encodeURIComponent(name)
