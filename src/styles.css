@@ -478,3 +478,11 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 .auto-analytics-shortcut button{white-space:nowrap}
 @media(max-width:1080px){.analysis-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-duo{grid-template-columns:1fr}}
 @media(max-width:650px){.analysis-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.analysis-kpi{padding:13px}.analysis-kpi strong{font-size:17px}.analysis-kpi strong em{display:block;margin:3px 0 0;font-size:11px}.analysis-section{padding:14px}.analysis-dashboard .analysis-hero{padding:18px}.analysis-run-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-decisions{grid-template-columns:1fr}.analysis-mini-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-chart svg{height:200px}.analysis-chart-range span:nth-child(2){display:none}.auto-analytics-shortcut button{width:100%}}
+
+
+/* Explicit, conflict-safe D1 backup actions separated from the live paper engine. */
+.cloud-backup-panel{border-color:#375173}
+.cloud-backup-panel .analysis-mini-stats{margin-top:12px}
+.cloud-backup-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.cloud-backup-actions button:disabled{opacity:.45;cursor:not-allowed}
+.cloud-backup-message{margin:12px 0 0;font-size:10px;line-height:1.7;color:#abc3e2;overflow-wrap:anywhere}
