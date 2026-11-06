@@ -1,3 +1,4 @@
+import { serverPaperApi, serverPaperTick } from './serverPaper'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -59,7 +60,7 @@ function readXmlLink(xml: string): string {
   return (href || (match ? decodeXml(match[2].replace(/<[^>]+>/g, "")) : "")).trim();
 }
 
-export default {
+const service = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
@@ -87,11 +88,20 @@ export default {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
       }
+    }
+    if (url.pathname === "/api/paper/server" && request.method === "POST") {
+      let action = "";
+      try { action = String((await request.json() as {action?:string}).action || ""); }
+      catch { return json({ success:false, message:"요청 JSON 오류" },400); }
+      const response = await serverPaperApi(env.PAPER_DB,action);
+      const headers = new Headers(response.headers);
+      for (const [k,v] of Object.entries(corsHeaders)) headers.set(k,v);
+      return new Response(response.body,{status:response.status,headers});
     }
     if (url.pathname === "/api/paper/backup" && request.method === "POST") {
       const response = await paperBackupRoute(request, env.PAPER_DB);
@@ -1147,4 +1157,18 @@ export default {
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
     return env.ASSETS.fetch(request);
   },
+  async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+    const post = async (path: string, body: unknown): Promise<any> => {
+      if (!env.DASHBOARD_API_KEY) throw Error('서버 API 인증 설정 없음');
+      const response = await service.fetch(new Request('https://localhost'+path,{
+        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
+        body:JSON.stringify(body),
+      }),env);
+      const result = await response.json() as any;
+      if (!response.ok || result?.success !== true) throw Error(String(result?.message||'내부 KB 조회 실패').slice(0,180));
+      return result;
+    };
+    context.waitUntil(serverPaperTick(env.PAPER_DB,post));
+  },
 };
+export default service;
