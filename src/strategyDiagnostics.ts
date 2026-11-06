@@ -43,7 +43,7 @@ export type PerformanceReport = {
   totalEquity: number; returnPct: number; observations: number
 }
 export function analyzePerformance(account: AutoAccount, ledger: PaperLedger): PerformanceReport {
-  const completed = (account.fills || []).filter(f => f.side === 'SELL' && f.pnl !== null && Number.isFinite(f.pnl))
+  const completed = (account.fills || []).filter(f => f.side === 'SELL' && !f.test && f.pnl !== null && Number.isFinite(f.pnl))
   const profit = completed.filter(f => (f.pnl || 0) > 0).reduce((sum, f) => sum + (f.pnl || 0), 0)
   const loss = completed.filter(f => (f.pnl || 0) < 0).reduce((sum, f) => sum + Math.abs(f.pnl || 0), 0)
   const netPnl = completed.reduce((sum, f) => sum + (f.pnl || 0), 0)
