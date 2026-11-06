@@ -3,6 +3,7 @@ import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonit
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi, observePaperFill } from './liveTrial'
+import { processLiveFill, reconcileLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -20,6 +21,7 @@ export interface Env {
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
   DEPLOY_PROBE_TOKEN?: string;
+  LIVE_TRADING_HARD_ENABLE?: string; // intentionally absent from ordinary deployments
 }
 
 const corsHeaders = {
@@ -1238,6 +1240,13 @@ const service = {
           // Audit only: no live order calls. DB uniqueness prevents duplicate
           // candidate creation even across repeated Cron events.
           try{await observePaperFill(env.PAPER_DB,fill);}catch{console.warn('Live trial audit write failed')}
+          // Hard locked by default. A single D1 reservation/claim prevents
+          // duplicate broker POSTs even when Cron repeats after an error.
+          try {
+            const result=await processLiveFill(env.PAPER_DB,env,fill);
+            if(result!=='locked'&&result!=='stale_signal'&&result!=='invalid_signal')
+              console.log('Real pilot fill decision: '+result);
+          } catch {console.warn('Real pilot execution blocked by safety error')}
           const notice=formatPaperFillNotification(fill);
           await publishNotification(env,{
             eventKey:'fill:'+fill.id,kind:'trade',...notice
@@ -1245,6 +1254,10 @@ const service = {
         }
       }
       if(env.PAPER_DB){
+        // Reconcile only known KB order IDs; never infer that an unanswered
+        // order was rejected and never submit a duplicate order.
+        try{await reconcileLiveOrders(env.PAPER_DB,env)}
+        catch{console.warn('Real pilot reconciliation unavailable')}
         // A 3-error streak triggers a single event keyed by the beginning of the streak.
         // A successful scan immediately after an error streak triggers recovery.
         try{
