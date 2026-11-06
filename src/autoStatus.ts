@@ -30,7 +30,7 @@ export function getAutoHealth(
   if (watchListSize > 0) {
     const watch = account.watchStatus
     if (!watch) return { tone: 'working', label: '빠른 시세 감시 대기',
-      detail: '보유·진입 감시 종목의 10초 주기 시세 점검을 시작합니다.', inSession }
+      detail: '보유·진입 감시 종목의 30초 주기 시세 점검을 시작합니다.', inSession }
     const at = Date.parse(watch.processedAt)
     const age = now.getTime() - at
     if (watch.status === '오류' || watch.status === '일부 오류') {
