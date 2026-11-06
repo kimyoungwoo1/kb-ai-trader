@@ -3,7 +3,7 @@
 export const PAPER_KEY = 'kb-ai-trader-paper-v1'
 export const PAPER_EVENT = 'kb-paper-ledger-changed'
 export type PaperPosition = { code: string; name: string; quantity: number; averagePrice: number; lastPrice: number; quoteUpdatedAt?: string }
-export type PaperTrade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number; realizedPnl?: number; source?: 'manual' | 'auto'; costs?: number; reason?: string }
+export type PaperTrade = { id: string; time: string; side: 'BUY' | 'SELL'; code: string; name: string; quantity: number; price: number; amount: number; realizedPnl?: number; source?: 'manual' | 'auto' | 'test'; costs?: number; reason?: string }
 export type PaperLedger = { cash: number; positions: PaperPosition[]; trades: PaperTrade[] }
 export const freshLedger = (): PaperLedger => ({ cash: 1000000, positions: [], trades: [] })
 export function readPaperLedger(): PaperLedger {
