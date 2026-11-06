@@ -703,6 +703,10 @@ export default {
     }
 
     if (url.pathname === "/api/market/disclosures" && request.method === "POST") {
+      // Full pagination is used only for trade-risk validation, not ordinary news browsing.
+      let fullScan = false;
+      try { const body = await request.clone().json() as { complete?: boolean }; fullScan = body?.complete === true; }
+      catch { /* legacy empty body */ }
       if (!env.DART_API_KEY) return json({ success: false, message: "DART_API_KEY Secret이 설정되지 않았습니다. OpenDART 인증키를 등록해 주세요." }, 503);
       const now = new Date();
       const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -814,8 +818,8 @@ export default {
         // Parallelize in bounded groups (Cloudflare subrequest pressure and DART quotas).
         // 20 pages cover up to 2,000 filings. Anything larger is explicitly incomplete
         // and will block NEW entries instead of concealing possible adverse reports.
-        for (let startPage = 2; startPage <= Math.min(pagesRequired, 20); startPage += 4) {
-          const pages = Array.from({ length: Math.min(4, Math.min(pagesRequired, 20) - startPage + 1) },
+        for (let startPage = 2; startPage <= Math.min(pagesRequired, fullScan ? 20 : 1); startPage += 4) {
+          const pages = Array.from({ length: Math.min(4, Math.min(pagesRequired, fullScan ? 20 : 1) - startPage + 1) },
             (_, index) => startPage + index);
           const batch = await Promise.all(pages.map(async page => {
             try {
