@@ -42,3 +42,21 @@ CREATE TABLE IF NOT EXISTS server_paper_cron_runs (
  filled INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_server_paper_cron_result_slot ON server_paper_cron_runs(result,slot DESC);
+
+-- User-owned notification inbox; independent of trading account writes.
+CREATE TABLE IF NOT EXISTS paper_notifications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ event_key TEXT NOT NULL UNIQUE,
+ kind TEXT NOT NULL,
+ title TEXT NOT NULL,
+ body TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_notifications_created ON paper_notifications(id DESC);
+CREATE TABLE IF NOT EXISTS paper_push_subscriptions (
+ endpoint TEXT PRIMARY KEY,
+ subscription_json TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
