@@ -176,52 +176,10 @@ export default {
       }
 
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-          method: "POST",
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: {
-              appKey: env.KB_APP_KEY,
-              appSecret: env.KB_APP_SECRET,
-              grantType: "client_credentials",
-            },
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-      } catch (error) {
-        return json({
-          success: false,
-          stage: "token_network",
-          message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패",
-        }, 502);
-      }
-
-      let tokenResult: unknown;
-      try {
-        tokenResult = await tokenResponse.json();
-      } catch {
-        return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502);
-      }
-
-      const tokenBody = tokenResult && typeof tokenResult === "object"
-        ? (tokenResult as Record<string, unknown>).dataBody
-        : undefined;
-      const tokenData = tokenBody && typeof tokenBody === "object"
-        ? tokenBody as Record<string, unknown>
-        : {};
-      const accessToken = tokenData.access_token;
-
-      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
-        return json({
-          success: false,
-          stage: "authentication",
-          http_status: tokenResponse.status,
-          message: getKbErrorMessage(tokenResult),
-        }, 502);
-      }
-
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) { return json({ success: false, stage: "authentication",
+        message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let holdingsResponse: Response;
       try {
         holdingsResponse = await fetch(`${baseUrl}/api/v1/ssqm1801`, {
@@ -280,28 +238,10 @@ export default {
         return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
       }
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-          method: "POST",
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" },
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-      } catch (error) {
-        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502);
-      }
-      let tokenResult: unknown;
-      try { tokenResult = await tokenResponse.json(); }
-      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
-      const tokenBody = tokenResult && typeof tokenResult === "object" ? (tokenResult as Record<string, unknown>).dataBody : undefined;
-      const tokenData = tokenBody && typeof tokenBody === "object" ? tokenBody as Record<string, unknown> : {};
-      const accessToken = tokenData.access_token;
-      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
-        return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
-      }
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) { return json({ success: false, stage: "authentication",
+        message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let depositResponse: Response;
       try {
         depositResponse = await fetch(`${baseUrl}/api/v1/ssqm0004`, {
@@ -329,28 +269,10 @@ export default {
     if (url.pathname === "/api/kb/valuation" && request.method === "POST") {
       if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
       const baseUrl = (env.KB_BASE_URL || "https://developer.kbsec.com:32484").replace(/\/$/, "");
-      let tokenResponse: Response;
-      try {
-        tokenResponse = await fetch(`${baseUrl}/oauth2/token`, {
-          method: "POST",
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: "client_credentials" },
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-      } catch (error) {
-        return json({ success: false, stage: "token_network", message: error instanceof Error ? error.message.slice(0, 250) : "KB 토큰 서버 연결 실패" }, 502);
-      }
-      let tokenResult: unknown;
-      try { tokenResult = await tokenResponse.json(); }
-      catch { return json({ success: false, stage: "token_response", message: "KB 토큰 응답이 JSON이 아닙니다." }, 502); }
-      const tokenBody = tokenResult && typeof tokenResult === "object" ? (tokenResult as Record<string, unknown>).dataBody : undefined;
-      const tokenData = tokenBody && typeof tokenBody === "object" ? tokenBody as Record<string, unknown> : {};
-      const accessToken = tokenData.access_token;
-      if (!tokenResponse.ok || typeof accessToken !== "string" || !accessToken) {
-        return json({ success: false, stage: "authentication", http_status: tokenResponse.status, message: getKbErrorMessage(tokenResult) }, 502);
-      }
+      let accessToken: string;
+      try { accessToken = await getKbAccessToken(env); }
+      catch (error) { return json({ success: false, stage: "authentication",
+        message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let valuationResponse: Response;
       try {
         valuationResponse = await fetch(`${baseUrl}/api/v1/ssqm2952`, {
