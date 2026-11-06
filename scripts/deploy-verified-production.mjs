@@ -29,7 +29,7 @@ function verifyVersion(version,label,dbRequired=false){
   if(dbRequired) ensure(map.get('PAPER_DB')==='d1',label+': D1 PAPER_DB 바인딩 누락')
   console.log('✓ '+label+': Secret 5개·AI·ASSETS'+(dbRequired?'·D1 PAPER_DB':'')+' 확인')
 }
-const mimetype=path=>({'.webmanifest':'application/manifest+json','.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2','.webmanifest':'application/manifest+json'}[extname(path)]||'application/octet-stream')
+const mimetype=path=>({'.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2','.webmanifest':'application/manifest+json'}[extname(path)]||'application/octet-stream')
 function walk(root){
   return readdirSync(root,{withFileTypes:true}).flatMap(entry=>{
     const full=join(root,entry.name)
@@ -200,8 +200,28 @@ async function main(){
   })
   ensure(created.id,'새 버전 생성 응답에 ID가 없음')
   console.log('6/7 새 버전 Secret 바인딩 검증')
-  verifyVersion(await api(root+'/workers/workers/'+workerId+'/versions/'+created.id),'신규 버전',!!paperDbId)
-  const newVersion=await api(root+'/workers/workers/'+workerId+'/versions/'+created.id)
+  // Cloudflare may return a new UUID before the version becomes readable
+  // from GET. Never deploy a version until GET confirms its ID and bindings.
+  const createdId=String(created.id)
+  ensure(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(createdId),
+    'Cloudflare 버전 생성 응답의 ID가 UUID가 아닙니다.')
+  let newVersion
+  const versionUrl=root+'/workers/workers/'+workerId+'/versions/'+encodeURIComponent(createdId)
+  for(let attempt=0;attempt<7;attempt++){
+    try{
+      newVersion=await api(versionUrl)
+      break
+    }catch(error){
+      const transient=String(error?.message||'').includes('Cloudflare HTTP 404: 10071:')
+      if(!transient)throw error
+      if(attempt===6)throw Error('새 버전 생성 후에도 Cloudflare에서 해당 버전을 조회할 수 없습니다 (10071). 배포 중단 · 운영 버전 유지')
+      const delay=Math.min(1000*2**attempt,8000)
+      console.log('○ 새 버전이 아직 조회되지 않아 재확인 ('+(attempt+1)+'/7)')
+      await new Promise(resolve=>setTimeout(resolve,delay))
+    }
+  }
+  ensure(newVersion?.id===createdId,'신규 버전 조회 ID 불일치 · 배포 중단')
+  verifyVersion(newVersion,'신규 버전',!!paperDbId)
   const newBindings=new Map(bindings(newVersion).map(x=>[x.name,x.type]))
   ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
     &&newBindings.has('VAPID_PUBLIC_KEY')&&newBindings.has('VAPID_SUBJECT'),
