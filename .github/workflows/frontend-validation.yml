@@ -18,6 +18,8 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Validate safe Cloudflare deploy and D1 setup scripts
+        run: node --check scripts/deploy-verified-production.mjs && node --check scripts/setup-paper-cloud.mjs
       - name: Typecheck and build
         run: npm run build
       - name: Bundle Cloudflare Worker API (DART paging and discovery)
