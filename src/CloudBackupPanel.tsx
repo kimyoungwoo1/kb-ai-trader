@@ -83,11 +83,22 @@ export default function CloudBackupPanel({ token }: { token: string }) {
         screening: localStorage.getItem(SCREENING_HISTORY_KEY),
       })
       localStorage.setItem(LOCAL_SAFETY_KEY, prior)
-      localStorage.setItem(PAPER_KEY, JSON.stringify(snapshot.ledger))
-      // Never automatically activate a potentially stale strategy on restore.
-      localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify({ ...snapshot.account, enabled: false }))
-      if (snapshot.screening) localStorage.setItem(SCREENING_HISTORY_KEY, JSON.stringify(snapshot.screening))
-      else localStorage.removeItem(SCREENING_HISTORY_KEY)
+      try {
+        localStorage.setItem(PAPER_KEY, JSON.stringify(snapshot.ledger))
+        // Never automatically activate a potentially stale strategy on restore.
+        localStorage.setItem(AUTO_STORAGE_KEY, JSON.stringify({ ...snapshot.account, enabled: false }))
+        if (snapshot.screening) localStorage.setItem(SCREENING_HISTORY_KEY, JSON.stringify(snapshot.screening))
+        else localStorage.removeItem(SCREENING_HISTORY_KEY)
+      } catch (restoreError) {
+        // Storage quota or browser privacy failures must not strand a half-restored ledger.
+        const previous = JSON.parse(prior)
+        for (const [key, raw] of [[PAPER_KEY, previous.paper],
+          [AUTO_STORAGE_KEY, previous.auto], [SCREENING_HISTORY_KEY, previous.screening]] as const) {
+          if (typeof raw === 'string') localStorage.setItem(key, raw)
+          else localStorage.removeItem(key)
+        }
+        throw restoreError
+      }
       window.location.reload()
     } catch (error) {
       setMessage('복원 실패 · ' + (error instanceof Error ? error.message : '응답 오류'))
