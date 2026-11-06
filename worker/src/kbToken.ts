@@ -1,5 +1,5 @@
 /**
- * KB OAuth token cache: a token is reused for its reported lifetime by requests
+ * KB OAuth token cache: a token is reused for up to eight hours or its shorter reported lifetime by requests
  * routed to the same Cloudflare Worker isolate. It is NEVER returned to browsers,
  * written to assets, or stored in localStorage. Isolate restarts obtain a new token.
  */
@@ -56,7 +56,7 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
         response.status === 429 ? 429 : 502, response.status === 429)
     const reported = Number(data?.dataBody?.expires_in ?? data?.expires_in)
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
-    const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 86400) : 300
+    const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 8 * 60 * 60) : 300
     cached = { token, key, expiresAt: Date.now() + Math.max(1, lifetime - 60) * 1000 }
     return token
   }
