@@ -39,7 +39,7 @@ test('held positions are prioritized, pending symbols deduplicated and capped at
   ] })
   assert.deepEqual(selected.map(p => p.code), ['123456','654321'])
   assert.deepEqual(selected.map(p => p.priority), ['보유','진입 감시'])
-  assert.equal(FAST_QUOTE_INTERVAL_MS, 10_000)
+  assert.equal(FAST_QUOTE_INTERVAL_MS, 30_000)
 })
 
 test('price-only monitoring triggers auto sell using the existing 5% target', () => {
