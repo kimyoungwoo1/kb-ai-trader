@@ -6,6 +6,7 @@ import AutoPaperLab from './AutoPaperLab'
 import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { getAutoHealth } from './autoStatus'
+import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -55,6 +56,9 @@ export default function App() {
   const [marketAnalysis, setMarketAnalysis] = useState('')
   const [marketStocks, setMarketStocks] = useState<MarketStock[]>([])
   const [marketCheckedAt, setMarketCheckedAt] = useState('')
+  const [autoSignals, setAutoSignals] = useState<ReturnType<typeof generateTradeSignals>>([])
+  const [catalysts, setCatalysts] = useState<CatalystSnapshot | null>(readCatalystSnapshot)
+  const [catalystSummary, setCatalystSummary] = useState('자동매매용 뉴스·공시 교차 확인 대기')
   const [marketDiscoveryInfo, setMarketDiscoveryInfo] = useState('수급 후보 탐색 전 · 코스피·코스닥 공개 데이터에 포함된 종목을 대상으로 선별합니다(전체 상장종목 전수 아님).')
   const marketScanRef = useRef(false)
   const marketScanRunner = useRef<() => Promise<void>>(async () => {})
@@ -313,6 +317,60 @@ export default function App() {
     } finally {
       setMarketDataLoading(false)
     }
+  }
+
+  async function collectMarketCatalysts(): Promise<CatalystSnapshot> {
+    const checkedAt = new Date().toISOString()
+    const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
+    // Briefing AI is intentionally skipped. This refreshes only published RSS headlines
+    // and official DART filings; neither AI-written text nor headline rumors make orders.
+    const [newsResult, dartResult] = await Promise.allSettled([
+      fetch(API + '/api/market/research', {
+        method: 'POST', headers,
+        body: JSON.stringify({ holdings: [], watchlist: [], disclosures: [], skip_ai: true }),
+        signal: AbortSignal.timeout(22_000),
+      }).then(async response => ({ ok: response.ok, data: await response.json() })),
+      fetch(API + '/api/market/disclosures', {
+        method: 'POST', headers, body: '{}',
+        signal: AbortSignal.timeout(80_000),
+      }).then(async response => ({ ok: response.ok, data: await response.json() })),
+    ])
+    const rss = newsResult.status === 'fulfilled' ? newsResult.value : null
+    const dart = dartResult.status === 'fulfilled' ? dartResult.value : null
+    const rssData = rss?.data as Record<string, any> | undefined
+    const dartData = dart?.data as Record<string, any> | undefined
+    const newsSources = Array.isArray(rssData?.diagnostics)
+      ? rssData.diagnostics.filter((item: any) => item.status === 200).length : 0
+    const newsOk = !!rss?.ok && rssData?.success === true && newsSources > 0
+    const dartOk = !!dart?.ok && dartData?.success === true
+    const dartComplete = dartOk && dartData?.complete === true
+    const articles: MarketArticle[] = newsOk && Array.isArray(rssData?.articles)
+      ? rssData.articles.filter((item: any) => item && typeof item.title === 'string')
+        .slice(0, 30).map((item: any) => ({
+          title: item.title.slice(0, 230), source: String(item.source || '').slice(0, 70),
+          link: String(item.link || '').slice(0, 500), published_at: item.published_at || null,
+        })) : []
+    const disclosures: MarketDisclosure[] = dartOk && Array.isArray(dartData?.disclosures)
+      ? dartData.disclosures.filter((item: any) => item && /^\\d{6}$/.test(String(item.stock_code)))
+        .slice(0, 500).map((item: any) => ({
+          company: String(item.company || '').slice(0, 100),
+          stock_code: String(item.stock_code), title: String(item.title || '').slice(0, 230),
+          date: String(item.date || ''), receipt_no: String(item.receipt_no || ''),
+          link: String(item.link || '').slice(0, 500),
+        })) : []
+    const message = '언론 RSS ' + (newsOk ? articles.length + '건' : '수집 실패')
+      + ' · DART ' + (dartOk ? disclosures.length + '/' + Number(dartData?.total_count || 0) + '건' : '수집 실패')
+      + (dartComplete ? ' · 공시 페이지 확인' : ' · 공시 불완전')
+      + (!newsOk || !dartComplete ? ' · 신규 매수 보류(보유종목 매도 감시는 유지)' : '')
+    const value: CatalystSnapshot = {
+      checkedAt: new Date().toISOString(), newsOk, dartOk, dartComplete,
+      newsSources, dartReported: Number(dartData?.total_count || 0),
+      articles, disclosures, message,
+    }
+    writeCatalystSnapshot(value)
+    setCatalysts(value)
+    setCatalystSummary(message)
+    return value
   }
 
   async function loadBroadMarketData() {
