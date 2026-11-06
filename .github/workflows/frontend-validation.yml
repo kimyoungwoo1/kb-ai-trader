@@ -23,4 +23,4 @@ jobs:
       - name: Bundle Cloudflare Worker API (DART paging and discovery)
         run: npx esbuild worker/src/index.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=/tmp/kb-worker-ci.mjs
       - name: Signal and trading-status regression checks
-        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs tests/autoStatus.test.mjs tests/paperEngineCheck.test.mjs tests/scanReview.test.mjs tests/trialExit.test.mjs tests/autoWatch.test.mjs tests/maxPositions.test.mjs tests/marketCatalysts.test.mjs
+        run: node --experimental-strip-types --test tests/tradeSignals.test.mjs tests/autoStatus.test.mjs tests/paperEngineCheck.test.mjs tests/scanReview.test.mjs tests/trialExit.test.mjs tests/autoWatch.test.mjs tests/maxPositions.test.mjs tests/marketCatalysts.test.mjs tests/kbQuoteBatch.test.mjs
