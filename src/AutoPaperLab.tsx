@@ -203,7 +203,7 @@ export default function AutoPaperLab({
         <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
         <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
-      <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 30초마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
+      <p className="auto-operation-note">정규장에는 시장 후보를 약 5분마다 탐색하고, 보유·진입 감시 중인 종목만 약 10초마다 KB 시세로 확인합니다. 브라우저의 백그라운드 제한 또는 API 지연으로 실제 간격은 길어질 수 있습니다. 서버 자동매매나 실계좌 주문은 실행하지 않습니다.</p>
     </div>
 
     <section className="panel auto-main-panel auto-news-risk-panel">
