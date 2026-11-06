@@ -4,12 +4,12 @@
  */
 import { generateTradeSignals } from '../../src/tradeSignals';
 import { runAutoCycle, runAutoWatchCycle } from '../../src/autoPaper';
-import { applyCatalystGate, type CatalystSnapshot } from '../../src/marketCatalysts';
+import { applyCatalystGate, catalystAllowsPending, type CatalystSnapshot } from '../../src/marketCatalysts';
 import type { AutoAccount } from '../../src/autoPaper';
 import type { PaperLedger } from '../../src/paperLedger';
 
 type Db = any;
-type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown };
+type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -46,8 +46,8 @@ export async function serverPaperApi(db: Db | undefined, action: string): Promis
       const result = await db.prepare(
         'INSERT OR IGNORE INTO server_paper_state(id,revision,mode,cycle_slot,updated_at,snapshot_json,last_error) ' +
         'SELECT 1,1,\'stopped\',-1,?,?,NULL WHERE NOT EXISTS ' +
-        '(SELECT 1 FROM paper_trade_lease WHERE id=1 AND lease_until > ?)'
-      ).bind(new Date(now).toISOString(), JSON.stringify(imported), now).run();
+        '(SELECT 1 FROM paper_trade_lease WHERE id=1 AND lease_until > ?) AND (SELECT revision FROM paper_backup_head WHERE id=1)=?'
+      ).bind(new Date(now).toISOString(), JSON.stringify(imported), now, current.revision).run();
       if ((result.meta?.changes ?? 0) !== 1) return ok({success:false,
         message:'기존 브라우저 자동매매 실행권이 남아 있습니다. 모든 탭에서 중지하고 90초 후 다시 시도하세요.'},409);
       return ok(summarize(await state(db)));
@@ -127,6 +127,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         newsSources, dartReported:Number(disclosures.total_count)||0, message:'서버 뉴스·공시 확인',
       };
       const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
+      snapshot.catalyst = catalyst;
       nextAccount = runAutoCycle(snapshot.account,signals,quotes,checkedAt,now,store);
       message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
     } else {
@@ -140,9 +141,15 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       if (!validQuotes.length) throw Error('유효한 최신 현재가 없음');
       // Fast path: sell-side risk checks remain active, new entries are gated to
       // the next comprehensive market/news scan.
-      nextAccount = runAutoWatchCycle(snapshot.account,validQuotes.map((x:any)=>({
+      const allowed = snapshot.account.pending.filter(item =>
+        catalystAllowsPending(item.code,item.name,snapshot.catalyst || null,now));
+      const paused = snapshot.account.pending.filter(item =>
+        !allowed.some(valid=>valid.code===item.code));
+      const guardedAccount = { ...snapshot.account, pending:allowed };
+      nextAccount = runAutoWatchCycle(guardedAccount,validQuotes.map((x:any)=>({
         code:x.code,name:x.name,price:x.price,
       })),checkedAt,now,store,symbols.length);
+      nextAccount.pending = [...nextAccount.pending,...paused];
       message = '보유·감시 종목 '+validQuotes.length+'/'+symbols.length+'건';
     }
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
