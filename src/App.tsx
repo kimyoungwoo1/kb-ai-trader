@@ -351,7 +351,7 @@ export default function App() {
           link: String(item.link || '').slice(0, 500), published_at: item.published_at || null,
         })) : []
     const disclosures: MarketDisclosure[] = dartOk && Array.isArray(dartData?.disclosures)
-      ? dartData.disclosures.filter((item: any) => item && /^\\d{6}$/.test(String(item.stock_code)))
+      ? dartData.disclosures.filter((item: any) => item && /^\d{6}$/.test(String(item.stock_code)))
         .slice(0, 500).map((item: any) => ({
           company: String(item.company || '').slice(0, 100),
           stock_code: String(item.stock_code), title: String(item.title || '').slice(0, 230),
@@ -400,14 +400,14 @@ export default function App() {
         .slice(0, 30)
         .map(item => ({ code: item.code, name: item.name }))
       const selected = [...pinned]
-      const offset = Number(sessionStorage.getItem('kb-market-scan-offset') || '0') || 0
-      let traversed = 0
-      while (selected.length < 30 && traversed < candidates.length) {
-        const item = candidates[(offset + traversed) % candidates.length]
-        if (!selected.some(stock => stock.code === item.code)) selected.push({ code: item.code, name: item.name })
-        traversed++
+      // Rank is computed from the public coverage set, not 50 randomly rotating symbols.
+      for (const item of candidates) {
+        if (selected.length >= 50) break
+        if (!selected.some(stock => stock.code === item.code)) selected.push({
+          code: item.code, name: item.name,
+        })
       }
-      sessionStorage.setItem('kb-market-scan-offset', String((offset + traversed) % candidates.length))
+      const catalystTask = collectMarketCatalysts()
       // Worker accepts at most 10 stocks per request. Do not change that API limit.
       // Use the first successful batch timestamp for conservative paper-trade freshness.
       const collected: MarketStock[] = []
@@ -436,13 +436,24 @@ export default function App() {
         setMarketDataMessage('시장 후보 조회 실패 · 이전 시세 데이터 유지')
         return
       }
+      const snapshot = await catalystTask
+      const checkedAt = firstCheckedAt || new Date(0).toISOString()
+      const evaluated = applyCatalystGate(generateTradeSignals(collected, SIGNAL_MAX_POSITION_WON), snapshot)
       setMarketStocks(collected)
-      // Paper engine rejects data older than five minutes, including prolonged batches.
-      setMarketCheckedAt(firstCheckedAt || new Date(0).toISOString())
+      setMarketCheckedAt(checkedAt)
+      setAutoSignals(evaluated.signals)
       setSignalSnapshot([])
       setSignalCheckedAt('')
-      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + collected.length + '/' + selected.length + '종목(보유·감시 ' + pinned.length + '종목 포함) · 다음 자동 실행에서 다른 후보 종목 검사 · ' + [...(discovery.diagnostics || []), ...batchErrors].join(' / '))
-      setMarketDataMessage('공개 시장 수급 기반 후보 정밀 검사 완료 · ' + collected.length + '종목 · ' + (firstCheckedAt ? new Date(firstCheckedAt).toLocaleString('ko-KR') : '수집 시각 미확인'))
+      // Evaluate atomically after BOTH quote analysis and news/DART validation.
+      // A stale or inaccessible information source stops new entries, never exits.
+      const latest = readAutoAccount()
+      if (latest.enabled && latest.lastCycle !== checkedAt) {
+        writeAutoAccount(runAutoCycle(latest, evaluated.signals, collected, checkedAt))
+      }
+      setMarketDiscoveryInfo(discovery.coverage + ' · 데이터 기준일 ' + (discovery.market_as_of || '미확인') + ' · 데이터 포함 ' + (discovery.universe_count || 0) + '종목 · 후보 ' + candidates.length + '종목 · 이번 정밀 검사 ' + collected.length + '/' + selected.length + '종목(보유·감시 ' + pinned.length + '종목 포함) · 수급 상위 후보 순위 기준 · ' + [...(discovery.diagnostics || []), ...batchErrors].join(' / '))
+      setMarketDataMessage('공개 시장 수급 후보 정밀 검사 ' + collected.length + '/50종목 · '
+        + (evaluated.ready ? '뉴스·공시 확인' : '뉴스·공시 확인 불가 · 신규 매수 보류')
+        + ' · 관찰 ' + evaluated.allowed + '종목, 매수 보류 ' + evaluated.blocked + '종목')
     } catch (error) {
       setMarketDiscoveryInfo('전체시장 수급 또는 KB API 연결 오류: ' + (error instanceof Error ? error.message : '요청 실패'))
       setMarketDataMessage('전체시장 수급 후보 탐색 실패 · 기존 데이터 유지')
@@ -548,15 +559,6 @@ export default function App() {
     const timer = window.setInterval(poll, FAST_QUOTE_INTERVAL_MS)
     return () => window.clearInterval(timer)
   }, [token])
-
-  useEffect(() => {
-    if (!token || !marketCheckedAt || !marketStocks.length) return
-    const current = readAutoAccount()
-    if (!current.enabled || current.lastCycle === marketCheckedAt) return
-    const signals = generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)
-    const next = runAutoCycle(current, signals, marketStocks, marketCheckedAt)
-    writeAutoAccount(next)
-  }, [token, marketCheckedAt, marketStocks])
 
   async function loadDisclosures() {
     setDisclosureLoading(true)
