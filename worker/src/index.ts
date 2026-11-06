@@ -1,5 +1,6 @@
 import { serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
+import { handleNotifications, publishNotification } from './notifications'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 
@@ -13,6 +14,9 @@ export interface Env {
   ASSETS: Fetcher;
   AI: Ai;
   PAPER_DB?: any;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
 }
 
 const corsHeaders = {
@@ -89,11 +93,20 @@ const service = {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server" || url.pathname === "/api/notifications") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
       }
+    }
+    if (url.pathname === "/api/notifications" && request.method === "POST") {
+      let input: unknown;
+      try { input = await request.json(); }
+      catch { return json({success:false,message:"알림 요청 형식 오류"},400); }
+      const response = await handleNotifications(env,input);
+      const headers = new Headers(response.headers);
+      for(const [name,value] of Object.entries(corsHeaders))headers.set(name,value);
+      return new Response(response.body,{status:response.status,headers});
     }
     if (url.pathname === "/api/paper/server" && request.method === "POST") {
       let action = "", signature = "";
@@ -1179,7 +1192,59 @@ const service = {
       if (!response.ok || result?.success !== true) throw Error(String(result?.message||'내부 KB 조회 실패').slice(0,180));
       return result;
     };
-    context.waitUntil(runMonitoredPaperCron(env.PAPER_DB,post));
+    context.waitUntil((async()=>{
+      const outcome=await runMonitoredPaperCron(env.PAPER_DB,post);
+      if(outcome.fills?.length){
+        for(const fill of outcome.fills){
+          const isBuy=fill.side==='BUY';
+          await publishNotification(env,{
+            eventKey:'fill:'+fill.id,kind:'trade',
+            title:'KB AI TRADER · 가상'+(isBuy?'매수':'매도')+' 체결',
+            body:fill.name+' ('+fill.code+') · '+fill.quantity+'주 · '+Math.round(fill.price).toLocaleString('ko-KR')+'원'+
+              (fill.pnl===null?'':' · 손익 '+Math.round(fill.pnl).toLocaleString('ko-KR')+'원')+' · 실제 주문 아님',
+          });
+        }
+      }
+      if(env.PAPER_DB){
+        // A 3-error streak triggers a single event keyed by the beginning of the streak.
+        // A successful scan immediately after an error streak triggers recovery.
+        try{
+          const rows=await env.PAPER_DB.prepare(
+            "SELECT slot,result,message FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 5"
+          ).all();
+          const recent=(rows.results||[]) as Array<{slot:number;result:string;message:string}>;
+          const current=recent[0];
+          if(current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
+            await publishNotification(env,{eventKey:'error:'+recent[2].slot,kind:'error',
+              title:'KB AI TRADER · 서버/API 연속 오류',
+              body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
+          }
+          if((current?.result==='scanned'||current?.result==='watched')&&recent[1]?.result==='error'){
+            await publishNotification(env,{eventKey:'recovery:'+current.slot,kind:'recovery',
+              title:'KB AI TRADER · 서버 검사 복구',
+              body:'KB증권 시세/전략 서버 검사 재개 · '+current.message.slice(0,150)});
+          }
+        }catch {console.warn('Notification monitoring event failed')}
+        // Daily summary is recorded once after the regular session and never triggers orders.
+        const now=new Date(),kst=new Date(now.getTime()+9*3600_000);
+        const day=kst.getUTCDay(),min=kst.getUTCHours()*60+kst.getUTCMinutes();
+        if(day>=1&&day<=5&&min>=15*60+35&&min<=15*60+40){
+          try{
+            const server=await env.PAPER_DB.prepare('SELECT snapshot_json FROM server_paper_state WHERE id=1').first();
+            if(server?.snapshot_json){
+              const snapshot=JSON.parse(server.snapshot_json);
+              const dateKey=kst.toISOString().slice(0,10);
+              const fills=(snapshot.account?.fills||[]).filter((f:any)=>f.at?.slice(0,10)===new Date(Date.parse(dateKey+'T00:00:00+09:00')).toISOString().slice(0,10));
+              const closed=fills.filter((f:any)=>f.side==='SELL'&&!f.test);
+              const realized=closed.reduce((n:number,f:any)=>n+(Number(f.pnl)||0),0);
+              await publishNotification(env,{eventKey:'daily:'+dateKey,kind:'daily',
+                title:'KB AI TRADER · '+dateKey+' 가상매매 요약',
+                body:'보유종목 '+(snapshot.ledger?.positions?.length||0)+'개 · 누적 거래 '+(snapshot.ledger?.trades?.length||0)+'건 · 당일 가상매도 손익 '+Math.round(realized).toLocaleString('ko-KR')+'원 · 실주문 없음'});
+            }
+          }catch {console.warn('Daily notification failed')}
+        }
+      }
+    })());
   },
 };
 export default service;
