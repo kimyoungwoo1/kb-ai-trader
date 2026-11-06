@@ -58,7 +58,7 @@ export default function AutoPaperLab({
   const autoOwned = new Set(account.positions.map(item => item.code))
   const lastRun = (account.runs || [])[0]
   const baseHealth = getAutoHealth(account, new Date(clock), scanLoading, scanMessage)
-  const health = account.enabled && baseHealth.inSession && !catalystReady(catalysts, new Date(clock))
+  const health = account.enabled && baseHealth.inSession && baseHealth.tone !== 'warning' && !catalystReady(catalysts, new Date(clock))
     ? { ...baseHealth, tone: 'warning' as const, label: '뉴스·공시 신규 매수 보류',
       detail: '뉴스·공시 확인이 불완전해 신규 매수를 보류합니다. 보유 종목 감시는 계속합니다.' }
     : baseHealth
