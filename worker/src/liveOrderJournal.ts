@@ -1,6 +1,6 @@
 /**
  * Real order safety journal — preparation only.
- * No broker HTTP requests belong in this module. An acknowledged order,
+ * State validation only: no broker HTTP requests belong in this module. An acknowledged order,
  * rejected order, or uncertain transport failure must NEVER be assumed
  * filled. UNKNOWN requires broker-side reconciliation before another attempt.
  */
@@ -22,7 +22,7 @@ const edges:Readonly<Record<OrderState,readonly OrderState[]>>={
  ACCEPTED:['PARTIAL','FILLED','CANCEL_REQUESTED','CANCELED','UNKNOWN'],
  PARTIAL:['PARTIAL','FILLED','CANCEL_REQUESTED','CANCELED','UNKNOWN'],
  FILLED:[], REJECTED:[],
- CANCEL_REQUESTED:['PARTIAL','FILLED','CANCELED','UNKNOWN'],
+ CANCEL_REQUESTED:['CANCEL_REQUESTED','FILLED','CANCELED','UNKNOWN'],
  CANCELED:[],
 }
 const fixedDay=(s:string)=>/^20[0-9]{2}-[0-9]{2}-[0-9]{2}$/.test(s)
