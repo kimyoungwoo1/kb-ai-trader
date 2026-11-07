@@ -77,6 +77,7 @@ test('KB order inquiry 502 never masquerades as trade readiness',async()=>{
   const value=await diagnoseLiveReadiness(makeDb(),env('brokerfail'),sat)
   assert.equal(value.readOnlyChecksPassed,false)
   assert.equal(value.checks.find(x=>x.id==='kbQuery').status,'BLOCKED')
+  assert.match(value.checks.find(x=>x.id==='kbQuery').detail,/주문조회 서버 오류/)
  }finally{broker.restore()}
 })
 test('missing KB credentials produces blocked check without contacting provider',async()=>{
@@ -100,4 +101,22 @@ test('existing live trial UI offers explicit inspection and never claims broker 
  assert.match(trial,/<LiveReadiness token=\{token\}/)
  assert.match(api,/if\(action==='readiness'\)/)
  assert.match(api,/brokerOrdersVerified:false/)
+})
+
+test('readiness screen explains KB successful-header missing-order-list without declaring ready',async()=>{
+ const original=globalThis.fetch
+ globalThis.fetch=async(uri)=>{
+  if(String(uri).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'mock-order-token',expires_in:3600}})
+  return Response.json({dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{nxt_key:''}})
+ }
+ try{
+  const result=await diagnoseLiveReadiness(makeDb(),env('record-missing'),sat)
+  assert.equal(result.readOnlyChecksPassed,false)
+  const check=result.checks.find(x=>x.id==='kbQuery')
+  assert.equal(check.status,'BLOCKED')
+  assert.match(check.detail,/Record1 배열이 없음/)
+  assert.match(check.detail,/20261106/)
+  assert.ok(!JSON.stringify(result).includes('mock-order-token'))
+ }finally{globalThis.fetch=original}
 })
