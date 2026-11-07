@@ -550,3 +550,20 @@ footer{display:flex;justify-content:space-between;padding:19px 2px 0;color:#6574
 /* Visible validation feedback; never leave disabled controls unexplained. */
 .live-trial-inline-error{margin:0;padding:10px 12px;border:1px solid #715330;border-radius:7px;background:#28231e;color:#ffd39a;font-size:12px;line-height:1.6}
 .live-trial-inline-success{margin:0;padding:10px 12px;border:1px solid #345e55;border-radius:7px;background:#142c29;color:#8ee1bd;font-size:12px;line-height:1.6;display:flex;gap:8px;align-items:center}
+
+/* Real-account holdings preview on the locked live pilot page. */
+.live-balance-panel{padding:20px;display:grid;gap:13px}
+.live-balance-panel .panel-heading button{display:inline-flex;align-items:center;gap:7px}
+.live-balance-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.live-balance-item{padding:15px;border:1px solid #2b3f58;border-radius:10px;background:#121f33;display:grid;gap:9px;min-width:0}
+.live-balance-item small{font-size:11px;color:#98aec8;display:flex;align-items:center;gap:6px}
+.live-balance-item strong{font-size:18px;line-height:1.3;color:#eef6ff;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.balance-gain{color:#e78f8f!important}.balance-loss{color:#7dafff!important}
+.live-pilot-budget{display:flex;align-items:center;flex-wrap:wrap;gap:11px;padding:12px 14px;border:1px solid #326054;border-radius:9px;background:#132b29;font-size:12px;color:#a3d7c6}
+.live-pilot-budget strong{color:#e3fff3}
+.live-balance-table{width:100%;white-space:nowrap;min-width:700px;font-size:12px}
+.live-balance-table td,.live-balance-table th{padding:11px 12px}
+.live-balance-table td strong{font-weight:600;color:#e7f0ff}
+.live-holding-code{display:block;margin-top:3px;color:#8ea7c5;font-size:11px}
+@media(max-width:950px){.live-balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.live-balance-panel{padding:14px}.live-balance-grid{gap:7px}.live-balance-item{padding:11px}.live-balance-item strong{font-size:15px}}
