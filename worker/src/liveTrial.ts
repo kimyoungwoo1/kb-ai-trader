@@ -66,8 +66,8 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const [today,unfinished,positions,committed]=await Promise.all([
         db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE side='BUY' AND trading_day=?").bind(day).first(),
         db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
-        db.prepare("SELECT COUNT(DISTINCT code) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first(),
-        db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS total FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first()
+        db.prepare("SELECT COUNT(DISTINCT code) AS total FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first(),
+        db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS total FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first()
       ])
       // Null or omitted SQL aggregates must fail closed, never coerce to zero.
       const requiredNonnegative=(value:unknown):number => {
