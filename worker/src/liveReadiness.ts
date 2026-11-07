@@ -4,12 +4,32 @@
  * Passing proves lookup compatibility only; it does NOT authorize trades.
  */
 import {getLiveGate,type LiveEnv} from './liveExecution'
-import {listKbRecentOrders} from './kbOrderContract'
+import {listKbRecentOrders,type RecentKbIssue} from './kbOrderContract'
+import {KbAuthError} from './kbToken'
 
 const isRegularSession=(at:Date)=>{const k=new Date(at.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
 type Db=any
 export type ReadinessCheck={
  id:string;label:string;status:'PASS'|'BLOCKED'|'UNVERIFIED';detail:string
+}
+const failureLabels:Record<RecentKbIssue,string>={
+ AUTH_FAILED:'KB OAuth 토큰 발급 또는 인증 실패',
+ AUTH_RATE_LIMITED:'KB OAuth 인증 요청 제한',
+ HTTP_401:'주문조회 인증 실패 (HTTP 401)',
+ HTTP_403:'주문조회 접근 권한 없음 (HTTP 403)',
+ HTTP_404:'주문조회 API 경로 또는 서비스 확인 필요 (HTTP 404)',
+ HTTP_429:'주문조회 요청 제한 (HTTP 429)',
+ HTTP_5XX:'KB 주문조회 서버 오류 (HTTP 5xx)',
+ HTTP_OTHER:'KB 주문조회 HTTP 오류',
+ RESPONSE_NOT_JSON:'주문조회 JSON 응답 형식 오류',
+ BUSINESS_REJECTED:'KB 주문조회 업무 응답 거부 · 거래일 또는 API 권한 확인 필요',
+ RECORD1_MISSING:'KB 성공 헤더는 받았지만 주문내역 Record1 배열이 없음 · 빈 결과인지 응답 구조 확인 필요',
+ RECORD_ROW_INVALID:'KB 주문내역 행 형식·수량 확인 실패',
+ NEXT_KEY_REPEATED:'KB 주문내역 연속조회 키 반복',
+ PAGE_LIMIT:'KB 주문내역 연속조회 페이지 제한 도달',
+ TIMEOUT:'KB 주문조회 응답 시간 초과',
+ NETWORK_FAILURE:'KB 주문조회 연결 실패',
+ UNKNOWN_ERROR:'KB 주문조회 미분류 오류'
 }
 const nonnegative=(value:unknown):number|null=>{
  if(value===null||value===undefined||value==='')return null
@@ -64,15 +84,20 @@ export async function diagnoseLiveReadiness(db:Db|undefined,env:LiveEnv,now=new 
    // Partial/failed query never counts as proof of brokerage compatibility.
    const result=await listKbRecentOrders(env,1,now)
    if(result.partial||result.checkedDates.length!==1){
+    const day=result.failedDates[0]||'조회일 확인 필요'
+    const issue=result.failedReasons?.[day]
     add('kbQuery','KB 실제 주문·체결조회 SSQM2341','BLOCKED',
-     '증권사 조회를 끝까지 확인하지 못했어. 주문 접수 여부 판단 불가.')
+     `조회일 ${day} · ${issue?failureLabels[issue]:'조회 결과 불완전'} · 주문 접수 여부 판단 불가.`)
    }else{
     add('kbQuery','KB 실제 주문·체결조회 SSQM2341','PASS',
      `읽기 전용 실제 조회 성공 · ${result.checkedDates[0]} · 조회된 주문 ${result.orders.length}건. 주문 0건도 정상 응답이야.`)
    }
-  }catch{
+  }catch(error){
+   const issue=error instanceof KbAuthError?
+    error.rateLimited?'KB OAuth 토큰 발급 요청 제한':'KB OAuth 토큰 발급 실패':
+    'KB 조회 자체를 완료하지 못함'
    add('kbQuery','KB 실제 주문·체결조회 SSQM2341','BLOCKED',
-    '증권사 인증 또는 조회 오류. 실주문 기능 활성화 금지.')
+    issue+' · 실제 주문 기능 활성화 금지.')
   }
  }
  add('brokerWrite','KB 매수·매도·취소 주문 전송','UNVERIFIED',
