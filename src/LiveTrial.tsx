@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucide-react'
 import LiveOrderLookup from './LiveOrderLookup'
 import LiveRiskPreview from './LiveRiskPreview'
@@ -19,6 +19,12 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
   const [busy,setBusy]=useState(false)
   const [feedback,setFeedback]=useState('')
   const [confirmation,setConfirmation]=useState('')
+  const requestedAccountOnce=useRef(false)
+  useEffect(()=>{
+    if(requestedAccountOnce.current||accountLoading||accountSummary||deposit||holdings.length>0)return
+    requestedAccountOnce.current=true
+    void onRefreshAccount()
+  },[accountLoading,accountSummary,deposit,holdings.length,onRefreshAccount])
   const arm=async()=>{
     setBusy(true);setError('');setFeedback('')
     try{
