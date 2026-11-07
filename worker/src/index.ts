@@ -107,9 +107,9 @@ const service = {
           const stage=typeof result.stage==='string'?result.stage:(reply.ok?'ok':'unknown');
           const message=typeof result.message==='string'?result.message:'';
           const authIssue=stage!=='authentication'?undefined:
-            /HTTP\\s*(401|403)\\b/.test(message)?'auth_rejected':
-            /HTTP\\s*429\\b/.test(message)?'auth_rate_limited':
-            /HTTP\\s*5\\d\\d\\b/.test(message)?'auth_upstream_http':
+            /HTTP\s*(401|403)\b/.test(message)?'auth_rejected':
+            /HTTP\s*429\b/.test(message)?'auth_rate_limited':
+            /HTTP\s*5\d\d\b/.test(message)?'auth_upstream_http':
             /시간 초과|네트워크 연결 실패|응답 없음|재시도 2회 실패/.test(message)?'auth_transport':
             'auth_unclassified';
           checks[name]={success:reply.ok&&result.success===true,
