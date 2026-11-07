@@ -23,6 +23,11 @@ test('diagnostic only probes KB transport and never sends authenticated or order
  assert.match(source,/developer\.kbsec\.com/)
  assert.match(source,/targetPort=32484/)
  assert.match(source,/secureTransport:'on'/)
+ assert.match(source,/async function tlsHttpCheck/)
+ assert.match(source,/GET \/ HTTP\/1\.1/)
+ assert.match(source,/Host: '\+host/)
+ assert.match(source,/socket\.readable\.getReader\(\)/)
+ assert.match(source,/tlsHttp/)
  assert.doesNotMatch(source,/\/oauth2\/token|\/api\/v1\/|ssam180[126]|appKey:|appSecret:|Authorization:/)
 })
 test('diagnostic bundles with the documented Workers socket import',async()=>{
