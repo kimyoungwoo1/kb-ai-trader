@@ -248,12 +248,16 @@ const safeIssue=(error:unknown):RecentKbIssue=>{
 export type RecentKbOrder=OrderLine&{orderDate:string}
 export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new Date()):Promise<{
  orders:RecentKbOrder[];checkedDates:string[];failedDates:string[];partial:boolean;
- failedReasons:Record<string,RecentKbIssue>
+ failedReasons:Record<string,RecentKbIssue>;failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string}>
 }>{
  const dates=recentKbTradingDates(now,days)
  const token=await getKbAccessToken(env)
  const checkedDates:string[]=[],failedDates:string[]=[]
  const failedReasons:Record<string,RecentKbIssue>={}
+ const failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string}>={}
+ // Only vendor status fields pass through. Never output dataBody or messages.
+ const safeStatus=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(value)?value:
+   typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=999999999999?String(value):'미제공'
  const records:RecentKbOrder[]=[]
  let partial=false
  for(const day of dates){
@@ -272,8 +276,14 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
     try{payload=await response.json()}
     catch{throw Error('KB_ORDER_NON_JSON')}
     if(String(payload?.dataHeader?.resultCode)!=='200'||
-       String(payload?.dataHeader?.processFlag)!=='A')
+       String(payload?.dataHeader?.processFlag)!=='A'){
+      failedBusinessCodes[day]={
+       resultCode:safeStatus(payload?.dataHeader?.resultCode),
+       processCode:safeStatus(payload?.dataHeader?.processCode),
+       processFlag:safeStatus(payload?.dataHeader?.processFlag)
+      }
       throw Error('KB_ORDER_BUSINESS_REJECTED')
+    }
     if(!Array.isArray(payload?.dataBody?.Record1))
       throw Error('KB_ORDER_RECORD1_MISSING')
     let parsed
@@ -305,5 +315,5 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
    seen.add(key);return true
  }).slice(0,100)
  if(orders.length<records.length)partial=true
- return {orders,checkedDates,failedDates,failedReasons,partial}
+ return {orders,checkedDates,failedDates,failedReasons,failedBusinessCodes,partial}
 }
