@@ -86,8 +86,11 @@ export async function diagnoseLiveReadiness(db:Db|undefined,env:LiveEnv,now=new 
    if(result.partial||result.checkedDates.length!==1){
     const day=result.failedDates[0]||'조회일 확인 필요'
     const issue=result.failedReasons?.[day]
+    const business=issue==='BUSINESS_REJECTED'?result.failedBusinessCodes?.[day]:null
+    const codes=business?
+     ` · KB resultCode=${business.resultCode}, processCode=${business.processCode}, processFlag=${business.processFlag}`:''
     add('kbQuery','KB 실제 주문·체결조회 SSQM2341','BLOCKED',
-     `조회일 ${day} · ${issue?failureLabels[issue]:'조회 결과 불완전'} · 주문 접수 여부 판단 불가.`)
+     `조회일 ${day} · ${issue?failureLabels[issue]:'조회 결과 불완전'}${codes} · 주문 접수 여부 판단 불가.`)
    }else{
     add('kbQuery','KB 실제 주문·체결조회 SSQM2341','PASS',
      `읽기 전용 실제 조회 성공 · ${result.checkedDates[0]} · 조회된 주문 ${result.orders.length}건. 주문 0건도 정상 응답이야.`)
