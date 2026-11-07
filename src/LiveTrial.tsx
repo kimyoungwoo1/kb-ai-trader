@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucid
 import LiveOrderLookup from './LiveOrderLookup'
 import LiveRiskPreview from './LiveRiskPreview'
 import LiveAccountHoldings from './LiveAccountHoldings'
+import LiveReadiness from './LiveReadiness'
 import type {AccountHolding,AccountValuation} from './liveAccountView'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
 type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
@@ -102,6 +103,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
       {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
     </div>
+    <LiveReadiness token={token}/>
     <LiveAccountHoldings holdings={holdings} summary={accountSummary} deposit={deposit}
       depositMessage={depositMessage} accountMessage={accountMessage} accountLoading={accountLoading}
       onRefreshAccount={onRefreshAccount} pilotOrders={status?.orders}/>
