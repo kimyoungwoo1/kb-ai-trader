@@ -10,7 +10,10 @@ type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:bool
 const API='/api/live/trial'
 function orderStatusLabel(order:LiveOrder):string{
  if(order.state==='CANCELED')return order.filled_quantity>0?
-   '미체결분 취소 완료 · '+order.filled_quantity+'주 체결 보유':'미체결분 취소 완료'
+   order.side==='BUY'?
+    '미체결분 취소 완료 · '+order.filled_quantity+'주 매수 체결 보유':
+    '미체결분 취소 완료 · '+order.filled_quantity+'주 매도 체결 · 잔여 보유분 확인 필요':
+   '미체결분 취소 완료'
  if(order.state==='CANCEL_REQUESTED'){
    if(order.cancel_status==='ACKNOWLEDGED')return '취소 요청 접수 · 증권사 최종 취소 확인 대기'
    if(order.cancel_status==='UNKNOWN')return '취소 응답 불명 · 재전송 금지 · 수동 확인 필요'
