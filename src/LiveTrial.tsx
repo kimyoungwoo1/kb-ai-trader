@@ -2,11 +2,18 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucide-react'
 import LiveOrderLookup from './LiveOrderLookup'
 import LiveRiskPreview from './LiveRiskPreview'
+import LiveAccountHoldings from './LiveAccountHoldings'
+import type {AccountHolding,AccountValuation} from './liveAccountView'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
-type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;filled_quantity:number;state:string;broker_order_id:string|null;updated_at:string}
+type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;updated_at:string}
 type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[];orders?:LiveOrder[]}
 const API='/api/live/trial'
-export default function LiveTrial({token}:{token:string}){
+type Props={
+  token:string;holdings:AccountHolding[];accountSummary:AccountValuation|null;
+  deposit:Record<string,unknown>|null;depositMessage:string;accountMessage:string;
+  accountLoading:boolean;onRefreshAccount:()=>void|Promise<void>
+}
+export default function LiveTrial({token,holdings,accountSummary,deposit,depositMessage,accountMessage,accountLoading,onRefreshAccount}:Props){
   const [status,setStatus]=useState<TrialStatus|null>(null)
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
@@ -70,6 +77,9 @@ export default function LiveTrial({token}:{token:string}){
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
       {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
     </div>
+    <LiveAccountHoldings holdings={holdings} summary={accountSummary} deposit={deposit}
+      depositMessage={depositMessage} accountMessage={accountMessage} accountLoading={accountLoading}
+      onRefreshAccount={onRefreshAccount} pilotOrders={status?.orders}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>실계좌 주문 원장</h3><span>SERVER D1 · 중복 주문/체결 추적</span></div></div>
       <p className="notification-hint">KB 주문번호가 확인되지 않은 SENDING·UNKNOWN 상태는 새 주문으로 자동 재전송하지 않습니다. 잠금은 기존에 접수된 주문을 취소하지 않습니다.</p>
@@ -79,7 +89,7 @@ export default function LiveTrial({token}:{token:string}){
           <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 주문번호 {order.broker_order_id||'확인 불가'}</p>
         </article>)}</div>:<p className="notification-hint">실계좌 주문 기록 없음 · 실제 주문 미전송</p>}
     </div>
-    <LiveRiskPreview token={token}/>
+    <LiveRiskPreview token={token} holdings={holdings} holdingsLoaded={Boolean(accountSummary||holdings.length)}/>
     <LiveOrderLookup token={token}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>시험매매 후보 기록</h3><span>SERVER D1 · DRY RUN ONLY</span></div></div>
