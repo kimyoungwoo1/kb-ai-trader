@@ -51,3 +51,10 @@ test('live trial passes existing account state without rewriting authenticated K
  assert.match(risk,/findAccountHolding\(holdings,code\)/)
  assert.match(risk,/기존 보유종목은 실주문 시 별도 확인/)
 })
+
+test('partially filled canceled purchase still consumes conservative 50k pilot capacity',()=>{
+ assert.equal(reservedPilotAmount([
+  {side:'BUY',reserved_won:45000,state:'CANCELED',filled_quantity:2},
+  {side:'BUY',reserved_won:1500,state:'CANCELED',filled_quantity:0}
+ ]),45000)
+})
