@@ -1,6 +1,7 @@
 import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder, listKbRecentOrders } from './kbOrderContract'
+import {diagnoseLiveReadiness} from './liveReadiness'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
  * readiness layer: it NEVER calls a brokerage order endpoint.
@@ -51,6 +52,11 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
         candidates:rows.results||[],orders:journal.results||[],gate,
         message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 5만 원 및 1종목·1회 제한':
         '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
+    }
+    if(action==='readiness'){
+      // Read-only D1/KB checks; never runs a broker order or changes the gate.
+      const diagnostic=await diagnoseLiveReadiness(db,env||{})
+      return reply(diagnostic)
     }
     if(action==='preflight'){
       const code=String(body.code||''),quantity=Number(body.quantity),limitPrice=Number(body.limitPrice)
