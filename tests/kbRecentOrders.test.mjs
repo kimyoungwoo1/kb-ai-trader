@@ -103,13 +103,15 @@ test('KB business rejection displays safe category without exposing provider mes
  globalThis.fetch=async(url)=>{
   if(String(url).endsWith('/oauth2/token'))
    return Response.json({dataBody:{access_token:'mock-token',expires_in:3600}})
-  return Response.json({dataHeader:{resultCode:'5007',processFlag:'N',processMessage:'PRIVATE ACCOUNT RECORD'},dataBody:{}})
+  return Response.json({dataHeader:{resultCode:'5007',processFlag:'N',processCode:'F123',processMessage:'PRIVATE ACCOUNT RECORD'},dataBody:{accountNumber:'SENSITIVE'}})
  }
  try{
   const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-reject'},1,saturday)
   assert.equal(found.partial,true)
   assert.equal(found.failedReasons['20261106'],'BUSINESS_REJECTED')
+  assert.deepEqual(found.failedBusinessCodes['20261106'],{resultCode:'5007',processCode:'F123',processFlag:'N'})
   assert.ok(!JSON.stringify(found).includes('PRIVATE ACCOUNT RECORD'))
+  assert.ok(!JSON.stringify(found).includes('SENSITIVE'))
  }finally{globalThis.fetch=before}
 })
 test('HTTP 429 is classified without retrying the read-only broker endpoint',async()=>{
@@ -127,4 +129,20 @@ test('HTTP 429 is classified without retrying the read-only broker endpoint',asy
   assert.equal(calls,1)
   assert.ok(!JSON.stringify(found).includes('PRIVATE RATE LIMIT BODY'))
  }finally{globalThis.fetch=before}
+})
+
+test('broker status fields with unsafe characters are never revealed in diagnostics',async()=>{
+ const previous=globalThis.fetch
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'mock-token',expires_in:3600}})
+  return Response.json({dataHeader:{resultCode:'5007',processCode:'account=123-45-6789 private',processFlag:'N',processMessage:'Secret user details'},dataBody:{}})
+ }
+ try{
+  const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-code-sanitization'},1,saturday)
+  assert.equal(found.failedBusinessCodes['20261106'].resultCode,'5007')
+  assert.equal(found.failedBusinessCodes['20261106'].processCode,'미제공')
+  assert.ok(!JSON.stringify(found).includes('123-45-6789'))
+  assert.ok(!JSON.stringify(found).includes('Secret user details'))
+ }finally{globalThis.fetch=previous}
 })
