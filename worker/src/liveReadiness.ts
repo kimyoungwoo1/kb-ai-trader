@@ -4,9 +4,9 @@
  * Passing proves lookup compatibility only; it does NOT authorize trades.
  */
 import {getLiveGate,type LiveEnv} from './liveExecution'
-import {isRegularSession} from './liveTrial'
 import {listKbRecentOrders} from './kbOrderContract'
 
+const isRegularSession=(at:Date)=>{const k=new Date(at.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
 type Db=any
 export type ReadinessCheck={
  id:string;label:string;status:'PASS'|'BLOCKED'|'UNVERIFIED';detail:string
