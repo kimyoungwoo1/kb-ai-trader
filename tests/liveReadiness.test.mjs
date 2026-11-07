@@ -120,3 +120,28 @@ test('readiness screen explains KB successful-header missing-order-list without 
   assert.ok(!JSON.stringify(result).includes('mock-order-token'))
  }finally{globalThis.fetch=original}
 })
+
+test('KB business rejection presents only safe result/process codes while leaving orders locked',async()=>{
+ const previous=globalThis.fetch
+ globalThis.fetch=async(uri)=>{
+  if(String(uri).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'token-test-private',expires_in:3600}})
+  return Response.json({dataHeader:{
+   resultCode:'5007',processCode:'E0012',processFlag:'N',
+   processMessage:'PRIVATE ACCOUNT RECORD'
+  },dataBody:{accountNumber:'sensitive'}})
+ }
+ try{
+  const inspected=await diagnoseLiveReadiness(makeDb(),env('code-detail'),sat)
+  assert.equal(inspected.readOnlyChecksPassed,false)
+  assert.equal(inspected.locked,true)
+  const check=inspected.checks.find(x=>x.id==='kbQuery')
+  assert.equal(check.status,'BLOCKED')
+  assert.match(check.detail,/resultCode=5007/)
+  assert.match(check.detail,/processCode=E0012/)
+  assert.match(check.detail,/processFlag=N/)
+  assert.ok(!JSON.stringify(inspected).includes('PRIVATE ACCOUNT RECORD'))
+  assert.ok(!JSON.stringify(inspected).includes('sensitive'))
+  assert.equal(inspected.brokerWritesVerified,false)
+ }finally{globalThis.fetch=previous}
+})
