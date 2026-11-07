@@ -5,7 +5,7 @@
  * Order request BUILDERS ONLY — no order transmission in this module.
  * Read-only order lookup is supported and never retries a write.
  */
-import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
+import {getKbAccessToken,kbBaseUrl,KbAuthError,type KbCredentials} from './kbToken'
 
 type Input = {code:string;quantity:number;price:number}
 export type OrderLine = {
@@ -217,13 +217,43 @@ export function recentKbTradingDates(now=new Date(),days:1|3|5=3):string[]{
  }
  return result
 }
+/** Machine-safe categories for failed READ-ONLY order history queries.
+ * No brokerage response body, balances, personal records or credentials are emitted.
+ */
+export type RecentKbIssue='AUTH_FAILED'|'AUTH_RATE_LIMITED'|'HTTP_401'|'HTTP_403'|'HTTP_404'|
+ 'HTTP_429'|'HTTP_5XX'|'HTTP_OTHER'|'RESPONSE_NOT_JSON'|'BUSINESS_REJECTED'|
+ 'RECORD1_MISSING'|'RECORD_ROW_INVALID'|'NEXT_KEY_REPEATED'|'PAGE_LIMIT'|
+ 'TIMEOUT'|'NETWORK_FAILURE'|'UNKNOWN_ERROR'
+const safeIssue=(error:unknown):RecentKbIssue=>{
+ if(error instanceof KbAuthError)
+  return error.rateLimited?'AUTH_RATE_LIMITED':'AUTH_FAILED'
+ const message=error instanceof Error?error.message:''
+ if(message==='KB_ORDER_NON_JSON')return 'RESPONSE_NOT_JSON'
+ if(message==='KB_ORDER_BUSINESS_REJECTED')return 'BUSINESS_REJECTED'
+ if(message==='KB_ORDER_RECORD1_MISSING')return 'RECORD1_MISSING'
+ if(message==='KB_ORDER_RECORD_ROW_INVALID')return 'RECORD_ROW_INVALID'
+ if(message==='KB_ORDER_NEXT_KEY_REPEATED')return 'NEXT_KEY_REPEATED'
+ if(message==='KB_ORDER_PAGE_LIMIT')return 'PAGE_LIMIT'
+ if(message==='TimeoutError'||(error instanceof Error&&error.name==='TimeoutError'))return 'TIMEOUT'
+ if(message==='KB_ORDER_HTTP_401')return 'HTTP_401'
+ if(message==='KB_ORDER_HTTP_403')return 'HTTP_403'
+ if(message==='KB_ORDER_HTTP_404')return 'HTTP_404'
+ if(message==='KB_ORDER_HTTP_429')return 'HTTP_429'
+ if(/^KB_ORDER_HTTP_5[0-9]{2}$/.test(message))return 'HTTP_5XX'
+ if(/^KB_ORDER_HTTP_[0-9]{3}$/.test(message))return 'HTTP_OTHER'
+ if(error instanceof TypeError||error instanceof Error&&/fetch failed|network|ECONN|ETIMEDOUT/i.test(message))
+  return 'NETWORK_FAILURE'
+ return 'UNKNOWN_ERROR'
+}
 export type RecentKbOrder=OrderLine&{orderDate:string}
 export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new Date()):Promise<{
- orders:RecentKbOrder[];checkedDates:string[];failedDates:string[];partial:boolean
+ orders:RecentKbOrder[];checkedDates:string[];failedDates:string[];partial:boolean;
+ failedReasons:Record<string,RecentKbIssue>
 }>{
  const dates=recentKbTradingDates(now,days)
  const token=await getKbAccessToken(env)
  const checkedDates:string[]=[],failedDates:string[]=[]
+ const failedReasons:Record<string,RecentKbIssue>={}
  const records:RecentKbOrder[]=[]
  let partial=false
  for(const day of dates){
@@ -237,21 +267,36 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
      method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
      body:JSON.stringify(body),signal:AbortSignal.timeout(10000)
     })
-    if(!response.ok)throw Error('KB 체결조회 HTTP '+response.status)
-    const parsed=parseOrderLines(await response.json())
+    if(!response.ok)throw Error('KB_ORDER_HTTP_'+response.status)
+    let payload:any
+    try{payload=await response.json()}
+    catch{throw Error('KB_ORDER_NON_JSON')}
+    if(String(payload?.dataHeader?.resultCode)!=='200'||
+       String(payload?.dataHeader?.processFlag)!=='A')
+      throw Error('KB_ORDER_BUSINESS_REJECTED')
+    if(!Array.isArray(payload?.dataBody?.Record1))
+      throw Error('KB_ORDER_RECORD1_MISSING')
+    let parsed
+    try{parsed=parseOrderLines(payload)}
+    catch{throw Error('KB_ORDER_RECORD_ROW_INVALID')}
     for(const line of parsed.lines)records.push({...line,orderDate:day})
     if(!parsed.nextKey){dayComplete=true;break}
-    if(visited.has(parsed.nextKey))throw Error('KB 체결조회 페이지 반복')
+    if(visited.has(parsed.nextKey))throw Error('KB_ORDER_NEXT_KEY_REPEATED')
     visited.add(parsed.nextKey)
     nextKey=parsed.nextKey
    }
-  }catch{
+  }catch(error){
    failedDates.push(day)
+   failedReasons[day]=safeIssue(error)
    partial=true
    continue
   }
   if(dayComplete)checkedDates.push(day)
-  else{failedDates.push(day);partial=true}
+  else{
+   failedDates.push(day)
+   failedReasons[day]='PAGE_LIMIT'
+   partial=true
+  }
  }
  const seen=new Set<string>()
  const orders=records.filter(row=>{
@@ -260,5 +305,5 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
    seen.add(key);return true
  }).slice(0,100)
  if(orders.length<records.length)partial=true
- return {orders,checkedDates,failedDates,partial}
+ return {orders,checkedDates,failedDates,failedReasons,partial}
 }
