@@ -104,12 +104,26 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
         return
       }
       const h=body?.checks?.holdings,v=body?.checks?.valuation
-      throw Error('KB 조회 실패: 보유 '+(h?.stage||'unknown')+'/'+(h?.http_status||reply.status)+
-        ', 평가 '+(v?.stage||'unknown')+'/'+(v?.http_status||reply.status))
+      const category=String(h?.auth_issue||v?.auth_issue||'')
+      const failure=new Error('KB 조회 실패: 보유 '+(h?.stage||'unknown')+'/'+(h?.http_status||reply.status)+
+        ', 평가 '+(v?.stage||'unknown')+'/'+(v?.http_status||reply.status)+
+        (category?' · 원인 '+category:''))
+      failure.authIssue=category
+      throw failure
     }catch(error){
-      last=String(error?.message||'연결 오류').slice(0,180)
+      last=String(error?.message||'연결 오류').slice(0,220)
       console.warn('○ '+label+' 재확인 '+attempt+'/5 · '+last)
-      if(attempt<5)await delay(1500*attempt)
+      // A rejected OAuth credential is a definitive failure: never hammer
+      // the token issuer or deploy an unverified version.
+      if(error?.authIssue==='auth_rejected')
+        throw Error(label+' 검증 실패 · KB 인증 거부 · 계좌 검증 미통과 · 운영 전환 없음')
+      if(attempt<5){
+        const interval=error?.authIssue==='auth_rate_limited'?30_000*attempt:
+          String(error?.authIssue||'').startsWith('auth_')?12_000*attempt:
+          1500*attempt
+        if(interval>=12000)console.warn('○ KB 인증 재요청 간격 조정 · 인증 서버 부하 방지')
+        await delay(interval)
+      }
     }
   }
   throw Error(label+' 검증 실패 · '+last+(checkAccount?' · 운영 전환 전 검사 실패':' · 운영 전환 후 서비스 구조 검사 실패'))
