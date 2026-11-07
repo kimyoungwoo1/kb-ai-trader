@@ -4,7 +4,7 @@
  * Only committed paper fills are eligible for live execution, never clients.
  */
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
-import {lookupKbOrder} from './kbOrderContract'
+import {lookupKbOrder,lookupKbCancelEvidence} from './kbOrderContract'
 import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
 import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
 import {transitionOrder,type OrderRecord} from './liveOrderJournal'
@@ -316,7 +316,11 @@ export async function cancelStaleLiveOrders(
  return result
 }
 
-/** Reconciliation never sends an order; it only reads records with KB order IDs. */
+/** Read-only reconciliation. An accepted cancel acknowledgment NEVER proves
+ * the original open shares were canceled. Terminal CANCELED requires an
+ * independent SSQM2341 completion row linked by both order numbers, plus
+ * quantity conservation. Ambiguous results remain CANCEL_REQUESTED.
+ */
 export async function reconcileLiveOrders(db:Db|undefined,env:LiveEnv):Promise<{checked:number;updated:number;unresolved:number}>{
  if(!db)return {checked:0,updated:0,unresolved:0}
  const result=await db.prepare("SELECT * FROM live_order_journal WHERE state IN ('SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED') ORDER BY created_at LIMIT 10").all()
@@ -325,20 +329,67 @@ export async function reconcileLiveOrders(db:Db|undefined,env:LiveEnv):Promise<{
  for(const raw of rows){
   const row=rowFromDb(raw)
   if(!row.brokerOrderId){unresolved++;continue}
-  checked++
-  let found
-  try{found=await lookupKbOrder(env,dateToKb(row.tradingDay),row.brokerOrderId,row.code,row.side)}
-  catch{unresolved++;continue}
-  if(!found.found||!found.order){unresolved++;continue}
-  const actual=found.order
-  if(actual.orderQuantity!==row.quantity||actual.orderPrice!==row.limitPrice||actual.filledQuantity<row.filledQuantity){
+  let actual:null|Awaited<ReturnType<typeof lookupKbOrder>>['order']=null
+  let canceled=false
+  let canceledFilled=row.filledQuantity
+  if(row.state==='CANCEL_REQUESTED'){
+   let cancelInfo:any
+   try{
+    cancelInfo=await db.prepare('SELECT status,cancel_order_no,broker_order_id FROM live_cancel_journal WHERE order_id=?')
+     .bind(row.id).first()
+   }catch{unresolved++;continue}
+   if(cancelInfo?.status==='ACKNOWLEDGED'&&
+      cancelInfo?.broker_order_id===row.brokerOrderId&&
+      /^[0-9]{1,15}$/.test(String(cancelInfo?.cancel_order_no??''))&&
+      cancelInfo.cancel_order_no!==row.brokerOrderId){
+    let proof
+    try{
+     proof=await lookupKbCancelEvidence(env,dateToKb(row.tradingDay),
+      row.brokerOrderId,String(cancelInfo.cancel_order_no),row.code,row.side,
+      row.quantity,row.filledQuantity)
+    }catch{unresolved++;continue}
+    checked++
+    if(proof.confirmed){
+     canceled=true
+     canceledFilled=proof.filledQuantity
+    }else if(proof.fullyFilled){
+     actual={orderNo:row.brokerOrderId,code:row.code,side:row.side,
+       orderQuantity:row.quantity,filledQuantity:row.quantity,remainingQuantity:0,
+       orderPrice:row.limitPrice,cancelOrAmend:'',originalOrderNo:''}
+    }else if(proof.original){
+     actual=proof.original
+    }else{unresolved++;continue}
+   }
+  }
+  if(!actual&&!canceled){
+   let found
+   try{found=await lookupKbOrder(env,dateToKb(row.tradingDay),row.brokerOrderId,row.code,row.side)}
+   catch{unresolved++;continue}
+   checked++
+   if(!found.found||!found.order){unresolved++;continue}
+   actual=found.order
+  }
+  if(canceled){
+   try{
+    transitionOrder(row,'CANCELED',canceledFilled,row.brokerOrderId)
+    const update=await db.prepare(
+     "UPDATE live_order_journal SET state='CANCELED',filled_quantity=?,updated_at=? "+
+     "WHERE id=? AND state='CANCEL_REQUESTED' AND filled_quantity=? AND broker_order_id=?"
+    ).bind(canceledFilled,new Date().toISOString(),row.id,row.filledQuantity,row.brokerOrderId).run()
+    if(changed(update))updated++;else unresolved++
+   }catch{unresolved++}
+   continue
+  }
+  if(!actual){unresolved++;continue}
+  if(actual.orderQuantity!==row.quantity||actual.orderPrice!==row.limitPrice||
+     actual.filledQuantity<row.filledQuantity){
     unresolved++;continue
   }
   let next:'ACCEPTED'|'PARTIAL'|'FILLED'|'CANCEL_REQUESTED'
   if(actual.filledQuantity===row.quantity&&actual.remainingQuantity===0)next='FILLED'
   else if(actual.remainingQuantity>0)
    next=row.state==='CANCEL_REQUESTED'?'CANCEL_REQUESTED':actual.filledQuantity>0?'PARTIAL':'ACCEPTED'
-  else{unresolved++;continue} // Final cancellation not inferred from absence/zero remaining.
+  else{unresolved++;continue}
   if(next===row.state&&actual.filledQuantity===row.filledQuantity)continue
   try{
    transitionOrder(row,next,actual.filledQuantity,row.brokerOrderId)
