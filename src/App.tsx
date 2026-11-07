@@ -729,7 +729,7 @@ export default function App() {
       </button>
       <div className="connection">KB증권 계좌 연동</div>
     </div></header><div className="content">{activePage === 'dashboard' && <section className="page-heading"><div><div className="eyebrow">PERSONAL TRADING SPACE</div><h1>계좌 현황</h1><p>KB증권 실계좌 보유 종목 조회</p></div><button className="outline-button" onClick={refresh} disabled={loading}>{loading ? '조회 중...' : '계좌 새로고침'}</button></section>}
-      {activePage === 'live' ? <LiveTrial token={token} /> : activePage === 'notifications' ? <NotificationCenter token={token} /> : activePage === 'paper' ? (serverMode ? <section className="panel auto-main-panel"><h2>서버 가상매매 원장</h2><p>서버 실행 모드입니다. 기존 브라우저 수동 매매는 데이터 충돌 방지를 위해 비활성화했습니다. 자동 가상매매 및 매매 분석 메뉴에서 서버 보유종목과 거래 기록을 확인하세요.</p></section> : <PaperTrading token={token} />) : activePage === 'analytics'
+      {activePage === 'live' ? <LiveTrial token={token} holdings={holdings} accountSummary={accountSummary} deposit={deposit} depositMessage={depositMessage} accountMessage={message} accountLoading={loading} onRefreshAccount={refresh} /> : activePage === 'notifications' ? <NotificationCenter token={token} /> : activePage === 'paper' ? (serverMode ? <section className="panel auto-main-panel"><h2>서버 가상매매 원장</h2><p>서버 실행 모드입니다. 기존 브라우저 수동 매매는 데이터 충돌 방지를 위해 비활성화했습니다. 자동 가상매매 및 매매 분석 메뉴에서 서버 보유종목과 거래 기록을 확인하세요.</p></section> : <PaperTrading token={token} />) : activePage === 'analytics'
         ? <TradingAnalytics
             signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
             catalysts={catalysts}
