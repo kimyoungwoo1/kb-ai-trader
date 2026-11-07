@@ -18,7 +18,12 @@ class MemoryD1{
  prepare(sql){
   const db=this
   return {params:[],bind(...p){this.params=p;return this},
-   async first(){if(sql.startsWith('SELECT enabled,trading_day'))return {enabled:1,trading_day:'2026-11-09'};throw Error('unexpected read '+sql)},
+   async first(){
+    if(sql.startsWith('SELECT enabled,trading_day'))return {enabled:1,trading_day:'2026-11-09'}
+    if(sql.startsWith('SELECT status,cancel_order_no,broker_order_id FROM live_cancel_journal'))
+     return db.claim
+    throw Error('unexpected read '+sql)
+   },
    async all(){
     if(sql.includes("state IN ('ACCEPTED','PARTIAL')")&&sql.includes('SELECT *'))
      return {results:['ACCEPTED','PARTIAL'].includes(db.order.state)?[db.order]:[]}
@@ -28,7 +33,7 @@ class MemoryD1{
    async run(){
     if(sql.includes('INSERT OR IGNORE INTO live_cancel_journal')){
      if(db.claim)return {meta:{changes:0}}
-     db.claim={status:'CLAIMED',cancel_order_no:null};return {meta:{changes:1}}
+     db.claim={status:'CLAIMED',cancel_order_no:null,broker_order_id:this.params[3]};return {meta:{changes:1}}
     }
     if(sql.includes("SET state='CANCEL_REQUESTED'")){
      if(db.failMark)return {meta:{changes:0}}
@@ -45,13 +50,17 @@ class MemoryD1{
   }
  }
 }
-function broker({cancelFails=false,partial=0}={}){
+function broker({cancelFails=false,partial=0,completeCancel=false,canceledQuantity=5,cancelOriginal='0060000705',cancelNo='0060000706'}={}){
  const original=globalThis.fetch,calls=[]
  globalThis.fetch=async(url)=>{
   const path=String(url);calls.push(path)
   if(path.endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'token',expires_in:3600}})
   if(path.endsWith('/api/v1/ssqm2341'))return Response.json({dataHeader:{resultCode:'200',processFlag:'A'},
-    dataBody:{nxt_key:'',Record1:[{ordr_no:'0060000705',stnd_is_no:'A005930',
+    dataBody:{nxt_key:'',Record1:completeCancel?[{
+      ordr_no:cancelNo,orgn_ordr_no:cancelOriginal,stnd_is_no:'A005930',
+      trd_dl_ccd_nm:'매수',ordr_q:String(canceledQuantity),tl_ccls_q:'0',
+      nccls_q:'0',ordr_uprc:'0',crct_cncl_ccd:String(canceledQuantity)+'주취완'
+    }]:[{ordr_no:'0060000705',stnd_is_no:'A005930',
       trd_dl_ccd_nm:'매수',ordr_q:'5',tl_ccls_q:String(partial),
       nccls_q:String(5-partial),ordr_uprc:'9000'}]}})
   if(path.endsWith('/api/v1/ssam1806')){
@@ -114,5 +123,62 @@ test('without hard lock flag, cancellation never contacts the broker',async()=>{
  try{
   assert.deepEqual(await cancelStaleLiveOrders(db,{KB_APP_KEY:'test'},now),{attempted:0,accepted:0,unknown:0,skipped:0})
   assert.equal(b.calls.length,0)
+ }finally{b.restore();unfreeze()}
+})
+
+test('completed broker cancellation row closes remaining shares only after exact proof',async()=>{
+ const unfreeze=freeze(),b=broker({completeCancel:true}),db=new MemoryD1()
+ try{
+  await cancelStaleLiveOrders(db,env,now)
+  assert.equal(db.order.state,'CANCEL_REQUESTED')
+  const verified=await reconcileLiveOrders(db,env)
+  assert.equal(verified.updated,1)
+  assert.equal(db.order.state,'CANCELED')
+  assert.equal(db.order.filled_quantity,0)
+  assert.equal(b.calls.filter(x=>x.endsWith('/api/v1/ssam1806')).length,1)
+  assert.equal((await cancelStaleLiveOrders(db,env,now)).attempted,0)
+ }finally{b.restore();unfreeze()}
+})
+test('2 filled plus 3 verified canceled conserves shares and marks partial cancellation closed',async()=>{
+ const unfreeze=freeze(),b=broker({completeCancel:true,canceledQuantity:3}),db=new MemoryD1()
+ db.order.state='CANCEL_REQUESTED'
+ db.order.filled_quantity=2
+ db.claim={status:'ACKNOWLEDGED',cancel_order_no:'0060000706',broker_order_id:'0060000705'}
+ try{
+  const verified=await reconcileLiveOrders(db,env)
+  assert.equal(verified.updated,1)
+  assert.equal(db.order.state,'CANCELED')
+  assert.equal(db.order.filled_quantity,2)
+  assert.equal(b.calls.filter(x=>x.includes('/ssam')).length,0)
+ }finally{b.restore();unfreeze()}
+})
+test('wrong linked original order number leaves cancel unconfirmed, never guesses finality',async()=>{
+ const unfreeze=freeze(),b=broker({completeCancel:true,cancelOriginal:'0060000999'}),db=new MemoryD1()
+ db.order.state='CANCEL_REQUESTED'
+ db.claim={status:'ACKNOWLEDGED',cancel_order_no:'0060000706',broker_order_id:'0060000705'}
+ try{
+  const verified=await reconcileLiveOrders(db,env)
+  assert.equal(verified.unresolved,1)
+  assert.equal(db.order.state,'CANCEL_REQUESTED')
+ }finally{b.restore();unfreeze()}
+})
+test('cancellation quantity mismatch does not mark CANCELED',async()=>{
+ const unfreeze=freeze(),b=broker({completeCancel:true,canceledQuantity:4}),db=new MemoryD1()
+ db.order.state='CANCEL_REQUESTED'
+ db.claim={status:'ACKNOWLEDGED',cancel_order_no:'0060000706',broker_order_id:'0060000705'}
+ try{
+  const verified=await reconcileLiveOrders(db,env)
+  assert.equal(verified.unresolved,1)
+  assert.equal(db.order.state,'CANCEL_REQUESTED')
+ }finally{b.restore();unfreeze()}
+})
+test('no cancel acknowledgment never treats a matching cancel row as final',async()=>{
+ const unfreeze=freeze(),b=broker({completeCancel:true}),db=new MemoryD1()
+ db.order.state='CANCEL_REQUESTED'
+ db.claim={status:'UNKNOWN',cancel_order_no:null,broker_order_id:'0060000705'}
+ try{
+  const verified=await reconcileLiveOrders(db,env)
+  assert.equal(verified.unresolved,1)
+  assert.equal(db.order.state,'CANCEL_REQUESTED')
  }finally{b.restore();unfreeze()}
 })
