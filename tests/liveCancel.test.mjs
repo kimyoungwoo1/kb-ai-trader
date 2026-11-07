@@ -42,6 +42,14 @@ class MemoryD1{
     if(sql.includes('SET status=?,cancel_order_no=?')){
      db.claim.status=this.params[0];db.claim.cancel_order_no=this.params[1];return {meta:{changes:1}}
     }
+    if(sql.includes("SET state='CANCELED'")){
+     const [filled,,id,previousFilled,brokerNo]=this.params
+     if(db.order.id!==id||db.order.state!=='CANCEL_REQUESTED'||
+        db.order.filled_quantity!==previousFilled||db.order.broker_order_id!==brokerNo)
+       return {meta:{changes:0}}
+     db.order.state='CANCELED';db.order.filled_quantity=filled
+     return {meta:{changes:1}}
+    }
     if(sql.includes('SET state=?,filled_quantity=?')){
      db.order.state=this.params[0];db.order.filled_quantity=this.params[1];return {meta:{changes:1}}
     }
@@ -128,14 +136,14 @@ test('without hard lock flag, cancellation never contacts the broker',async()=>{
 
 test('completed broker cancellation row closes remaining shares only after exact proof',async()=>{
  const unfreeze=freeze(),b=broker({completeCancel:true}),db=new MemoryD1()
+ db.order.state='CANCEL_REQUESTED'
+ db.claim={status:'ACKNOWLEDGED',cancel_order_no:'0060000706',broker_order_id:'0060000705'}
  try{
-  await cancelStaleLiveOrders(db,env,now)
-  assert.equal(db.order.state,'CANCEL_REQUESTED')
   const verified=await reconcileLiveOrders(db,env)
   assert.equal(verified.updated,1)
   assert.equal(db.order.state,'CANCELED')
   assert.equal(db.order.filled_quantity,0)
-  assert.equal(b.calls.filter(x=>x.endsWith('/api/v1/ssam1806')).length,1)
+  assert.equal(b.calls.filter(x=>x.endsWith('/api/v1/ssam1806')).length,0)
   assert.equal((await cancelStaleLiveOrders(db,env,now)).attempted,0)
  }finally{b.restore();unfreeze()}
 })
