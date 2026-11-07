@@ -94,7 +94,7 @@ const service = {
     if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
-      const checks: Record<string, {success:boolean;stage:string;http_status:number}> = {};
+      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string}> = {};
       for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
         try {
           const reply=await service.fetch(new Request('https://localhost'+route,{
@@ -102,9 +102,18 @@ const service = {
             body:'{}',
           }),env);
           const result=await reply.json() as Record<string,unknown>;
+          // Categorize *only* authentication diagnostics. Never expose raw
+          // brokerage errors, credentials, access tokens or account records.
+          const stage=typeof result.stage==='string'?result.stage:(reply.ok?'ok':'unknown');
+          const message=typeof result.message==='string'?result.message:'';
+          const authIssue=stage!=='authentication'?undefined:
+            /HTTP\\s*(401|403)\\b/.test(message)?'auth_rejected':
+            /HTTP\\s*429\\b/.test(message)?'auth_rate_limited':
+            /HTTP\\s*5\\d\\d\\b/.test(message)?'auth_upstream_http':
+            /시간 초과|네트워크 연결 실패|응답 없음|재시도 2회 실패/.test(message)?'auth_transport':
+            'auth_unclassified';
           checks[name]={success:reply.ok&&result.success===true,
-            stage:typeof result.stage==='string'?result.stage:(reply.ok?'ok':'unknown'),
-            http_status:reply.status};
+            stage,http_status:reply.status,...(authIssue?{auth_issue:authIssue}:{})};
         } catch {
           checks[name]={success:false,stage:'network',http_status:502};
         }
