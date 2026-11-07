@@ -11,7 +11,7 @@ type Input = {code:string;quantity:number;price:number}
 export type OrderLine = {
  orderNo:string;code:string;side:'BUY'|'SELL'|'UNKNOWN';
  orderQuantity:number;filledQuantity:number;remainingQuantity:number;
- orderPrice:number;cancelOrAmend:string
+ orderPrice:number;cancelOrAmend:string;originalOrderNo:string
 }
 const header = () => ({ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'})
 const number = (value:unknown):number => {
@@ -78,7 +78,8 @@ export function parseOrderLines(response:unknown):{lines:OrderLine[];nextKey:str
    if(!/^[0-9]+$/.test(no)||!six(code)||![q,f,rem,p].every(Number.isSafeInteger)||
      q<0||f<0||rem<0||f+rem>q)throw Error('체결조회 행 수량/번호 검증 실패')
    return {orderNo:no,code,side,orderQuantity:q,filledQuantity:f,
-     remainingQuantity:rem,orderPrice:p,cancelOrAmend:String(row?.crct_cncl_ccd??'').trim()}
+     remainingQuantity:rem,orderPrice:p,cancelOrAmend:String(row?.crct_cncl_ccd??'').trim(),
+     originalOrderNo:String(row?.orgn_ordr_no??'').trim()}
  })
  return {lines,nextKey:String(data?.dataBody?.nxt_key??'').trim()}
 }
@@ -87,6 +88,94 @@ export function findOrder(lines:OrderLine[],orderNo:string,code:string,side:'BUY
  if(match.length>1)throw Error('체결조회 주문번호 중복 응답')
  return match[0]||null
 }
+/** Read-only final cancel evidence. Based on the supplied KB V2 SSQM2341
+ * sample, a completed cancellation has its OWN order number, links back to
+ * orgn_ordr_no, and marks crct_cncl_ccd with e.g. "1주취완".
+ * Never infer a cancel from missing original orders or zero unfilled shares.
+ */
+export type CancelEvidence={
+ confirmed:boolean;fullyFilled:boolean;filledQuantity:number;original:OrderLine|null;
+ verifiedPages:number;reason:string
+}
+export function confirmKbCancelLines(
+ lines:OrderLine[],originalOrderNo:string,cancelOrderNo:string,code:string,
+ side:'BUY'|'SELL',originalQuantity:number,previousFilled:number
+):Omit<CancelEvidence,'verifiedPages'>{
+ const match=(x:OrderLine)=>x.code===code&&x.side===side
+ const originals=lines.filter(x=>match(x)&&x.orderNo===originalOrderNo)
+ const cancellations=lines.filter(x=>match(x)&&x.orderNo===cancelOrderNo)
+ if(originals.length>1||cancellations.length>1)
+  throw Error('KB 주문·취소 주문번호 중복 · 상태 확정 금지')
+ const original=originals[0]||null
+ const cancel=cancellations[0]||null
+ const base={original,confirmed:false,fullyFilled:false,filledQuantity:previousFilled,
+   reason:'취소 체결 증빙 없음 · 확인 대기'}
+ if(!Number.isSafeInteger(originalQuantity)||originalQuantity<1||
+    !Number.isSafeInteger(previousFilled)||previousFilled<0||previousFilled>originalQuantity)
+  throw Error('기존 체결수량 검증 실패')
+ if(original){
+  if(original.orderQuantity!==originalQuantity||original.filledQuantity<previousFilled||
+     original.filledQuantity>originalQuantity)
+   throw Error('KB 원주문 수량 불일치 · 상태 확정 금지')
+  if(original.filledQuantity===originalQuantity&&original.remainingQuantity===0)
+   return {...base,fullyFilled:true,filledQuantity:originalQuantity,reason:'증권사 전량 체결 확인'}
+ }
+ if(!cancel)return {...base,filledQuantity:original?.filledQuantity??previousFilled}
+ // The order acknowledgment alone is not sufficient. This EXACT cancel
+ // transaction must link back to the saved order and be marked as completed.
+ if(cancel.originalOrderNo!==originalOrderNo||cancel.orderNo===originalOrderNo||
+    cancel.orderPrice!==0||cancel.filledQuantity!==0||cancel.remainingQuantity!==0)
+  return {...base,filledQuantity:original?.filledQuantity??previousFilled,
+   reason:'취소번호·원주문 연결 또는 취소 상세 검증 미완료'}
+ const amount=cancel.cancelOrAmend.match(/^([1-9][0-9]*)주취완$/)
+ if(!amount)return {...base,filledQuantity:original?.filledQuantity??previousFilled,
+   reason:'KB 취소 완료 표시 미확인'}
+ const canceled=Number(amount[1])
+ if(!Number.isSafeInteger(canceled)||canceled!==cancel.orderQuantity)
+  return {...base,filledQuantity:original?.filledQuantity??previousFilled,
+   reason:'취소 수량 증빙 불일치'}
+ const brokerFilled=original?.filledQuantity??previousFilled
+ // If a new fill occurred after our last poll, and the original row has
+ // vanished from the history page, do NOT assume it didn't happen.
+ // Exact cancel quantity plus known fills must equal the original quantity.
+ if(brokerFilled+canceled!==originalQuantity||brokerFilled<previousFilled||
+    (original&&original.remainingQuantity!==0))
+  return {...base,filledQuantity:brokerFilled,reason:'체결·취소 합산이 원주문 수량과 불일치'}
+ return {...base,confirmed:true,filledQuantity:brokerFilled,reason:'증권사 미체결 취소 완료 확인'}
+}
+export async function lookupKbCancelEvidence(
+ env:KbCredentials,day:string,originalOrderNo:string,cancelOrderNo:string,
+ code:string,side:'BUY'|'SELL',originalQuantity:number,previousFilled:number
+):Promise<CancelEvidence>{
+ if(!/^20[0-9]{6}$/.test(day)||!six(code)||
+    !/^[0-9]{1,15}$/.test(originalOrderNo)||
+    !/^[0-9]{1,15}$/.test(cancelOrderNo)||originalOrderNo===cancelOrderNo)
+  throw Error('KB 취소조회 식별자 검증 실패')
+ const token=await getKbAccessToken(env)
+ const collected:OrderLine[]=[]
+ const visited=new Set<string>()
+ let nextKey=''
+ for(let page=0;page<10;page++){
+  const {path,body}=makeOrderInquiry(day,nextKey)
+  const response=await fetch(kbBaseUrl(env)+path,{
+   method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+   body:JSON.stringify(body),signal:AbortSignal.timeout(15000)
+  })
+  if(!response.ok)throw Error('KB 취소 확인 조회 HTTP '+response.status)
+  const parsed=parseOrderLines(await response.json())
+  collected.push(...parsed.lines.filter(x=>x.code===code&&x.side===side&&
+    (x.orderNo===originalOrderNo||x.orderNo===cancelOrderNo)))
+  // Require a complete day-scoped snapshot, NOT a first-page match.
+  if(!parsed.nextKey)
+   return {...confirmKbCancelLines(collected,originalOrderNo,cancelOrderNo,code,side,
+     originalQuantity,previousFilled),verifiedPages:page+1}
+  if(visited.has(parsed.nextKey))throw Error('KB 취소확인 다음키 반복')
+  visited.add(parsed.nextKey)
+  nextKey=parsed.nextKey
+ }
+ throw Error('KB 취소확인 페이지 상한 초과 · 취소 완료 미확정')
+}
+
 export async function lookupKbOrder(env:KbCredentials,day:string,orderNo:string,code:string,side:'BUY'|'SELL'){
  if(!/^[0-9]{1,15}$/.test(orderNo)||!six(code)||!/^20[0-9]{6}$/.test(day))
   throw Error('조회 조건 오류')
