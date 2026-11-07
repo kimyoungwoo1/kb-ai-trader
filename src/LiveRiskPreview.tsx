@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { validateLiveBuyInput } from './liveBuyValidation'
+import {findAccountHolding,type AccountHolding} from './liveAccountView'
 type Preview={
  permitted:boolean;code:string;quantity:number;limitPrice:number;
  notional:number;feeBuffer:number;requiredCash:number;orderableCash:number|null;
@@ -7,7 +8,7 @@ type Preview={
 }
 type PreviewResult={success:boolean;locked:boolean;executionEnabled:boolean;
  mode:string;message:string;preview:Preview}
-export default function LiveRiskPreview({token}:{token:string}){
+export default function LiveRiskPreview({token,holdings,holdingsLoaded}:{token:string;holdings:AccountHolding[];holdingsLoaded:boolean}){
   const [code,setCode]=useState('')
   const [quantity,setQuantity]=useState('1')
   const [price,setPrice]=useState('')
@@ -22,6 +23,7 @@ export default function LiveRiskPreview({token}:{token:string}){
     setError('')
   }
   const inputIssue=validateLiveBuyInput(code,quantity,price)
+  const existingHolding=code.length===6?findAccountHolding(holdings,code):null
   const check=async()=>{
     if(inputIssue){
       setReport(null)
@@ -57,6 +59,13 @@ export default function LiveRiskPreview({token}:{token:string}){
         {busy?'실계좌 조회 중...':'매수 가능 여부 점검'}
       </button>
     </div>
+    {existingHolding&&<p className="live-trial-inline-error" role="status">
+      이미 보유한 종목: {existingHolding.name} · {existingHolding.quantity.toLocaleString('ko-KR')}주 · 평가금액 {typeof existingHolding.valuation==='number'?existingHolding.valuation.toLocaleString('ko-KR')+'원':'조회되지 않음'}.
+      기존 보유종목은 실주문 시 별도 확인하며 신규 자동매수를 차단해.
+    </p>}
+    {code.length===6&&!existingHolding&&<p className="notification-hint">
+      {holdingsLoaded?'현재 조회된 보유 목록에서 일치하는 종목을 찾지 못했어. 실제 보유 여부는 실주문 직전에 다시 검증해.':'보유종목 정보가 아직 없어서 기존 보유 수량을 확인할 수 없어. 위에서 실계좌 새로고침을 눌러줘.'}
+    </p>}
     {inputIssue&&code&&quantity&&price&&<p className="live-trial-inline-error" role="status">입력 조건 확인 · {inputIssue} · 실주문 잠금 유지</p>}
     {report&&<div style={{display:'grid',gap:7}} aria-live="polite">
       <strong>{report.preview.permitted?'안전성 조건 통과 · 실주문 잠금 유지':'검사 조건 미충족 · 실주문 잠금 유지'}</strong>
