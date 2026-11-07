@@ -5,9 +5,25 @@ import LiveRiskPreview from './LiveRiskPreview'
 import LiveAccountHoldings from './LiveAccountHoldings'
 import type {AccountHolding,AccountValuation} from './liveAccountView'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
-type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;updated_at:string}
+type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
 type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[];orders?:LiveOrder[]}
 const API='/api/live/trial'
+function orderStatusLabel(order:LiveOrder):string{
+ if(order.state==='CANCELED')return order.filled_quantity>0?
+   '미체결분 취소 완료 · '+order.filled_quantity+'주 체결 보유':'미체결분 취소 완료'
+ if(order.state==='CANCEL_REQUESTED'){
+   if(order.cancel_status==='ACKNOWLEDGED')return '취소 요청 접수 · 증권사 최종 취소 확인 대기'
+   if(order.cancel_status==='UNKNOWN')return '취소 응답 불명 · 재전송 금지 · 수동 확인 필요'
+   if(order.cancel_status==='REJECTED')return '취소 요청 거부 · 원주문 확인 필요'
+   return '취소 요청 처리 여부 불명 · 재전송 금지'
+ }
+ if(order.state==='FILLED')return '체결 완료'
+ if(order.state==='PARTIAL')return '부분체결 · 잔여 주문 진행'
+ if(order.state==='ACCEPTED')return '주문 접수 · 체결 확인 중'
+ if(order.state==='SENDING'||order.state==='UNKNOWN')return '주문 응답 불명 · 중복 주문 차단'
+ if(order.state==='REJECTED')return '주문 거부'
+ return order.state
+}
 type Props={
   token:string;holdings:AccountHolding[];accountSummary:AccountValuation|null;
   deposit:Record<string,unknown>|null;depositMessage:string;accountMessage:string;
@@ -91,8 +107,10 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <p className="notification-hint">KB 주문번호가 확인되지 않은 SENDING·UNKNOWN 상태는 새 주문으로 자동 재전송하지 않습니다. 잠금은 기존에 접수된 주문을 취소하지 않습니다.</p>
       {status?.orders?.length?<div className="notification-list">{status.orders.map(order=>
         <article key={order.id} className="notification-item">
-          <div className="notification-item-heading"><strong>{order.side==='BUY'?'매수':'매도'} · {order.code}</strong><span>{order.state}</span></div>
-          <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 주문번호 {order.broker_order_id||'확인 불가'}</p>
+          <div className="notification-item-heading"><strong>{order.side==='BUY'?'매수':'매도'} · {order.code}</strong><span>{orderStatusLabel(order)}</span></div>
+          <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 원주문번호 {order.broker_order_id||'확인 불가'}</p>
+          {order.cancel_order_no&&<p className="notification-hint">KB 취소 주문번호 {order.cancel_order_no} · {order.state==='CANCELED'?'증권사 취소 완료 증빙 확인':'취소 요청 접수 확인 · 최종 완료 미확정'}</p>}
+          {(order.state==='UNKNOWN'||order.state==='SENDING'||order.cancel_status==='UNKNOWN')&&<p className="live-trial-inline-error">증권사 처리 여부를 확인하기 전까지 동일 주문을 자동으로 다시 보내지 않아.</p>}
         </article>)}</div>:<p className="notification-hint">실계좌 주문 기록 없음 · 실제 주문 미전송</p>}
     </div>
     <LiveRiskPreview token={token} holdings={holdings} holdingsLoaded={Boolean(accountSummary||holdings.length)}/>
