@@ -14,7 +14,7 @@ test('network diagnostic is a separate Worker and never uses live dashboard bind
  assert.equal(cfg.main,'kb-connectivity.ts')
  assert.equal(cfg.workers_dev,true)
  for(const unsafe of ['KB_APP_KEY','KB_APP_SECRET','DASHBOARD_API_KEY','LIVE_TRADING_HARD_ENABLE','PAPER_DB']){
-  assert.ok(!source.includes(unsafe)||source.includes('NO KB credentials'),'diagnostic must not read '+unsafe)
+  assert.ok(!source.includes(unsafe),'diagnostic must not reference '+unsafe)
   assert.ok(!JSON.stringify(cfg).includes(unsafe))
  }
 })
