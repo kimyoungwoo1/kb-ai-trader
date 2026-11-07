@@ -165,8 +165,8 @@ async function journalSummary(db:Db,now:Date){
  const [buy,active,held,principal]=await Promise.all([
   db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE trading_day=? AND side='BUY'").bind(day).first(),
   db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
-  db.prepare("SELECT COUNT(DISTINCT code) AS n FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first(),
-  db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS n FROM live_order_journal WHERE side='BUY' AND state NOT IN ('REJECTED','CANCELED')").first()
+  db.prepare("SELECT COUNT(DISTINCT code) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first(),
+  db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first()
  ])
  const values=[buy?.n,active?.n,held?.n,principal?.n].map(num)
  if(values.some(v=>!Number.isSafeInteger(v)))throw Error('D1 원장 위험금액 조회 실패')
@@ -210,7 +210,7 @@ async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<
  const owned=await db.prepare("SELECT COALESCE(SUM(CASE WHEN side='BUY' THEN filled_quantity ELSE -filled_quantity END),0) AS shares FROM live_order_journal WHERE code=?").bind(fill.code).first()
  const shares=num(owned?.shares)
  if(!Number.isSafeInteger(shares)||shares<1)return 'no_trial_shares'
- const buy=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='BUY' AND state='FILLED'").bind(fill.code).first()
+ const buy=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='BUY' AND (state='FILLED' OR (state='CANCELED' AND filled_quantity>0))").bind(fill.code).first()
  const existing=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='SELL'").bind(fill.code).first()
  if(num(buy?.n)!==1||num(existing?.n)!==0)return 'sell_not_safe'
  let realHolding:number,realSellable:number
