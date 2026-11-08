@@ -10,7 +10,9 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
-if(process.argv.slice(2).some(arg=>arg!=='--tls-proof-only'))throw Error('지원하지 않는 배포 옵션')
+const privateEgress = process.argv.includes('--private-egress')
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress'].includes(arg))||
+  (privateEgress&&!tlsProofOnly))throw Error('지원하지 않는 배포 옵션 · private egress는 TLS 진단 전용')
 const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
@@ -347,6 +349,7 @@ async function main(){
         ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
         ...required.map(name=>({name,type:'inherit',version_id:rollbackVersion})),
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
+        ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
@@ -383,13 +386,17 @@ async function main(){
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
-  console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인')
+  if(privateEgress)ensure(newBindings.get('KB_EGRESS')==='service',
+    '격리 진단 Private Egress Service Binding 확인 실패 · 운영 전환 없음')
+  console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인'+
+    (privateEgress?' · 비공개 KB 조회 전용 RPC 연결 확인':''))
   // Mandatory smoke testing on the exact NEW version URL. Never change
   // production traffic when Version URLs are disabled or not yet propagated.
   console.log('7/7 신규 버전 URL에서 계좌 실조회 검증 (운영 트래픽 미변경)')
   const previewOrigin=versionOrigin(createdId)
   if(tlsProofOnly){
-    console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · 조회 전용')
+    console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
+      (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
     const result=await fetch(previewOrigin+'/api/deploy/tls-proof',{
       method:'POST',headers:{'X-Deploy-Probe':probeKey},
       signal:AbortSignal.timeout(80000)
