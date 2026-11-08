@@ -8,7 +8,11 @@ import {kbReadOnlyTlsRequest} from './kbSocketReadOnly'
 import {connect} from 'cloudflare:sockets'
 
 type Env={
- DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string
+ DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string;
+ KB_EGRESS?:{
+  readOnly(input:Parameters<typeof kbReadOnlyTlsRequest>[0]):ReturnType<typeof kbReadOnlyTlsRequest>;
+  rootProbe():Promise<SafeResult>;
+ }
 }
 type SafeResult={status:'PASS'|'BLOCKED'|'SKIPPED';httpStatus?:number;resultCode?:string;processCode?:string;processFlag?:string;detail?:string}
 // Compare outbound TLS from this exact Version URL isolate to the working
@@ -93,6 +97,10 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  checks:Record<string,SafeResult>
 }>{
  const checks:Record<string,SafeResult>={}
+ // Service Binding RPC to the private egress Worker is optional only in this
+ // proof build. Production OAuth/cache/orders do not import this module.
+ const kbRead=(input:Parameters<typeof kbReadOnlyTlsRequest>[0])=>
+  env.KB_EGRESS?env.KB_EGRESS.readOnly(input):kbReadOnlyTlsRequest(input)
  const done=()=>{
   // OAuth failure is a valid, completed diagnostic. Subsequent account
   // endpoints cannot run without a valid token, so mark them SKIPPED rather
@@ -112,7 +120,7 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  }
  let token:string
  try{
-  const auth=await kbReadOnlyTlsRequest({
+  const auth=await kbRead({
    path:'/oauth2/token',body:payload({
     appKey:env.KB_APP_KEY,appSecret:env.KB_APP_SECRET,
     grantType:'client_credentials'
@@ -136,7 +144,11 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
   // Test the same harmless GET inside this specific isolated version only
   // if the OAuth TLS socket failed before any credential write.
   if(['KB_SOCKET_TIMEOUT_CONNECT','KB_SOCKET_TRANSPORT_CONNECT'].includes(checks.oauth.detail||'')){
-   checks.networkRoot=await rootConnectionCheck()
+   try{
+    checks.networkRoot=env.KB_EGRESS?await env.KB_EGRESS.rootProbe():await rootConnectionCheck()
+   }catch{
+    checks.networkRoot={status:'BLOCKED',detail:'ROOT_RPC_UNAVAILABLE'}
+   }
   }
   return done()
  }
@@ -154,7 +166,7 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  ] as const
  for(const [key,path,body] of queries){
   try{
-   const reply=await kbReadOnlyTlsRequest({path,body,token,timeoutMs:16000})
+   const reply=await kbRead({path,body,token,timeoutMs:16000})
    checks[key]=passed(reply,key==='orderInquiry'||key==='holdings')
   }catch(error){
    checks[key]={status:'BLOCKED',detail:classify(error)}
