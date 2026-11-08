@@ -93,7 +93,7 @@ test('read-only TLS POST sends one Content-Length framed request and reports REA
    /KB_SOCKET_TIMEOUT_READ_HEADERS/
   )
   assert.equal(writes,1)
-  const split=request.indexOf('\\r\\n\\r\\n')
+  const split=request.indexOf('\r\n\r\n')
   assert.ok(split>0)
   assert.equal(Number(request.match(/Content-Length: ([0-9]+)/)?.[1]),
    enc.encode(request.slice(split+4)).length)
@@ -105,7 +105,7 @@ test('TLS socket distinguishes waiting for incomplete body from waiting for resp
   opened:Promise.resolve(),closed:Promise.resolve(),
   writable:new WritableStream({write(){}}),
   readable:new ReadableStream({start(controller){
-   controller.enqueue(enc.encode('HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n{}'))
+   controller.enqueue(enc.encode('HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{}'))
   }}),
   close(){}
  })
