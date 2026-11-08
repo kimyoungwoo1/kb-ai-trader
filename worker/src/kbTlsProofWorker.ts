@@ -9,7 +9,7 @@ import {kbReadOnlyTlsRequest} from './kbSocketReadOnly'
 type Env={
  DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string
 }
-type SafeResult={status:'PASS'|'BLOCKED';httpStatus?:number;resultCode?:string;processCode?:string;processFlag?:string;detail?:string}
+type SafeResult={status:'PASS'|'BLOCKED'|'SKIPPED';httpStatus?:number;resultCode?:string;processCode?:string;processFlag?:string;detail?:string}
 const id=(value:unknown)=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,16}$/.test(value)?value:
  typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<1e12?String(value):'unavailable'
 const classify=(error:unknown):string=>{
@@ -41,11 +41,19 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  checks:Record<string,SafeResult>
 }>{
  const checks:Record<string,SafeResult>={}
- const done=()=>({
-  mode:'ISOLATED_TLS_READ_ONLY' as const,realOrderSent:false as const,
-  ready:['oauth','holdings','valuation','orderInquiry'].every(x=>checks[x]?.status==='PASS'),
-  checks
- })
+ const done=()=>{
+  // OAuth failure is a valid, completed diagnostic. Subsequent account
+  // endpoints cannot run without a valid token, so mark them SKIPPED rather
+  // than returning an incomplete result or fabricating PASS/BLOCKED evidence.
+  for(const key of ['oauth','holdings','valuation','orderInquiry']){
+   if(!checks[key])checks[key]={status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'}
+  }
+  return {
+   mode:'ISOLATED_TLS_READ_ONLY' as const,realOrderSent:false as const,
+   ready:['oauth','holdings','valuation','orderInquiry'].every(x=>checks[x].status==='PASS'),
+   checks
+  }
+ }
  if(!env.KB_APP_KEY||!env.KB_APP_SECRET){
   checks.oauth={status:'BLOCKED',detail:'KB_CREDENTIALS_NOT_BOUND'}
   return done()
