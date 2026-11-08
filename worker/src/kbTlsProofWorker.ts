@@ -47,8 +47,10 @@ async function rootConnectionCheck():Promise<SafeResult>{
    if(part.done)break
    data+=new TextDecoder().decode(part.value.subarray(0,500-data.length))
   }
-  const match=/^HTTP\\/1\\.[01] ([1-5][0-9]{2})[ \\r\\n]/.exec(data)
-  return match?{status:'PASS',httpStatus:Number(match[1]),detail:'ROOT_HTTP_RESPONSE'}:
+  const statusLine=data.split('\r\n',1)[0].split(' ')
+  const valid=(statusLine[0]==='HTTP/1.0'||statusLine[0]==='HTTP/1.1')&&
+   /^[1-5][0-9]{2}$/.test(statusLine[1]||'')
+  return valid?{status:'PASS',httpStatus:Number(statusLine[1]),detail:'ROOT_HTTP_RESPONSE'}:
    {status:'BLOCKED',detail:'ROOT_HTTP_STATUS_MISSING'}
  }catch(error){
   const isTimeout=error instanceof Error&&error.message==='TIMEOUT'
