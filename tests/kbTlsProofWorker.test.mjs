@@ -35,12 +35,13 @@ function brokerSocket(overrides={}){
  globalThis.__kbConnectMock=()=>{
   let readerController
   const responseStream=new ReadableStream({start(controller){readerController=controller}})
-  const requestParts=[]
   const writerStream=new WritableStream({write(data){
-   requestParts.push(data)
-   if(requestParts.length!==2)return
-   const header=new TextDecoder().decode(requestParts[0])
-   const body=new TextDecoder().decode(requestParts[1])
+   const request=new TextDecoder().decode(data)
+   const at=request.indexOf('\r\n\r\n')
+   assert.ok(at>=0,'HTTP headers and body must be sent in one write')
+   const header=request.slice(0,at+4)
+   const body=request.slice(at+4)
+   assert.equal(Number(header.match(/Content-Length: ([0-9]+)/)?.[1]),enc.encode(body).length)
    const path=header.match(/^POST (\/[^ ]+) HTTP\/1\.1/)?.[1]
    calls.push({path,body,header})
    let payload
@@ -70,6 +71,9 @@ test('without credentials, isolated Worker never attempts network or displays se
   assert.equal(result.ready,false)
   assert.equal(result.realOrderSent,false)
   assert.equal(result.checks.oauth.detail,'KB_CREDENTIALS_NOT_BOUND')
+  for(const key of ['holdings','valuation','orderInquiry']){
+   assert.deepEqual(result.checks[key],{status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'})
+  }
   assert.equal(calls,0)
  }finally{globalThis.__kbConnectMock=previous}
 })
@@ -134,4 +138,25 @@ test('proof-only deployment cannot promote production, touch D1 SQL or use produ
  assert.match(source,/realOrderSent:false/)
  assert.doesNotMatch(source,/ssam180|submitKb|processLiveFill|PAPER_DB/)
  assert.ok(!main.includes('kbTlsProofWorker'))
+})
+
+test('OAuth transport failure always produces three SKIPPED rows and no brokerage reads',async()=>{
+ const previous=globalThis.__kbConnectMock
+ let calls=0
+ globalThis.__kbConnectMock=()=>{
+  calls++
+  throw Error('mock socket unavailable')
+ }
+ try{
+  const result=await runKbTlsProof(key)
+  assert.equal(result.ready,false)
+  assert.equal(result.realOrderSent,false)
+  assert.equal(result.checks.oauth.status,'BLOCKED')
+  assert.equal(result.checks.oauth.detail,'KB_SOCKET_TRANSPORT_CONNECT')
+  for(const child of ['holdings','valuation','orderInquiry']){
+   assert.deepEqual(result.checks[child],{status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'})
+  }
+  assert.equal(calls,1)
+  assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
+ }finally{globalThis.__kbConnectMock=previous}
 })
