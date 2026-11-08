@@ -63,3 +63,76 @@ test('experimental socket transport remains read-only, isolated and explicitly r
   format:'esm',write:false,external:['cloudflare:sockets']})
  assert.match(output.outputFiles[0].text,/cloudflare:sockets/)
 })
+
+const fakeSocketPlugin={
+ name:'mock-kb-socket',
+ setup(api){
+  api.onResolve({filter:/^cloudflare:sockets$/},()=>({path:'fake-kb',namespace:'kb-fake'}))
+  api.onLoad({filter:/.*/,namespace:'kb-fake'},()=>({
+   contents:'export const connect=(...args)=>globalThis.__kbSocketPhaseMock(...args)',
+   loader:'js'
+  }))
+ }
+}
+const phaseBundle=await build({entryPoints:['worker/src/kbSocketReadOnly.ts'],
+ bundle:true,platform:'node',format:'esm',write:false,plugins:[fakeSocketPlugin]})
+const {kbReadOnlyTlsRequest}=await import('data:text/javascript;base64,'+
+ Buffer.from(phaseBundle.outputFiles[0].contents).toString('base64'))
+test('read-only TLS POST sends one Content-Length framed request and reports READ_HEADERS timeout',async()=>{
+ const previous=globalThis.__kbSocketPhaseMock
+ let writes=0,request=''
+ globalThis.__kbSocketPhaseMock=()=>({
+  opened:Promise.resolve(),closed:Promise.resolve(),
+  writable:new WritableStream({write(bytes){writes++;request=new TextDecoder().decode(bytes)}}),
+  readable:new ReadableStream({start(){}}),
+  close(){}
+ })
+ try{
+  await assert.rejects(
+   kbReadOnlyTlsRequest({path:'/oauth2/token',body:{dataBody:{grantType:'client_credentials'}},timeoutMs:1000}),
+   /KB_SOCKET_TIMEOUT_READ_HEADERS/
+  )
+  assert.equal(writes,1)
+  const split=request.indexOf('\\r\\n\\r\\n')
+  assert.ok(split>0)
+  assert.equal(Number(request.match(/Content-Length: ([0-9]+)/)?.[1]),
+   enc.encode(request.slice(split+4)).length)
+ }finally{globalThis.__kbSocketPhaseMock=previous}
+})
+test('TLS socket distinguishes waiting for incomplete body from waiting for response headers',async()=>{
+ const previous=globalThis.__kbSocketPhaseMock
+ globalThis.__kbSocketPhaseMock=()=>({
+  opened:Promise.resolve(),closed:Promise.resolve(),
+  writable:new WritableStream({write(){}}),
+  readable:new ReadableStream({start(controller){
+   controller.enqueue(enc.encode('HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n{}'))
+  }}),
+  close(){}
+ })
+ try{
+  await assert.rejects(
+   kbReadOnlyTlsRequest({path:'/oauth2/token',body:{dataBody:{grantType:'client_credentials'}},timeoutMs:1000}),
+   /KB_SOCKET_TIMEOUT_READ_BODY/
+  )
+ }finally{globalThis.__kbSocketPhaseMock=previous}
+})
+test('TLS socket reveals no sensitive error or attempts forbidden broker writes',async()=>{
+ const previous=globalThis.__kbSocketPhaseMock
+ globalThis.__kbSocketPhaseMock=()=>({
+  opened:Promise.resolve(),closed:Promise.resolve(),
+  writable:new WritableStream({write(){throw Error('CONFIDENTIAL TOKEN IN ERROR')}}),
+  readable:new ReadableStream({start(){}}),
+  close(){}
+ })
+ try{
+  await assert.rejects(
+   kbReadOnlyTlsRequest({path:'/oauth2/token',body:{private:'DO-NOT-LEAK'},timeoutMs:1000}),
+   error=>{
+    assert.equal(error.message,'KB_SOCKET_TRANSPORT_WRITE')
+    assert.ok(!error.message.includes('CONFIDENTIAL'))
+    return true
+   })
+  await assert.rejects(kbReadOnlyTlsRequest({path:'/api/v1/ssam1802',body:{}}),
+   /KB_SOCKET_READ_ONLY_PATH_REQUIRED/)
+ }finally{globalThis.__kbSocketPhaseMock=previous}
+})
