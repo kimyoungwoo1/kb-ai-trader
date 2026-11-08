@@ -411,6 +411,12 @@ async function main(){
         ' · processCode '+safe(record.processCode)+
         ' · '+safe(record.detail))
     }
+    if(summary?.checks?.networkRoot){
+      const record=summary.checks.networkRoot
+      ensure(['PASS','BLOCKED'].includes(record.status),'격리 네트워크 비교 응답 오류')
+      console.log('○ 같은 격리 버전 TLS GET / 비교: '+safe(record.status)+
+        ' · HTTP '+safe(record.httpStatus)+' · '+safe(record.detail))
+    }
     ensure(summary.ready===true&&['oauth','holdings','valuation','orderInquiry']
       .every(key=>summary.checks[key].status==='PASS'),
       'TLS 조회 검사 일부 미통과 · 운영 전환 없음 · 위 코드로 원인 확인')
