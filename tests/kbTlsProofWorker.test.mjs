@@ -190,3 +190,56 @@ test('one same-version TCP failure triggers a harmless GET / comparison without 
   assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
  }finally{globalThis.__kbConnectMock=original}
 })
+
+test('private Cloudflare Service Binding handles OAuth and read-only KB queries without outbound direct sockets',async()=>{
+ const calls=[]
+ const previous=globalThis.__kbConnectMock
+ globalThis.__kbConnectMock=()=>{throw Error('proof Worker must use binding, not direct KB network')}
+ const mockEgress={
+  async readOnly(input){
+   calls.push(input)
+   const obj=input.path==='/oauth2/token'?statuses.auth:
+    input.path==='/api/v1/ssqm1801'?statuses.holdings:
+    input.path==='/api/v1/ssqm2952'?statuses.valuation:
+    input.path==='/api/v1/ssqm2341'?statuses.order:null
+   assert.ok(obj,'Unexpected or unsafe KB service endpoint: '+input.path)
+   return {status:200,json:obj,durationMs:250}
+  },
+  async rootProbe(){throw Error('rootProbe should not run after successful OAuth')}
+ }
+ try{
+  const result=await runKbTlsProof({...key,KB_EGRESS:mockEgress},new Date('2026-11-07T10:00:00Z'))
+  assert.equal(result.ready,true)
+  assert.equal(result.realOrderSent,false)
+  assert.deepEqual(calls.map(x=>x.path),[
+   '/oauth2/token','/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm2341'
+  ])
+  assert.equal(JSON.parse(JSON.stringify(calls[3].body)).dataBody.ordr_dt,'20261106')
+  assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
+  assert.ok(!JSON.stringify(result).includes('SUPER_PRIVATE_ACCESS_TOKEN'))
+ }finally{globalThis.__kbConnectMock=previous}
+})
+test('private binding OAuth connect failure reports a sanitized root connectivity comparison without real order writes',async()=>{
+ const previous=globalThis.__kbConnectMock
+ globalThis.__kbConnectMock=()=>{throw Error('direct socket must not run in private binding mode')}
+ let rootCount=0
+ const proof=await runKbTlsProof({...key,KB_EGRESS:{
+  async readOnly(){throw Error('KB_SOCKET_TIMEOUT_CONNECT')},
+  async rootProbe(){rootCount++;return{status:'PASS',httpStatus:404,detail:'ROOT_HTTP_RESPONSE'}}
+ }})
+ assert.equal(proof.ready,false)
+ assert.equal(proof.checks.oauth.detail,'KB_SOCKET_TIMEOUT_CONNECT')
+ assert.deepEqual(proof.checks.networkRoot,{status:'PASS',httpStatus:404,detail:'ROOT_HTTP_RESPONSE'})
+ assert.equal(rootCount,1)
+ assert.equal(proof.checks.orderInquiry.status,'SKIPPED')
+ assert.equal(proof.realOrderSent,false)
+ globalThis.__kbConnectMock=previous
+})
+test('private service binding is opted-in only for isolated version URLs and never modifies live order route',()=>{
+ assert.match(deployment,/const privateEgress = process\.argv\.includes\('--private-egress'\)/)
+ assert.match(deployment,/privateEgress&&!tlsProofOnly/)
+ assert.match(deployment,/privateEgress\?\[\{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'\}\]/)
+ assert.match(deployment,/if\(privateEgress\)ensure\(newBindings\.get\('KB_EGRESS'\)==='service'/)
+ assert.match(source,/env\.KB_EGRESS\?env\.KB_EGRESS\.readOnly/)
+ assert.ok(!main.includes('KB_EGRESS'))
+})
