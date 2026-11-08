@@ -1,0 +1,8 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "kb-ai-trader-egress",
+  "main": "kb-egress.ts",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": false,
+  "preview_urls": false
+}
