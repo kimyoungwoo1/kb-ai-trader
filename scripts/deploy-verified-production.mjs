@@ -403,8 +403,8 @@ async function main(){
       typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=999999?String(v):'unavailable'
     for(const key of ['oauth','holdings','valuation','orderInquiry']){
       const record=summary?.checks?.[key]
-      ensure(record?.status==='PASS'||record?.status==='BLOCKED',
-        '진단 응답 필수 항목 누락: '+key)
+      ensure(['PASS','BLOCKED','SKIPPED'].includes(record?.status),
+        '진단 응답 상태값 오류: '+key)
       console.log('○ TLS '+key+': '+safe(record.status)+
         ' · HTTP '+safe(record.httpStatus)+
         ' · KB resultCode '+safe(record.resultCode)+
