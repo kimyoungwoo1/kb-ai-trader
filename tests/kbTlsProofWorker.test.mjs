@@ -156,7 +156,37 @@ test('OAuth transport failure always produces three SKIPPED rows and no brokerag
   for(const child of ['holdings','valuation','orderInquiry']){
    assert.deepEqual(result.checks[child],{status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'})
   }
-  assert.equal(calls,1)
+  assert.equal(calls,2,'OAuth socket and safe network-only GET are the only attempts')
+  assert.deepEqual(result.checks.networkRoot,{status:'BLOCKED',detail:'ROOT_TRANSPORT_CONNECT'})
   assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
  }finally{globalThis.__kbConnectMock=previous}
+})
+
+test('one same-version TCP failure triggers a harmless GET / comparison without credentials',async()=>{
+ const original=globalThis.__kbConnectMock
+ const calls=[]
+ globalThis.__kbConnectMock=()=>{
+  calls.push('connect')
+  if(calls.length===1)throw Error('first socket path blocked')
+  let controller
+  const readable=new ReadableStream({start(c){controller=c}})
+  const writable=new WritableStream({write(data){
+   const req=new TextDecoder().decode(data)
+   assert.ok(req.startsWith('GET / HTTP/1.1'))
+   assert.ok(!req.includes('unit-test-secret'))
+   assert.ok(!req.includes('Authorization'))
+   const resp='HTTP/1.1 404 Not Found\\r\\nContent-Length: 0\\r\\n\\r\\n'
+   controller.enqueue(new TextEncoder().encode(resp))
+   controller.close()
+  }})
+  return{opened:Promise.resolve(),closed:Promise.resolve(),readable,writable,close(){}}
+ }
+ try{
+  const result=await runKbTlsProof(key)
+  assert.equal(result.ready,false)
+  assert.equal(result.checks.oauth.detail,'KB_SOCKET_TRANSPORT_CONNECT')
+  assert.deepEqual(result.checks.networkRoot,{status:'PASS',httpStatus:404,detail:'ROOT_HTTP_RESPONSE'})
+  assert.equal(calls.length,2)
+  assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
+ }finally{globalThis.__kbConnectMock=original}
 })
