@@ -5,11 +5,61 @@
  * diagnostic POST to exact path. No D1, order writes, or account data output.
  */
 import {kbReadOnlyTlsRequest} from './kbSocketReadOnly'
+import {connect} from 'cloudflare:sockets'
 
 type Env={
  DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string
 }
 type SafeResult={status:'PASS'|'BLOCKED'|'SKIPPED';httpStatus?:number;resultCode?:string;processCode?:string;processFlag?:string;detail?:string}
+// Compare outbound TLS from this exact Version URL isolate to the working
+// disposable diagnostics Worker. Never read or send brokerage credentials.
+async function rootConnectionCheck():Promise<SafeResult>{
+ const deadline=Date.now()+6000
+ let socket:ReturnType<typeof connect>|undefined
+ let writer:WritableStreamDefaultWriter<Uint8Array>|undefined
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined
+ let phase='CONNECT'
+ const bounded=async<T>(job:Promise<T>):Promise<T>=>{
+  let timer:ReturnType<typeof setTimeout>|undefined
+  try{
+   const time=deadline-Date.now()
+   if(time<=0)throw Error('TIMEOUT')
+   return await Promise.race([job,new Promise<T>((_,reject)=>{
+    timer=setTimeout(()=>reject(Error('TIMEOUT')),time)
+   })])
+  }finally{if(timer!==undefined)clearTimeout(timer)}
+ }
+ try{
+  socket=connect({hostname:'developer.kbsec.com',port:32484},{secureTransport:'on'})
+  void socket.closed.catch(()=>{})
+  await bounded(socket.opened)
+  phase='WRITE'
+  writer=socket.writable.getWriter()
+  await bounded(writer.write(new TextEncoder().encode(
+   'GET / HTTP/1.1\\r\\nHost: developer.kbsec.com\\r\\nConnection: close\\r\\n\\r\\n'
+  )))
+  writer.releaseLock();writer=undefined
+  phase='READ'
+  reader=socket.readable.getReader()
+  let data=''
+  for(let i=0;i<4&&data.length<500&&!data.includes('\\r\\n');i++){
+   const part=await bounded(reader.read())
+   if(part.done)break
+   data+=new TextDecoder().decode(part.value.subarray(0,500-data.length))
+  }
+  const match=/^HTTP\\/1\\.[01] ([1-5][0-9]{2})[ \\r\\n]/.exec(data)
+  return match?{status:'PASS',httpStatus:Number(match[1]),detail:'ROOT_HTTP_RESPONSE'}:
+   {status:'BLOCKED',detail:'ROOT_HTTP_STATUS_MISSING'}
+ }catch(error){
+  const isTimeout=error instanceof Error&&error.message==='TIMEOUT'
+  return {status:'BLOCKED',detail:'ROOT_'+(isTimeout?'TIMEOUT_':'TRANSPORT_')+phase}
+ }finally{
+  try{reader?.releaseLock()}catch{}
+  try{writer?.releaseLock()}catch{}
+  try{socket?.close()}catch{}
+ }
+}
+
 const id=(value:unknown)=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,16}$/.test(value)?value:
  typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<1e12?String(value):'unavailable'
 const classify=(error:unknown):string=>{
@@ -80,6 +130,12 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
   checks.oauth={status:'PASS',httpStatus:auth.status,detail:'KB_TOKEN_RECEIVED_PRIVATE'}
  }catch(error){
   checks.oauth={status:'BLOCKED',detail:classify(error)}
+  // The old standalone diagnostic Worker reached HTTP 404 on GET /.
+  // Test the same harmless GET inside this specific isolated version only
+  // if the OAuth TLS socket failed before any credential write.
+  if(['KB_SOCKET_TIMEOUT_CONNECT','KB_SOCKET_TRANSPORT_CONNECT'].includes(checks.oauth.detail||'')){
+   checks.networkRoot=await rootConnectionCheck()
+  }
   return done()
  }
  const kstDate=new Date(now.getTime()+9*3600_000)
