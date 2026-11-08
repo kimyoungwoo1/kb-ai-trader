@@ -282,7 +282,7 @@ async function main(){
     }
     console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
   }else if(tlsProofOnly){
-    console.log('✓ 격리 TLS 검증 모드: D1 조회·쓰기·마이그레이션 모두 생략')
+    console.log('✓ 격리 TLS 검증 모드: D1 SQL 조회·쓰기 및 마이그레이션 생략')
   }else{
     console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
   }
@@ -400,7 +400,7 @@ async function main(){
     ensure(summary?.success===true&&summary?.mode==='ISOLATED_TLS_READ_ONLY'&&
       summary?.realOrderSent===false,'진단 Worker 모드 검증 실패 · 안전 중단')
     const safe=(v)=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,36}$/.test(v)?v:
-      typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=999999?' '+v:'unavailable'
+      typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=999999?String(v):'unavailable'
     for(const key of ['oauth','holdings','valuation','orderInquiry']){
       const record=summary?.checks?.[key]
       ensure(record?.status==='PASS'||record?.status==='BLOCKED',
