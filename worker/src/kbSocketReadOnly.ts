@@ -88,8 +88,14 @@ export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
      throw Error('KB_SOCKET_RESPONSE_TOO_LARGE')
     const next=new Uint8Array(buffer.length+part.value.length)
     next.set(buffer);next.set(part.value,buffer.length);buffer=next
+    // Mark a body wait only after the complete CRLFCRLF header boundary.
     // Do not expose or log any received bytes.
-    if(buffer.includes(13)&&buffer.includes(10))phase='READ_BODY'
+    for(let i=3;i<buffer.length;i++){
+     if(buffer[i-3]===13&&buffer[i-2]===10&&buffer[i-1]===13&&buffer[i]===10){
+      phase='READ_BODY'
+      break
+     }
+    }
    }
    const reply=decodeKbHttpResponse(buffer,part.done)
    if(reply){
