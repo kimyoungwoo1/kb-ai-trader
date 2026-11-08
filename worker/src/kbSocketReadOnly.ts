@@ -60,16 +60,25 @@ export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
   'Connection: close\r\n'+
   (input.token?'Authorization: Bearer '+safeHeader(input.token)+'\r\n':'')+
   'Content-Length: '+serialized.length+'\r\n\r\n')
- const socket=connect({hostname:host,port},{secureTransport:'on'})
- void socket.closed.catch(()=>{})
+ // The unauthenticated TLS GET probe succeeded with a single write.
+ // Send one full Content-Length framed request to avoid a fragmented request
+ // leaving the upstream waiting for its body. This is still read-only/OAuth.
+ const fullRequest=new Uint8Array(request.length+serialized.length)
+ fullRequest.set(request)
+ fullRequest.set(serialized,request.length)
+ let phase:'CONNECT'|'WRITE'|'READ_HEADERS'|'READ_BODY'|'JSON'='CONNECT'
+ let socket:ReturnType<typeof connect>|undefined
  let writer:WritableStreamDefaultWriter<Uint8Array>|undefined
  let reader:ReadableStreamDefaultReader<Uint8Array>|undefined
  try{
+  socket=connect({hostname:host,port},{secureTransport:'on'})
+  void socket.closed.catch(()=>{})
   await endBy(socket.opened,deadline)
+  phase='WRITE'
   writer=socket.writable.getWriter()
-  await endBy(writer.write(request),deadline)
-  await endBy(writer.write(serialized),deadline)
+  await endBy(writer.write(fullRequest),deadline)
   writer.releaseLock();writer=undefined
+  phase='READ_HEADERS'
   reader=socket.readable.getReader()
   let buffer=new Uint8Array(0)
   for(;;){
@@ -79,24 +88,28 @@ export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
      throw Error('KB_SOCKET_RESPONSE_TOO_LARGE')
     const next=new Uint8Array(buffer.length+part.value.length)
     next.set(buffer);next.set(part.value,buffer.length);buffer=next
+    // Do not expose or log any received bytes.
+    if(buffer.includes(13)&&buffer.includes(10))phase='READ_BODY'
    }
    const reply=decodeKbHttpResponse(buffer,part.done)
    if(reply){
+    phase='JSON'
     return {status:reply.status,json:decodeKbJson(reply.body),
      durationMs:Date.now()-start}
    }
    if(part.done)throw Error('KB_SOCKET_RESPONSE_TRUNCATED')
   }
  }catch(error){
-  // Deliberately do not append Error.cause, URL query, credentials, token,
-  // response body or socket peer bytes to outward-facing messages.
+  // Never expose Error.cause, URL query, credentials, token, socket peer
+  // bytes or response text. Only the fixed phase is returned to the caller.
   const msg=error instanceof Error?error.message:''
+  if(msg==='KB_SOCKET_TIMEOUT')throw Error('KB_SOCKET_TIMEOUT_'+phase)
   if(/^KB_(WIRE|SOCKET)_[A-Z_]+$/.test(msg))throw Error(msg)
-  throw Error('KB_SOCKET_TRANSPORT_FAILED')
+  throw Error('KB_SOCKET_TRANSPORT_'+phase)
  }finally{
-  try{await reader?.cancel()}catch{}
+  // Cleanup is best-effort: do not let cancel() stall the diagnostic result.
   try{reader?.releaseLock()}catch{}
   try{writer?.releaseLock()}catch{}
-  try{socket.close()}catch{}
+  try{socket?.close()}catch{}
  }
 }
