@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os'
 import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
+const tlsProofOnly = process.argv.includes('--tls-proof-only')
+if(process.argv.slice(2).some(arg=>arg!=='--tls-proof-only'))throw Error('지원하지 않는 배포 옵션')
 const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
@@ -249,7 +251,7 @@ async function main(){
     }
   }
   if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
-  if(paperDbId){
+  if(paperDbId&&!tlsProofOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
     await api(root+'/d1/database/'+paperDbId)
@@ -279,6 +281,8 @@ async function main(){
       ensure(results.every(x=>x?.success!==false),'D1 초기 테이블 SQL 실행 실패')
     }
     console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
+  }else if(tlsProofOnly){
+    console.log('✓ 격리 TLS 검증 모드: D1 조회·쓰기·마이그레이션 모두 생략')
   }else{
     console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
   }
@@ -304,10 +308,13 @@ async function main(){
   let source
   try {
     const output=join(temp,'worker.mjs')
-    exec('npx',['esbuild','worker/src/index.ts','--bundle','--format=esm','--platform=browser','--target=es2022','--outfile='+output])
+    exec('npx',['esbuild',tlsProofOnly?'worker/src/kbTlsProofWorker.ts':'worker/src/index.ts',
+      '--bundle','--format=esm','--platform=browser','--target=es2022',
+      ...(tlsProofOnly?['--external:cloudflare:sockets']:[]),'--outfile='+output])
     source=readFileSync(output)
   } finally {rmSync(temp,{force:true,recursive:true})}
-  ensure(source.includes(Buffer.from('/api/auth/login')),'Worker 로그인 코드 누락')
+  if(!tlsProofOnly)ensure(source.includes(Buffer.from('/api/auth/login')),'Worker 로그인 코드 누락')
+  else ensure(source.includes(Buffer.from('/api/deploy/tls-proof')),'격리 TLS 진단 코드 누락')
   console.log('4/7 정적 파일 업로드 (운영 트래픽 변경 없음)')
   const session=await api(root+'/workers/scripts/'+name+'/assets-upload-session',{
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manifest})
@@ -333,7 +340,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':'paper watch + D1 backup + current live secrets + push notifications'},
+      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':'paper watch + D1 backup + current live secrets + push notifications'},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
@@ -381,6 +388,35 @@ async function main(){
   // production traffic when Version URLs are disabled or not yet propagated.
   console.log('7/7 신규 버전 URL에서 계좌 실조회 검증 (운영 트래픽 미변경)')
   const previewOrigin=versionOrigin(createdId)
+  if(tlsProofOnly){
+    console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · 조회 전용')
+    const result=await fetch(previewOrigin+'/api/deploy/tls-proof',{
+      method:'POST',headers:{'X-Deploy-Probe':probeKey},
+      signal:AbortSignal.timeout(80000)
+    })
+    ensure(result.ok,'격리 TLS 진단 Worker 응답 실패 (HTTP '+result.status+')')
+    let summary
+    try{summary=await result.json()}catch{throw Error('격리 TLS 진단 응답 형식 오류')}
+    ensure(summary?.success===true&&summary?.mode==='ISOLATED_TLS_READ_ONLY'&&
+      summary?.realOrderSent===false,'진단 Worker 모드 검증 실패 · 안전 중단')
+    const safe=(v)=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,36}$/.test(v)?v:
+      typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=999999?' '+v:'unavailable'
+    for(const key of ['oauth','holdings','valuation','orderInquiry']){
+      const record=summary?.checks?.[key]
+      ensure(record?.status==='PASS'||record?.status==='BLOCKED',
+        '진단 응답 필수 항목 누락: '+key)
+      console.log('○ TLS '+key+': '+safe(record.status)+
+        ' · HTTP '+safe(record.httpStatus)+
+        ' · KB resultCode '+safe(record.resultCode)+
+        ' · processCode '+safe(record.processCode)+
+        ' · '+safe(record.detail))
+    }
+    ensure(summary.ready===true&&['oauth','holdings','valuation','orderInquiry']
+      .every(key=>summary.checks[key].status==='PASS'),
+      'TLS 조회 검사 일부 미통과 · 운영 전환 없음 · 위 코드로 원인 확인')
+    console.log('✅ TLS 읽기 전용 실제 KB 인증·계좌·주문조회 검증 통과 · 운영 전환 없음')
+    return
+  }
   await probeVersion(previewOrigin,probeKey,'신규 버전 사전 검사')
   console.log('✓ 신규 버전 운영 반영 허용 · 사전 실조회 성공')
   // Guard against another deployment switching the live Worker while we build.
