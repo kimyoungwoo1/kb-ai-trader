@@ -8,7 +8,7 @@ import {diagnoseLiveReadiness} from './liveReadiness'
  * Real execution requires an independently verified KB order/contract
  * implementation (including ack, fill, cancel and unknown-status reconciliation).
  */
-export const LIVE_TRIAL_BUDGET=50_000
+export const LIVE_TRIAL_BUDGET=10_000
 export const LIVE_TRIAL_DAILY_BUYS=1
 export const LIVE_TRIAL_MAX_SYMBOLS=1
 type Db=any
@@ -29,7 +29,7 @@ export function validateTrialCandidate(value:TrialCandidate,now=new Date()):stri
   if(!/^[0-9]{6}$/.test(value.code))return '유효하지 않은 종목코드'
   if(!Number.isSafeInteger(value.quantity)||value.quantity<1)return '수량 오류'
   if(!Number.isSafeInteger(value.limitPrice)||value.limitPrice<1)return '지정가 오류'
-  if(value.limitPrice*value.quantity>LIVE_TRIAL_BUDGET)return '5만 원 한도 초과'
+  if(value.limitPrice*value.quantity>LIVE_TRIAL_BUDGET)return '1만 원 한도 초과'
   if(!isRegularSession(now))return '정규장 외 주문 금지'
   if(!value.eventId||value.eventId.length>140)return '후보 ID 오류'
   const age=now.getTime()-Date.parse(value.createdAt)
@@ -50,7 +50,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       return reply({success:true,enabled:gate.enabled,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
         mode:gate.enabled?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
         candidates:rows.results||[],orders:journal.results||[],gate,
-        message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 5만 원 및 1종목·1회 제한':
+        message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 1만 원 및 1종목·1회 제한':
         '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
     }
     if(action==='readiness'){
@@ -65,7 +65,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       if(!/^[0-9]{6}$/.test(code)||!Number.isSafeInteger(quantity)||quantity<1||
         !Number.isSafeInteger(limitPrice)||limitPrice<1||
         quantity*limitPrice>LIVE_TRIAL_BUDGET)
-        return reply({success:false,locked:true,message:'종목코드·주문 수량·지정가·5만 원 한도를 확인해 주세요.'},400)
+        return reply({success:false,locked:true,message:'종목코드·주문 수량·지정가·1만 원 한도를 확인해 주세요.'},400)
       const day=kstTradingDay()
       // Read authoritative order journal first. Never infer safety from a
       // browser-local balance or uncommitted simulated position.
@@ -97,7 +97,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       })
       if(pendingWon+preview.requiredCash>LIVE_TRIAL_BUDGET){
         preview.permitted=false
-        preview.reasons.push('기존 시험 주문 예약금 포함 5만 원 한도 초과')
+        preview.reasons.push('기존 시험 주문 예약금 포함 1만 원 한도 초과')
       }
       return reply({success:true,locked:true,executionEnabled:false,mode:'READ_ONLY_PREFLIGHT',
         preview,message:preview.permitted?
@@ -137,7 +137,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
     if(action==='arm'){
       const success=await armLiveTrading(db,env||{},String(body.confirmation||''))
       return reply({success,enabled:success,message:success?
-        '실계좌 5만 원 시험 운용이 오늘 정규장 동안만 활성화됐습니다.':
+        '실계좌 1만 원 시험 운용이 오늘 정규장 동안만 활성화됐습니다.':
         '서버 실거래 잠금 또는 확인 조건 미충족 · 실주문 비활성화'},success?200:423)
     }
     if(action==='enable'||action==='order'||action==='buy'||action==='sell'||action==='cancel')
