@@ -88,7 +88,7 @@ export async function diagnoseLiveReadiness(db:Db|undefined,env:LiveEnv,now=new 
     const issue=result.failedReasons?.[day]
     const business=issue==='BUSINESS_REJECTED'?result.failedBusinessCodes?.[day]:null
     const codes=business?
-     ` · KB resultCode=${business.resultCode}, processCode=${business.processCode}, processFlag=${business.processFlag}`:''
+     ` · KB resultCode=${business.resultCode}, processCode=${business.processCode}, processFlag=${business.processFlag}, processMessage=${business.processMessage||'미제공'}`:''
     add('kbQuery','KB 실제 주문·체결조회 SSQM2341','BLOCKED',
      `조회일 ${day} · ${issue?failureLabels[issue]:'조회 결과 불완전'}${codes} · 주문 접수 여부 판단 불가.`)
    }else{
