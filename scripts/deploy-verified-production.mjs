@@ -286,6 +286,17 @@ async function main(){
       const results=Array.isArray(queryResult)?queryResult:[queryResult]
       ensure(results.every(x=>x?.success!==false),'D1 초기 테이블 SQL 실행 실패')
     }
+    if(livePilot10000){
+      // Explicit pilot deployments always begin with the daily gate OFF,
+      // even if a prior deployment left a gate row armed. No orders during deploy.
+      const reset=await api(root+'/d1/database/'+paperDbId+'/query',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({sql:"INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) VALUES(1,0,NULL,datetime('now')) ON CONFLICT(id) DO UPDATE SET enabled=0,trading_day=NULL,updated_at=excluded.updated_at"})
+      })
+      ensure((Array.isArray(reset)?reset:[reset]).every(x=>x?.success!==false),
+        '실주문 D1 게이트 초기 잠금 실패 · 배포 중단')
+      console.log('✓ 1만원 시험배포 초기 실주문 게이트 OFF · 웹 승인 전 주문 불가')
+    }
     console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
   }else if(tlsProofOnly){
     console.log('✓ 격리 TLS 검증 모드: D1 SQL 조회·쓰기 및 마이그레이션 생략')
