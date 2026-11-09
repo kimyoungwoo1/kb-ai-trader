@@ -23,6 +23,7 @@ export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
   cron_monitor_available?: boolean; cron?: ServerCronMonitor;
+  unchanged?: boolean;
   snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot }
 }
 export function isServerPaperMode() { return active }
@@ -38,15 +39,26 @@ export function setServerPaperMode(enabled: boolean) {
   window.dispatchEvent(new CustomEvent(SERVER_PAPER_EVENT))
 }
 export async function serverPaperAction(token: string, action: string): Promise<ServerPaperStatus> {
-  const ledger = readPaperLedger(), account = readAutoAccount()
-  const signature = action === 'migrate' ? [ledger.trades.length,ledger.trades.slice(0,4).map(x=>x.id).join('|'),account.fills.length,account.fills.slice(0,4).map(x=>x.id).join('|')].join(':') : ''
+  // Avoid parsing the browser's full trade ledger during frequent status polls.
+  let signature = ''
+  if (action === 'migrate') {
+    const ledger = readPaperLedger(), account = readAutoAccount()
+    signature = [ledger.trades.length,ledger.trades.slice(0,4).map(x=>x.id).join('|'),account.fills.length,account.fills.slice(0,4).map(x=>x.id).join('|')].join(':')
+  }
+  const revision = action === 'status' && latest?.migrated && Number.isSafeInteger(latest.revision)
+    ? latest.revision : undefined
   const res = await fetch(API, {
     method: 'POST',cache:'no-store',
     headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-    body:JSON.stringify({action,signature}),signal:AbortSignal.timeout(35_000),
+    body:JSON.stringify({action,signature,revision}),signal:AbortSignal.timeout(35_000),
   })
-  const data = await res.json() as ServerPaperStatus
-  if (!res.ok || !data.success) throw Error(data.message || '서버 가상매매 요청 실패')
+  const received = await res.json() as ServerPaperStatus
+  if (!res.ok || !received.success) throw Error(received.message || '서버 가상매매 요청 실패')
+  // Reuse the already parsed snapshot only when the server verifies an exact
+  // revision match; never trust a missing snapshot for a changed revision.
+  if (received.unchanged && (!latest?.snapshot || received.revision !== latest.revision))
+    throw Error('서버 원장 버전 불일치 · 전체 조회 후 다시 확인 필요')
+  const data = received.unchanged ? { ...latest!, ...received, snapshot:latest!.snapshot } : received
   latest = data
   lastConnectionError = ''
   if (data.migrated && data.snapshot) {
