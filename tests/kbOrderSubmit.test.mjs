@@ -44,10 +44,10 @@ test('well-formed rejection is REJECTED; malformed HTTP success is UNKNOWN',asyn
    : Response.json({dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{ordr_no:''}})
  }
  try{
-  const rejected=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-reject'},'BUY',{code:'005930',quantity:1,price:45000})
+  const rejected=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-reject'},'BUY',{code:'005930',quantity:1,price:9000})
   assert.equal(rejected.state,'REJECTED')
   mode='ambiguous'
-  const unknown=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-missing-ack'},'BUY',{code:'005930',quantity:1,price:45000})
+  const unknown=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-missing-ack'},'BUY',{code:'005930',quantity:1,price:9000})
   assert.equal(unknown.state,'UNKNOWN')
  }finally{globalThis.fetch=orig}
 })
