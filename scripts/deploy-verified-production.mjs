@@ -113,10 +113,14 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
       }
       const h=body?.checks?.holdings,v=body?.checks?.valuation
       const category=String(h?.auth_issue||v?.auth_issue||'')
+      const upstream=Number(h?.upstream_status||v?.upstream_status)||0
+      const gateway=[502,503,504,522,524].includes(upstream)
       const failure=new Error('KB 조회 실패: 보유 '+(h?.stage||'unknown')+'/'+(h?.http_status||reply.status)+
         ', 평가 '+(v?.stage||'unknown')+'/'+(v?.http_status||reply.status)+
+        (upstream?' · KB HTTP '+upstream:'')+
         (category?' · 원인 '+category:''))
       failure.authIssue=category
+      failure.gatewayIssue=gateway
       throw failure
     }catch(error){
       last=String(error?.message||'연결 오류').slice(0,220)
@@ -125,9 +129,13 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
       // the token issuer or deploy an unverified version.
       if(error?.authIssue==='auth_rejected')
         throw Error(label+' 검증 실패 · KB 인증 거부 · 계좌 검증 미통과 · 운영 전환 없음')
+      // Three provider-gateway failures are enough evidence for this rollout.
+      // Longer spacing avoids hammering an unreachable KB origin.
+      if(error?.gatewayIssue&&attempt>=3)break
       if(attempt<5){
         const interval=error?.authIssue==='auth_rate_limited'?30_000*attempt:
           String(error?.authIssue||'').startsWith('auth_')?12_000*attempt:
+          error?.gatewayIssue?8000*attempt:
           1500*attempt
         if(interval>=12000)console.warn('○ KB 인증 재요청 간격 조정 · 인증 서버 부하 방지')
         await delay(interval)
