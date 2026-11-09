@@ -305,7 +305,7 @@ async function main(){
     console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
   }
   console.log('2/7 테스트 및 프런트엔드 빌드')
-  exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs','tests/kbSharedToken.test.mjs','tests/kbAccountRead.test.mjs','tests/kbAccountBatch.test.mjs','tests/accountBatchRouting.test.mjs', 'tests/tradingAnalytics.test.mjs', 'tests/screeningHistory.test.mjs', 'tests/kbQuoteBatch.test.mjs', 'tests/paperCloudBackup.test.mjs', 'tests/paperTradeLease.test.mjs', 'tests/cloudAutoSync.test.mjs', 'tests/serverPaper.test.mjs','tests/serverPaperMonitor.test.mjs','tests/notifications.test.mjs','tests/notificationPreferences.test.mjs','tests/deploySmoke.test.mjs','tests/liveTrial.test.mjs','tests/deploymentStatus.test.mjs','tests/liveOrderJournal.test.mjs','tests/kbOrderContract.test.mjs','tests/kbOrderSubmit.test.mjs','tests/liveRiskPreflight.test.mjs','tests/liveTrialPreflight.test.mjs','tests/liveExecution.test.mjs','tests/livePilot10000.test.mjs','tests/liveCancel.test.mjs','tests/deployProbePolicy.test.mjs','tests/liveTrialUi.test.mjs','tests/kbRecentOrders.test.mjs','tests/liveHoldingsCrossCheck.test.mjs','tests/liveAccountView.test.mjs','tests/kbCancelProof.test.mjs','tests/liveReadiness.test.mjs','tests/deployOAuthDiagnostics.test.mjs','tests/kbSocketReadOnly.test.mjs','tests/kbTlsProofWorker.test.mjs','tests/kbPrivateEgress.test.mjs'])
+  execFileSync('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs','tests/kbSharedToken.test.mjs','tests/kbAccountRead.test.mjs','tests/kbAccountBatch.test.mjs','tests/accountBatchRouting.test.mjs', 'tests/tradingAnalytics.test.mjs', 'tests/screeningHistory.test.mjs', 'tests/kbQuoteBatch.test.mjs', 'tests/paperCloudBackup.test.mjs', 'tests/paperTradeLease.test.mjs', 'tests/cloudAutoSync.test.mjs', 'tests/serverPaper.test.mjs','tests/serverPaperMonitor.test.mjs','tests/notifications.test.mjs','tests/notificationPreferences.test.mjs','tests/deploySmoke.test.mjs','tests/liveTrial.test.mjs','tests/deploymentStatus.test.mjs','tests/liveOrderJournal.test.mjs','tests/kbOrderContract.test.mjs','tests/kbOrderSubmit.test.mjs','tests/liveRiskPreflight.test.mjs','tests/liveTrialPreflight.test.mjs','tests/liveExecution.test.mjs','tests/livePilot10000.test.mjs','tests/liveCancel.test.mjs','tests/deployProbePolicy.test.mjs','tests/liveTrialUi.test.mjs','tests/kbRecentOrders.test.mjs','tests/liveHoldingsCrossCheck.test.mjs','tests/liveAccountView.test.mjs','tests/kbCancelProof.test.mjs','tests/liveReadiness.test.mjs','tests/deployOAuthDiagnostics.test.mjs','tests/kbSocketReadOnly.test.mjs','tests/kbTlsProofWorker.test.mjs','tests/kbPrivateEgress.test.mjs'],{cwd,timeout:120000,stdio:'inherit'})
   exec('npm',['run','build'])
   const dir=resolve(cwd,'dist')
   ensure(existsSync(join(dir,'index.html')),'index.html 빌드 누락')
@@ -414,24 +414,6 @@ async function main(){
   // production traffic when Version URLs are disabled or not yet propagated.
   console.log('7/7 신규 버전 URL에서 계좌 실조회 검증 (운영 트래픽 미변경)')
   const previewOrigin=versionOrigin(createdId)
-  if(holdingsProofOnly){
-    console.log('○ 보유주식 조회 전용 진단 · 운영 전환 없음 · version '+createdId)
-    const startedAt=new Date().toISOString()
-    const reply=await fetch(previewOrigin+'/api/deploy/verify',{
-      method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Probe-Scope':'holdings'},
-      signal:AbortSignal.timeout(80000)
-    })
-    const body=await reply.json().catch(()=>null)
-    const holdings=body?.checks?.holdings
-    console.log(JSON.stringify({
-      startedAt,checkedAt:body?.checked_at||new Date().toISOString(),
-      workerHttp:reply.status,stage:holdings?.stage||'probe_unavailable',
-      holdingsHttp:holdings?.http_status??null,kbHttp:holdings?.upstream_status??null,
-      kbCfRay:holdings?.upstream_cf_ray??null
-    }))
-    ensure(reply.ok&&holdings?.success===true,'격리 버전 보유주식 조회 실패')
-    return
-  }
   if(tlsProofOnly){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
@@ -466,6 +448,24 @@ async function main(){
       .every(key=>summary.checks[key].status==='PASS'),
       'TLS 조회 검사 일부 미통과 · 운영 전환 없음 · 위 코드로 원인 확인')
     console.log('✅ TLS 읽기 전용 실제 KB 인증·계좌·주문조회 검증 통과 · 운영 전환 없음')
+    return
+  }
+  if(holdingsProofOnly){
+    console.log('○ 보유주식 조회 전용 진단 · 운영 전환 없음 · version '+createdId)
+    const startedAt=new Date().toISOString()
+    const reply=await fetch(previewOrigin+'/api/deploy/verify',{
+      method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Probe-Scope':'holdings'},
+      signal:AbortSignal.timeout(80000)
+    })
+    const body=await reply.json().catch(()=>null)
+    const holdings=body?.checks?.holdings
+    console.log(JSON.stringify({
+      startedAt,checkedAt:body?.checked_at||new Date().toISOString(),
+      workerHttp:reply.status,stage:holdings?.stage||'probe_unavailable',
+      holdingsHttp:holdings?.http_status??null,kbHttp:holdings?.upstream_status??null,
+      kbCfRay:holdings?.upstream_cf_ray??null
+    }))
+    ensure(reply.ok&&holdings?.success===true,'격리 버전 보유주식 조회 실패')
     return
   }
   await probeVersion(previewOrigin,probeKey,'신규 버전 사전 검사')
