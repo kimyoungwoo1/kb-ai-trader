@@ -114,27 +114,34 @@ export default function App() {
     // Do not expose API tokens, account identifiers, or raw response bodies.
     const failures: string[] = []
     let sessionExpired = false
+    // Single same-isolate Worker request. All three KB account endpoints run
+    // concurrently and share the in-flight OAuth token request.
+    // Each result retains independent success/failure handling.
+    const accountBatch = fetch(API + '/api/kb/account-batch', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      signal: AbortSignal.timeout(50_000),
+    }).then(async response => {
+      if (response.status === 401) return { expired: true }
+      const payload = await response.json()
+      if (!response.ok || payload?.success !== true || !payload.results)
+        throw Error(String(payload?.message || '계좌 일괄 조회 실패'))
+      return payload
+    })
     const requestAccount = async (endpoint: 'holdings' | 'valuation' | 'deposit', label: string): Promise<any | null> => {
       try {
-        const response = await fetch(API + '/api/kb/' + endpoint, {
-          method: 'POST', headers: { Authorization: 'Bearer ' + token },
-          signal: AbortSignal.timeout(45000),
-        })
-        if (response.status === 401) {
+        const batch = await accountBatch
+        if (batch.expired) {
           sessionExpired = true
           failures.push(label + ': 로그인 세션 만료 (HTTP 401)')
           return null
         }
-        const raw = await response.text()
-        let result: any
-        try { result = JSON.parse(raw) }
-        catch {
-          failures.push(label + ': 응답 형식 오류 (HTTP ' + response.status + ', JSON 아님)')
-          return null
-        }
-        if (!response.ok || !result.success) {
-          const reason = String(result.message || 'API 조회 실패').slice(0, 180)
-          failures.push(label + ': ' + reason + ' (HTTP ' + response.status + (result.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')')
+        const result = batch.results?.[endpoint]
+        if (!result || result.success !== true) {
+          const reason = String(result?.message || 'API 조회 실패').slice(0, 180)
+          const status = Number(result?.status) || 502
+          failures.push(label + ': ' + reason + ' (HTTP ' + status +
+            (result?.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')')
           return null
         }
         return result
