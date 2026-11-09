@@ -7,32 +7,32 @@ const {parseBuyingPower,evaluateBuyPreview,readKbBuyingPower}=
 const now=new Date('2026-11-09T00:32:00Z')
 const pass={orderableCash:281959,buyingPower:280000}
 const options={now,dailyBuys:0,activeTrialOrders:0,otherTrialSymbols:0}
-const response=(value)=>({dataHeader:{resultCode:'200',processFlag:'A',processCode:'0011'},dataBody:{ordr_psbl_csh:String(value),mx_ordr_psbl_amt:'250000'}})
+const response=(value)=>({dataHeader:{resultCode:'200',processFlag:'A',processCode:'0011'},dataBody:{ordr_psbl_csh:String(value),mx_ordr_psbl_amt:'210000'}})
 
 test('KB SSQM1802 read-only response parses cash and buying power without guessing',()=>{
- assert.deepEqual(parseBuyingPower(response('000000000000281959')),{orderableCash:281959,buyingPower:250000})
+ assert.deepEqual(parseBuyingPower(response('000000000000281959')),{orderableCash:281959,buyingPower:210000})
  assert.throws(()=>parseBuyingPower({dataBody:{ordr_psbl_csh:'10000'}}),/업무 응답/)
  assert.throws(()=>parseBuyingPower({...response('10000'),dataBody:{ordr_psbl_csh:'10000'}}),/누락/)
  assert.throws(()=>parseBuyingPower(response('999999999999999999')),/누락/)
 })
-test('50k total including cash headroom, no extra buy, no unknown order',()=>{
- const good=evaluateBuyPreview('005930',49000,1,pass,options)
+test('10k total including cash headroom, no extra buy, no unknown order',()=>{
+ const good=evaluateBuyPreview('005930',9000,1,pass,options)
  assert.equal(good.permitted,true)
- assert.equal(good.notional,49000)
- assert.equal(good.feeBuffer,490)
- assert.equal(good.requiredCash,49490)
- assert.equal(evaluateBuyPreview('005930',50000,1,pass,options).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,2,pass,options).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,pass,{...options,dailyBuys:1}).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,pass,{...options,activeTrialOrders:1}).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,pass,{...options,otherTrialSymbols:1}).permitted,false)
+ assert.equal(good.notional,9000)
+ assert.equal(good.feeBuffer,90)
+ assert.equal(good.requiredCash,9090)
+ assert.equal(evaluateBuyPreview('005930',10000,1,pass,options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,2,pass,options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,dailyBuys:1}).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,activeTrialOrders:1}).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,otherTrialSymbols:1}).permitted,false)
 })
 test('missing authoritative balances, missing D1 counts, cash shortage and market closed always fail closed',()=>{
- assert.equal(evaluateBuyPreview('005930',49000,1,null,options).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,pass,{now}).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,{orderableCash:100,buyingPower:280000},options).permitted,false)
- assert.equal(evaluateBuyPreview('005930',49000,1,pass,{...options,now:new Date('2026-11-08T23:40:00Z')}).permitted,false)
- assert.equal(evaluateBuyPreview('bad',49000,1,pass,options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,null,options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,pass,{now}).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,{orderableCash:100,buyingPower:280000},options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,now:new Date('2026-11-08T23:40:00Z')}).permitted,false)
+ assert.equal(evaluateBuyPreview('bad',9000,1,pass,options).permitted,false)
 })
 test('real KB buying power lookup is strictly read-only; never calls a trading endpoint',async()=>{
  const original=globalThis.fetch
@@ -48,7 +48,7 @@ test('real KB buying power lookup is strictly read-only; never calls a trading e
  }
  try{
   assert.deepEqual(await readKbBuyingPower({KB_APP_KEY:'risk-key-test-001',KB_APP_SECRET:'example'},'005930'),
-    {orderableCash:281959,buyingPower:250000})
+    {orderableCash:281959,buyingPower:210000})
   assert.equal(paths.filter(p=>p.includes('ssam')).length,0)
   assert.equal(paths.filter(p=>p.endsWith('/api/v1/ssqm1802')).length,1)
  }finally{globalThis.fetch=original}
