@@ -96,8 +96,15 @@ const service = {
     if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
-      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string}> = {};
+      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number}> = {};
+      let upstreamUnavailable=false;
       for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
+        // This is deployment verification, not an availability stress test.
+        // Never initiate valuation after an unresolved KB gateway failure.
+        if (upstreamUnavailable) {
+          checks[name]={success:false,stage:'skipped_upstream_unavailable',http_status:503};
+          continue;
+        }
         try {
           const reply=await service.fetch(new Request('https://localhost'+route,{
             method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
@@ -114,10 +121,21 @@ const service = {
             /HTTP\s*5\d\d\b/.test(message)?'auth_upstream_http':
             /시간 초과|네트워크 연결 실패|응답 없음|재시도 2회 실패/.test(message)?'auth_transport':
             'auth_unclassified';
-          checks[name]={success:reply.ok&&result.success===true,
-            stage,http_status:reply.status,...(authIssue?{auth_issue:authIssue}:{})};
+          const upstreamStatus=Number(result.http_status)||0;
+          const successful=reply.ok&&result.success===true;
+          checks[name]={success:successful,stage,http_status:reply.status,
+            ...(upstreamStatus?{upstream_status:upstreamStatus}:{}),
+            ...(authIssue?{auth_issue:authIssue}:{})};
+          upstreamUnavailable=!successful&&(
+            stage==='authentication' || stage.endsWith('_network') ||
+            (stage.endsWith('_response') && (
+              [502,503,504,522,524].includes(upstreamStatus) ||
+              ['NETWORK','TIMEOUT'].includes(String(result.error_type||''))
+            ))
+          );
         } catch {
           checks[name]={success:false,stage:'network',http_status:502};
+          upstreamUnavailable=true;
         }
       }
       const success=checks.holdings.success&&checks.valuation.success;
