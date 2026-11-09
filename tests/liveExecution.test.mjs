@@ -13,10 +13,10 @@ const holdClock=()=>{
   }
   return ()=>{globalThis.Date=REAL_DATE}
 }
-const HARD='ALLOW_REAL_50000_TRIAL_2026'
+const HARD='ALLOW_REAL_10000_TRIAL_2026'
 const env=(key)=>({KB_APP_KEY:key,KB_APP_SECRET:'mock-only',LIVE_TRADING_HARD_ENABLE:HARD})
 const stamp='2026-11-09T00:30:00.000Z'
-const fill={id:'2026-11-09T00:30:00.000Z-buy-005930',at:stamp,code:'005930',side:'BUY',price:9000,quantity:5}
+const fill={id:'2026-11-09T00:30:00.000Z-buy-005930',at:stamp,code:'005930',side:'BUY',price:9000,quantity:1}
 const activeStates=new Set(['RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED'])
 class Db {
   constructor(){this.gate={enabled:1,trading_day:'2026-11-09'};this.rows=[];this.actions=[]}
@@ -97,7 +97,7 @@ function mockBroker(opts={loseAck:false}){
   if(path.endsWith('/api/v1/ssqm2341'))return Response.json({
     dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{nxt_key:'',Record1:[{
       ordr_no:'0060000705',stnd_is_no:'A005930',trd_dl_ccd_nm:'매수',
-      ordr_q:'5',tl_ccls_q:'5',nccls_q:'0',ordr_uprc:'9000'
+      ordr_q:'1',tl_ccls_q:'1',nccls_q:'0',ordr_uprc:'9000'
     }]}
   })
   throw Error('Unknown mock endpoint: '+path)
@@ -112,7 +112,7 @@ test('production remains HARD LOCKED when execution flag is absent',async()=>{
   const gate=await getLiveGate(db,{KB_APP_KEY:'mock'},monday)
   assert.equal(gate.enabled,false)
   assert.equal(await processLiveFill(db,{KB_APP_KEY:'mock'},fill,monday),'locked')
-  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'실계좌 5만원 자동매매 실행',monday),false)
+  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'실계좌 1만원 자동매매 실행',monday),false)
   assert.equal(network,0)
   assert.equal(db.rows.length,0)
  }finally{globalThis.fetch=orig}
@@ -130,7 +130,7 @@ test('atomic D1 reservation/claim admits only one broker order across concurrent
   const summary=await reconcileLiveOrders(db,env('mock-concurrent'))
   assert.equal(summary.updated,1)
   assert.equal(db.rows[0].state,'FILLED')
-  assert.equal(db.rows[0].filled_quantity,5)
+  assert.equal(db.rows[0].filled_quantity,1)
   assert.equal(network.seen.filter(x=>x.endsWith('/api/v1/ssam1802')).length,1)
  }finally{network.restore();revert()}
 })
@@ -149,7 +149,7 @@ test('missing broker response permanently blocks automatic retry',async()=>{
 test('wrong confirmation or market closure blocks arming',async()=>{
  const db=new Db()
  assert.equal(await armLiveTrading(db,env('arm-key'),'wrong',monday),false)
- assert.equal(await armLiveTrading(db,env('arm-key'),'실계좌 5만원 자동매매 실행',new REAL_DATE('2026-11-08T23:00:00Z')),false)
+ assert.equal(await armLiveTrading(db,env('arm-key'),'실계좌 1만원 자동매매 실행',new REAL_DATE('2026-11-08T23:00:00Z')),false)
  assert.equal(await disarmLiveTrading(db),true)
  assert.equal((await getLiveGate(db,env('arm-key'),monday)).enabled,false)
 })
