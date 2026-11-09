@@ -611,9 +611,21 @@ export default function App() {
         if (status.migrated) {
           setMarketCheckedAt(status.snapshot?.account.lastCycle || '')
           setServerMode(true)
+          // The previous 15-second poll repeatedly requested the 665KiB+
+          // canonical D1 ledger whenever Cron advanced its revision.
+          // Keep the Cron monitor responsive with lightweight heartbeats,
+          // and refresh the full immutable snapshot once every two minutes.
+          let polls = 0
+          let polling = false
           interval = window.setInterval(() => {
-            void serverPaperAction(token,'status').then(data=>setMarketCheckedAt(data.snapshot?.account.lastCycle || '')).catch(() => {})
-          }, 15_000)
+            if (cancelled || polling) return
+            polling = true
+            const action = ++polls % 4 === 0 ? 'status' : 'heartbeat'
+            void serverPaperAction(token,action)
+              .then(data => { if (!cancelled && action === 'status') setMarketCheckedAt(data.snapshot?.account.lastCycle || '') })
+              .catch(error => { if (!cancelled) setServerPaperError(error instanceof Error ? error.message : '서버 상태 조회 실패') })
+              .finally(() => { polling = false })
+          }, 30_000)
         } else {
           setServerPaperMode(false)
           setServerMode(false)
