@@ -43,8 +43,11 @@ export async function disarmLiveTrading(db:Db|undefined){
 export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:string,now=new Date()){
  if(!db||!hardSwitch(env)||confirmation!=='실계좌 1만원 자동매매 실행'||!inSession(now))return false
  try{
-  const active=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first()
-  if(num(active?.n)!==0)return false
+  const [active,cancels]=await Promise.all([
+   db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
+   db.prepare("SELECT COUNT(*) AS n FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED')").first()
+  ])
+  if(num(active?.n)!==0||num(cancels?.n)!==0)return false
   const today=tradingDay(now)
   await db.prepare('INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) VALUES(1,1,?,?) ON CONFLICT(id) DO UPDATE SET enabled=1,trading_day=excluded.trading_day,updated_at=excluded.updated_at')
    .bind(today,now.toISOString()).run()
