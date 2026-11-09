@@ -135,11 +135,38 @@ const service = {
       return json({ success: true, token: env.DASHBOARD_API_KEY });
     }
 
-    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server" || url.pathname === "/api/notifications" || url.pathname === "/api/live/trial") && request.method === "POST") {
+    if ((url.pathname === "/api/news" || url.pathname === "/api/market/research" || url.pathname === "/api/market/disclosures" || url.pathname === "/api/ai/compare" || url.pathname === "/api/kb/auth-check" || url.pathname === "/api/kb/account-batch" || url.pathname === "/api/kb/holdings" || url.pathname === "/api/kb/deposit" || url.pathname === "/api/kb/valuation" || url.pathname === "/api/kb/quote" || url.pathname === "/api/kb/quotes" || url.pathname === "/api/kb/search-stocks" || url.pathname === "/api/market/investor-flow" || url.pathname === "/api/market/discover" || url.pathname === "/api/paper/backup" || url.pathname === "/api/paper/server" || url.pathname === "/api/notifications" || url.pathname === "/api/live/trial") && request.method === "POST") {
       const authorization = request.headers.get("Authorization") || "";
       if (!env.DASHBOARD_API_KEY || authorization !== `Bearer ${env.DASHBOARD_API_KEY}`) {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
       }
+    }
+    // One authenticated request fetches all three account views concurrently.
+    // getKbAccessToken shares its in-flight OAuth promise inside this isolate,
+    // avoiding three sequential browser waits and duplicate token requests.
+    if (url.pathname === "/api/kb/account-batch" && request.method === "POST") {
+      const routes = [
+        ["holdings", "/api/kb/holdings"],
+        ["valuation", "/api/kb/valuation"],
+        ["deposit", "/api/kb/deposit"],
+      ] as const;
+      const entries = await Promise.all(routes.map(async ([name, route]) => {
+        try {
+          const response = await service.fetch(new Request("https://localhost" + route, {
+            method: "POST",
+            headers: { Authorization: "Bearer " + env.DASHBOARD_API_KEY },
+          }), env);
+          const body = await response.json() as Record<string, unknown>;
+          return [name, { status: response.status, ...body }] as const;
+        } catch {
+          return [name, { success:false, status:502, stage:"account_batch",
+            message:"계좌 조회 중 연결 오류" }] as const;
+        }
+      }));
+      return new Response(JSON.stringify({ success:true, results:Object.fromEntries(entries),
+        checked_at:new Date().toISOString() }), {
+        headers: { ...corsHeaders, "Cache-Control":"no-store", "Content-Type":"application/json" }
+      });
     }
     if (url.pathname === "/api/live/trial" && request.method === "POST") {
       let input:unknown;
