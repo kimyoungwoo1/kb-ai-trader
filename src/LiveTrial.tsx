@@ -39,12 +39,9 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
   const [busy,setBusy]=useState(false)
   const [feedback,setFeedback]=useState('')
   const [confirmation,setConfirmation]=useState('')
-  const requestedAccountOnce=useRef(false)
-  useEffect(()=>{
-    if(requestedAccountOnce.current||accountLoading||accountSummary||deposit||holdings.length>0)return
-    requestedAccountOnce.current=true
-    void onRefreshAccount()
-  },[accountLoading,accountSummary,deposit,holdings.length,onRefreshAccount])
+  // Account data is centrally loaded once by App after login.
+  // Switching to this menu must never start a second brokerage lookup.
+  // The existing explicit Refresh button still calls App's shared refresh.
   const arm=async()=>{
     setBusy(true);setError('');setFeedback('')
     try{
