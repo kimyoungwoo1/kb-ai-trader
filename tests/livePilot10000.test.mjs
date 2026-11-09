@@ -23,3 +23,11 @@ test('ordinary production deployment remains hard-locked against real orders',()
  assert.match(deploy,/LIVE_TRADING_HARD_ENABLE is deliberately never inherited/)
  assert.doesNotMatch(deploy,/\{name:'LIVE_TRADING_HARD_ENABLE',type:'secret_text'/)
 })
+
+test('live pilot opt-in requires independent confirmation and resets D1 gate before traffic switch',()=>{
+ assert.match(deploy,/livePilot10000 = process\.argv\.includes\('--live-pilot-10000'\)/)
+ assert.match(deploy,/KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인'/)
+ assert.match(deploy,/livePilot10000\?\[\{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text'/)
+ assert.match(deploy,/UPDATE SET enabled=0,trading_day=NULL/)
+ assert.match(deploy,/newBindings\.get\('LIVE_TRADING_HARD_ENABLE'\)==='plain_text'/)
+})
