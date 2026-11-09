@@ -17,7 +17,7 @@ test('KB V2 buy/sell limit order has exact SSAM1801/1802 fields',()=>{
  assert.deepEqual(buy.body.dataBody,{ordr_uprc:'9000',ordr_ccd:'00',
  mkt_tm_clsf:'1',is_cd:'005930',ordr_q:'1',sor_ordr_ccd:'S'})
  assert.equal(makeLimitOrder('SELL',{code:'005930',quantity:1,price:9000}).path,'/api/v1/ssam1801')
- assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:2,price:9000}),/5만 원/)
+ assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:2,price:9000}),/1만 원/)
  assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:1,price:9000.5}),/지정가/)
 })
 test('KB V2 cancellation and fill-history request only use specified fields',()=>{
