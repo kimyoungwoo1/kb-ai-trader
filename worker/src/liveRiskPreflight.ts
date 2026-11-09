@@ -6,8 +6,8 @@
  */
 import { getKbAccessToken, kbBaseUrl, type KbCredentials } from './kbToken'
 
-export const PILOT_LIMIT_WON = 50_000
-export const PILOT_FEE_BUFFER_WON = 500 // 1% of pilot limit; conservative minimum cash headroom
+export const PILOT_LIMIT_WON = 10_000
+export const PILOT_FEE_BUFFER_WON = 100 // 1% of pilot limit; conservative minimum cash headroom
 export type BuyPreview = {
   permitted:boolean;code:string;quantity:number;limitPrice:number;notional:number;
   feeBuffer:number;requiredCash:number;orderableCash:number|null;
@@ -41,8 +41,8 @@ export function evaluateBuyPreview(code:string,price:number,quantity:number,
     price*quantity:0
   const reserve=notional>0?Math.max(1,Math.ceil(notional*0.01)):0
   const requiredCash=notional+reserve
-  if(!Number.isSafeInteger(notional)||notional<=0||notional>PILOT_LIMIT_WON)reasons.push('5만 원 원금 한도 초과/금액 오류')
-  if(requiredCash>PILOT_LIMIT_WON)reasons.push('수수료 여유금 포함 총 5만 원 한도 초과')
+  if(!Number.isSafeInteger(notional)||notional<=0||notional>PILOT_LIMIT_WON)reasons.push('1만 원 원금 한도 초과/금액 오류')
+  if(requiredCash>PILOT_LIMIT_WON)reasons.push('수수료 여유금 포함 총 1만 원 한도 초과')
   if(options.dailyBuys===null||!Number.isSafeInteger(options.dailyBuys)||options.dailyBuys<0)
     reasons.push('당일 매수건수 검증 실패')
   else if(options.dailyBuys>=1)reasons.push('당일 매수 1회 제한')
