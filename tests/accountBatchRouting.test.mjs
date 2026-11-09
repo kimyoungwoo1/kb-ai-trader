@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const worker = readFileSync('worker/src/index.ts', 'utf8')
+const batch = readFileSync('worker/src/kbAccountBatch.ts', 'utf8')
 const app = readFileSync('src/App.tsx', 'utf8')
 
 test('batched live account API stays authenticated and read only', () => {
@@ -11,9 +12,9 @@ test('batched live account API stays authenticated and read only', () => {
   assert.ok(auth >= 0 && auth < route)
   const handler = worker.slice(route, worker.indexOf('if (url.pathname === "/api/live/trial"', route))
   assert.match(handler, /runAccountBatch\(key,async route/)
-  assert.match(handler, /\/api\/kb\/holdings/)
-  assert.match(handler, /\/api\/kb\/valuation/)
-  assert.match(handler, /\/api\/kb\/deposit/)
+  assert.match(batch, /\/api\/kb\/holdings/)
+  assert.match(batch, /\/api\/kb\/valuation/)
+  assert.match(batch, /\/api\/kb\/deposit/)
   assert.doesNotMatch(handler, /\/api\/live\/|ssam1801|ssam1802/)
 })
 
