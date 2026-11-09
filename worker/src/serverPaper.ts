@@ -32,15 +32,17 @@ function summarize(row: StateRow | null) {
 export async function serverPaperApi(db: Db | undefined, action: string, expectedSignature = '', knownRevision = -1): Promise<Response> {
   if (!db) return ok({ success: false, message: 'PAPER_DB 연결이 필요합니다.' }, 503);
   try {
-    if (action === 'status') {
-      // A 15-second browser poll must not repeatedly retrieve, parse, and
-      // serialize the potentially large D1 paper journal when unchanged.
+    if (action === 'status' || action === 'heartbeat') {
+      // Heartbeat is intentionally metadata-only: no large D1 journal fetch,
+      // parse, serialization, or broker calls on the frequent UI poll.
+      // Full status remains available for the initial load and periodic sync.
       const meta = await db.prepare(
         'SELECT revision, mode, updated_at, last_error FROM server_paper_state WHERE id=1'
       ).first<{ revision:number; mode:string; updated_at:string; last_error:string|null }>();
       if (!meta) return ok({ success:true, migrated:false, mode:'not_migrated' });
       const common = { success:true, migrated:true, mode:meta.mode,
         revision:meta.revision, updated_at:meta.updated_at, last_error:meta.last_error };
+      if (action === 'heartbeat') return ok({ ...common, heartbeat:true });
       if (knownRevision === meta.revision) return ok({ ...common, unchanged:true });
       const current = await state(db);
       if (!current) return ok({ success:true, migrated:false, mode:'not_migrated' });
