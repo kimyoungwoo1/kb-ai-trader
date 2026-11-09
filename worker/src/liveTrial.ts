@@ -1,6 +1,6 @@
 import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
-import { lookupKbOrder, listKbRecentOrders } from './kbOrderContract'
+import { lookupKbOrder, listKbRecentOrders, listKbRecentOrdersForView } from './kbOrderContract'
 import {KbAuthError} from './kbToken'
 import {diagnoseLiveReadiness} from './liveReadiness'
 /**
@@ -111,7 +111,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const days=Number(body.days??3)
       if(days!==1&&days!==3&&days!==5)
         return reply({success:false,message:'최근 1·3·5거래일 중 선택해 주세요.'},400)
-      const result=await listKbRecentOrders(env,days as 1|3|5)
+      const result=await listKbRecentOrdersForView(env,days as 1|3|5)
       return reply({success:true,...result,
         message:result.partial?'일부 날짜 조회가 완료되지 않았습니다. 누락된 날짜를 확인하세요.':
           result.orders.length?'최근 국내주식 주문·체결 내역 조회 완료':

@@ -336,3 +336,17 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
  if(orders.length<records.length)partial=true
  return {orders,checkedDates,failedDates,failedReasons,failedBusinessCodes,partial}
 }
+
+// Share only simultaneous UI reads within this isolate. Arming and order
+// reconciliation still make their own brokerage checks.
+const pendingOrderViews = new Map<string, ReturnType<typeof listKbRecentOrders>>()
+export async function listKbRecentOrdersForView(env:KbCredentials,days:1|3|5,now=new Date()){
+ const dates=recentKbTradingDates(now,days)
+ const key=JSON.stringify([kbBaseUrl(env),env.KB_APP_KEY,env.KB_APP_SECRET,dates])
+ const pending=pendingOrderViews.get(key)
+ if(pending)return pending
+ const request=listKbRecentOrders(env,days,now)
+ pendingOrderViews.set(key,request)
+ try{return await request}
+ finally{pendingOrderViews.delete(key)}
+}

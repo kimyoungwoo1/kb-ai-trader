@@ -4,7 +4,7 @@
  * Passing proves lookup compatibility only; it does NOT authorize trades.
  */
 import {getLiveGate,type LiveEnv} from './liveExecution'
-import {listKbRecentOrders,type RecentKbIssue} from './kbOrderContract'
+import {listKbRecentOrdersForView,type RecentKbIssue} from './kbOrderContract'
 import {KbAuthError} from './kbToken'
 
 const isRegularSession=(at:Date)=>{const k=new Date(at.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
@@ -82,7 +82,7 @@ export async function diagnoseLiveReadiness(db:Db|undefined,env:LiveEnv,now=new 
   try{
    // One recent business date at most. Empty Record1 is a successful query.
    // Partial/failed query never counts as proof of brokerage compatibility.
-   const result=await listKbRecentOrders(env,1,now)
+   const result=await listKbRecentOrdersForView(env,1,now)
    if(result.partial||result.checkedDates.length!==1){
     const day=result.failedDates[0]||'조회일 확인 필요'
     const issue=result.failedReasons?.[day]

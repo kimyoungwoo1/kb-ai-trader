@@ -260,7 +260,7 @@ export async function cancelStaleLiveOrders(
  const result={attempted:0,accepted:0,unknown:0,skipped:0}
  if(!db||!hardSwitch(env)||!(await getLiveGate(db,env,now)).enabled)return result
  const rowsResult=await db.prepare(
-  "SELECT * FROM live_order_journal WHERE state IN ('ACCEPTED','PARTIAL') AND broker_order_id IS NOT NULL AND created_at<=? ORDER BY created_at ASC LIMIT 10"
+  "SELECT * FROM live_order_journal WHERE state IN ('ACCEPTED','PARTIAL') AND broker_order_id IS NOT NULL AND created_at<=? AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE order_id=live_order_journal.id) ORDER BY created_at ASC LIMIT 10"
  ).bind(new Date(now.getTime()-5*60_000).toISOString()).all()
  const rows=Array.isArray(rowsResult?.results)?rowsResult.results:[]
  for(const raw of rows){

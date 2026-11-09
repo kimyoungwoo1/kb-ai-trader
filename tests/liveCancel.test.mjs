@@ -26,7 +26,8 @@ class MemoryD1{
    },
    async all(){
     if(sql.includes("state IN ('ACCEPTED','PARTIAL')")&&sql.includes('SELECT *'))
-     return {results:['ACCEPTED','PARTIAL'].includes(db.order.state)?[db.order]:[]}
+     return {results:['ACCEPTED','PARTIAL'].includes(db.order.state)&&
+      !(db.claim&&sql.includes('NOT EXISTS'))?[db.order]:[]}
     if(sql.includes('SELECT * FROM live_order_journal WHERE state IN'))return {results:[db.order]}
     throw Error('unexpected list '+sql)
    },
@@ -123,6 +124,9 @@ test('cannot send cancel unless order state is durably marked',async()=>{
  try{
   assert.equal((await cancelStaleLiveOrders(db,env,now)).accepted,0)
   assert.equal(db.claim.status,'CLAIMED')
+  const callsAfterClaim=b.calls.length
+  assert.equal((await cancelStaleLiveOrders(db,env,now)).attempted,0)
+  assert.equal(b.calls.length,callsAfterClaim,'A prior claim avoids another broker lookup')
   assert.equal(b.calls.filter(x=>x.endsWith('/api/v1/ssam1806')).length,0)
  }finally{b.restore();unfreeze()}
 })

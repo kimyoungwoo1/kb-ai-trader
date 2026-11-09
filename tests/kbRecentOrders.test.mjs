@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs'
 import {build} from 'esbuild'
 
 const output=await build({entryPoints:['worker/src/kbOrderContract.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {recentKbTradingDates,listKbRecentOrders}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
+const {recentKbTradingDates,listKbRecentOrders,listKbRecentOrdersForView}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
 const saturday=new Date('2026-11-07T00:30:00Z')
 const env={KB_APP_KEY:'recent-orders-autodiscovery-test-key',KB_APP_SECRET:'mock-only'}
 const entry=(orderNo,code='A005930')=>({ordr_no:orderNo,stnd_is_no:code,
@@ -179,4 +179,28 @@ test('read-only SSQM2341 retries a transient timeout only once and reports succe
   assert.equal(found.checkedDates.length,1)
   assert.equal(requests,2)
  }finally{globalThis.fetch=oldFetch}
+})
+
+test('concurrent matching UI queries share an in-flight read, with no cached result for later reads',async()=>{
+ const before=globalThis.fetch
+ let calls=0
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'mock-token'}})
+  assert.ok(String(url).endsWith('/api/v1/ssqm2341'))
+  calls++
+  return reply()
+ }
+ try{
+  const viewEnv={...env,KB_APP_KEY:'order-view-concurrency'}
+  const [a,b]=await Promise.all([
+   listKbRecentOrdersForView(viewEnv,1,saturday),
+   listKbRecentOrdersForView(viewEnv,1,saturday)
+  ])
+  assert.deepEqual(a.checkedDates,['20261106'])
+  assert.equal(a,b)
+  assert.equal(calls,1)
+  await listKbRecentOrders(viewEnv,1,saturday)
+  await listKbRecentOrdersForView(viewEnv,1,saturday)
+  assert.equal(calls,3)
+ }finally{globalThis.fetch=before}
 })
