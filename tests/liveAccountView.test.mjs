@@ -65,7 +65,7 @@ test('all account menus consume App shared snapshot without triggering duplicate
  const dashboard=app.slice(app.indexOf('export default function App()'))
  assert.match(dashboard,/const accountPendingRef = useRef<Promise<void> \| null>\(null\)/)
  assert.match(dashboard,/if \(accountPendingRef\.current\) return accountPendingRef\.current/)
- assert.match(dashboard,/accountNextRefreshRef\.current = Date\.now\(\) \+ \(failures\.length \? 15_000 : 10_000\)/)
+ assert.match(dashboard,/accountNextRefreshRef\.current =\s*Date\.now\(\) \+ \(failures\.length \? 15_000 : 10_000\)/)
  assert.equal((dashboard.match(/fetch\(API \+ '\/api\/kb\/account-batch'/g)||[]).length,1)
  assert.match(app,/<LiveTrial token=\{token\} holdings=\{holdings\} accountSummary=\{accountSummary\}/)
  assert.doesNotMatch(trial,/requestedAccountOnce|void onRefreshAccount\(\)/)
