@@ -54,6 +54,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       if(!response.ok||!data.success)throw Error(data.message||'서버 실거래 잠금 상태')
       setConfirmation('')
       await load()
+      setFeedback('✓ '+String(data.message||'오늘 1만원 시험매매 승인 완료')+' · 실제 주문이 발생할 수 있습니다.')
     }catch(e){setError(e instanceof Error?e.message:'활성화 불가')}
     finally{setBusy(false)}
   }
@@ -90,9 +91,10 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center'}}><ShieldCheck size={18}/>
-        <span>실주문 API 검증: {status?.brokerOrdersVerified?'완료':'미완료 · 주문 불가'}</span>
+        <span>실주문 API 검증: {status?.brokerOrdersVerified?'완료':'실운영 미검증 · 소액 시험 전 확인'}</span>
       </div>
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
+      {status?.hardEnabled&&!status.enabled&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 승인 후 자동 매수는 별도 재확인 없이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
       {status?.hardEnabled&&!status.enabled&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
           placeholder="실계좌 1만원 자동매매 실행" value={confirmation}
