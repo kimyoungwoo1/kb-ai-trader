@@ -7,10 +7,10 @@ const {parseBuyingPower,evaluateBuyPreview,readKbBuyingPower}=
 const now=new Date('2026-11-09T00:32:00Z')
 const pass={orderableCash:281959,buyingPower:280000}
 const options={now,dailyBuys:0,activeTrialOrders:0,otherTrialSymbols:0}
-const response=(value)=>({dataHeader:{resultCode:'200',processFlag:'A',processCode:'0011'},dataBody:{ordr_psbl_csh:String(value),mx_ordr_psbl_amt:'210000'}})
+const response=(value)=>({dataHeader:{resultCode:'200',processFlag:'A',processCode:'0011'},dataBody:{ordr_psbl_csh:String(value),mx_ordr_psbl_amt:'250000'}})
 
 test('KB SSQM1802 read-only response parses cash and buying power without guessing',()=>{
- assert.deepEqual(parseBuyingPower(response('000000000000281959')),{orderableCash:281959,buyingPower:210000})
+ assert.deepEqual(parseBuyingPower(response('000000000000281959')),{orderableCash:281959,buyingPower:250000})
  assert.throws(()=>parseBuyingPower({dataBody:{ordr_psbl_csh:'10000'}}),/업무 응답/)
  assert.throws(()=>parseBuyingPower({...response('10000'),dataBody:{ordr_psbl_csh:'10000'}}),/누락/)
  assert.throws(()=>parseBuyingPower(response('999999999999999999')),/누락/)
@@ -48,7 +48,7 @@ test('real KB buying power lookup is strictly read-only; never calls a trading e
  }
  try{
   assert.deepEqual(await readKbBuyingPower({KB_APP_KEY:'risk-key-test-001',KB_APP_SECRET:'example'},'005930'),
-    {orderableCash:281959,buyingPower:210000})
+    {orderableCash:281959,buyingPower:250000})
   assert.equal(paths.filter(p=>p.includes('ssam')).length,0)
   assert.equal(paths.filter(p=>p.endsWith('/api/v1/ssqm1802')).length,1)
  }finally{globalThis.fetch=original}
