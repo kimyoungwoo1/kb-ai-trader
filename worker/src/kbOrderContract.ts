@@ -285,7 +285,7 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
        // raw account/order bodies, identifiers, or HTTP authorization.
        processMessage:(()=>{
         const message=String(payload?.dataHeader?.processMessage??'').trim()
-        return /^[가-힣a-zA-Z0-9 .,()\-·_:]{1,90}$/.test(message)?message:'미제공'
+        return /^[가-힣 .,()·:_-]{2,90}$/.test(message)?message:'미제공'
        })()
       }
       throw Error('KB_ORDER_BUSINESS_REJECTED')
