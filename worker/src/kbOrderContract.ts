@@ -267,10 +267,23 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
   try{
    for(let page=0;page<3;page++){
     const {path,body}=makeOrderInquiry(day,nextKey)
-    const response=await fetch(kbBaseUrl(env)+path,{
-     method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-     body:JSON.stringify(body),signal:AbortSignal.timeout(10000)
-    })
+    // SSQM2341 is strictly read-only: retry one transport timeout only.
+    // Never retry vendor rejection, 429, malformed data, or an order write.
+    let response:Response|undefined
+    for(let attempt=0;attempt<2;attempt++){
+     try{
+      response=await fetch(kbBaseUrl(env)+path,{
+       method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+       body:JSON.stringify(body),signal:AbortSignal.timeout(15000)
+      })
+      break
+     }catch(error){
+      const transient=error instanceof Error&&
+       (error.name==='TimeoutError'||error.name==='AbortError'||error instanceof TypeError)
+      if(attempt===1||!transient)throw error
+     }
+    }
+    if(!response)throw Error('KB_ORDER_NO_RESPONSE')
     if(!response.ok)throw Error('KB_ORDER_HTTP_'+response.status)
     let payload:any
     try{payload=await response.json()}
