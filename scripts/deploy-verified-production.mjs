@@ -257,6 +257,8 @@ async function main(){
     }
   }
   if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
+  if(livePilot10000)ensure(!!liveD1&&!!paperDbId,
+    '1만원 실주문 시험은 운영 D1 주문 원장 바인딩이 필수입니다. 배포 중단')
   if(paperDbId&&!tlsProofOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
