@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
+import {readFileSync} from 'node:fs'
 
 const bundled = await build({entryPoints:['worker/src/serverPaperMonitor.ts'],bundle:true,platform:'node',format:'esm',write:false})
 const { isCronHealthy, runMonitoredPaperCron, readServerCronMonitor } = await import('data:text/javascript;base64,'+
@@ -50,4 +51,18 @@ test('Cron freshness check distinguishes recent successful heartbeat from stale 
   assert.equal(isCronHealthy('2026-11-06T08:12:00.000Z',Date.parse('2026-11-06T08:17:00.000Z')),false)
   assert.equal(isCronHealthy('2026-11-06T08:18:00.000Z',Date.parse('2026-11-06T08:17:00.000Z')),false)
   assert.equal(isCronHealthy(null),false)
+})
+
+test('high-frequency heartbeat bypasses Cron monitor and full snapshot assembly',()=>{
+ const worker=readFileSync('worker/src/index.ts','utf8')
+ const paper=readFileSync('worker/src/serverPaper.ts','utf8')
+ const client=readFileSync('src/App.tsx','utf8')
+ const start=worker.indexOf('if (url.pathname === "/api/paper/server"')
+ const finish=worker.indexOf('if (url.pathname === "/api/paper/backup"',start)
+ assert.ok(start>=0&&finish>start)
+ const route=worker.slice(start,finish)
+ assert.match(route,/if \(action === 'status' && response\.ok && env\.PAPER_DB\)/)
+ assert.doesNotMatch(route,/action === 'status' \|\| action === 'heartbeat'/)
+ assert.match(paper,/if \(action === 'heartbeat'\) return ok\(\{ \.\.\.common, heartbeat:true \}\)/)
+ assert.match(client,/\+\+polls % 4 === 0 \? 'status' : 'heartbeat'/)
 })
