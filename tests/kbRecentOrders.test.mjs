@@ -162,3 +162,21 @@ test('only short Korean vendor diagnostics survive error redaction; account-rela
   assert.equal(found.failedBusinessCodes['20261106'].processMessage,'조회 조건을 확인하세요')
  }finally{globalThis.fetch=previous}
 })
+
+test('read-only SSQM2341 retries a transient timeout only once and reports success',async()=>{
+ const oldFetch=globalThis.fetch
+ let requests=0
+ globalThis.fetch=async uri=>{
+  if(String(uri).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'mock-token',expires_in:3600}})
+  requests++
+  if(requests===1)throw new DOMException('simulated timeout','TimeoutError')
+  return reply([])
+ }
+ try{
+  const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-transient-timeout'},1,saturday)
+  assert.equal(found.partial,false)
+  assert.equal(found.checkedDates.length,1)
+  assert.equal(requests,2)
+ }finally{globalThis.fetch=oldFetch}
+})
