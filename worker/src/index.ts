@@ -159,19 +159,25 @@ const service = {
       return new Response(response.body,{status:response.status,headers});
     }
     if (url.pathname === "/api/paper/server" && request.method === "POST") {
-      let action = "", signature = "";
-      try { const body = await request.json() as {action?:string;signature?:string}; action = String(body.action || ""); signature = String(body.signature || "").slice(0,800); }
-      catch { return json({ success:false, message:"요청 JSON 오류" },400); }
-      const response = await serverPaperApi(env.PAPER_DB,action,signature);
+      let action = "", signature = "", knownRevision = -1;
+      try {
+        const body = await request.json() as {action?:string;signature?:string;revision?:number};
+        action = String(body.action || "");
+        signature = String(body.signature || "").slice(0,800);
+        if (action === 'status' && Number.isSafeInteger(body.revision) && Number(body.revision) >= 0)
+          knownRevision = Number(body.revision);
+      } catch { return json({ success:false, message:"요청 JSON 오류" },400); }
+      const response = await serverPaperApi(env.PAPER_DB,action,signature,knownRevision);
       if (action === 'status' && response.ok && env.PAPER_DB) {
-        const body = await response.json() as Record<string,unknown>;
-        try {
-          body.cron = await readServerCronMonitor(env.PAPER_DB);
-          body.cron_monitor_available = true;
-        } catch {
-          body.cron_monitor_available = false;
-        }
-        return json(body,200);
+        // Do not parse/stringify the full D1 journal twice on every poll.
+        const raw = await response.text();
+        let monitor:unknown = null, available = false;
+        try { monitor = await readServerCronMonitor(env.PAPER_DB); available = true; }
+        catch { /* Monitoring never blocks the paper account read. */ }
+        const extra = ',"cron_monitor_available":'+JSON.stringify(available)+
+          (available ? ',"cron":'+JSON.stringify(monitor) : '');
+        return new Response(raw.slice(0,-1)+extra+'}', {status:200,
+          headers:{...corsHeaders,'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
       }
       const headers = new Headers(response.headers);
       for (const [k,v] of Object.entries(corsHeaders)) headers.set(k,v);
