@@ -27,7 +27,7 @@ test('authenticated deployment probe distinguishes network token failure without
   const result=await response.json()
   assert.equal(result.success,false)
   assert.equal(result.checks.holdings.auth_issue,'auth_transport')
-  assert.equal(result.checks.valuation.auth_issue,'auth_transport')
+  assert.equal(result.checks.valuation.stage,'skipped_upstream_unavailable')
   assert.equal(result.checks.holdings.stage,'authentication')
   assert.ok(calls>0)
   const publicBody=JSON.stringify(result)
@@ -49,8 +49,8 @@ test('KB HTTP 401 auth rejection is classified, not repeatedly retried, and neve
   assert.equal(response.status,503)
   const result=await response.json()
   assert.equal(result.checks.holdings.auth_issue,'auth_rejected')
-  assert.equal(result.checks.valuation.auth_issue,'auth_rejected')
-  assert.equal(calls,2,'Each independent read fails once; no token retry on 401')
+  assert.equal(result.checks.valuation.stage,'skipped_upstream_unavailable')
+  assert.equal(calls,1,'A definitive OAuth rejection must not trigger the second account request')
   assert.ok(!JSON.stringify(result).includes('broker private credentials rejected'))
  }finally{globalThis.fetch=original}
 })
@@ -62,7 +62,7 @@ test('KB HTTP 429 auth throttle is distinguished from rejected credentials',asyn
   const value=await response.json()
   assert.equal(response.status,503)
   assert.equal(value.checks.holdings.auth_issue,'auth_rate_limited')
-  assert.equal(value.checks.valuation.auth_issue,'auth_rate_limited')
+  assert.equal(value.checks.valuation.stage,'skipped_upstream_unavailable')
  }finally{globalThis.fetch=original}
 })
 test('unauthorized probes are never allowed to reveal OAuth diagnostics or query broker',async()=>{
