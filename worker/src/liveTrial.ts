@@ -135,6 +135,19 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       return reply({success:true,enabled:false,message:'실주문 신규 발송 차단. 기존 접수 주문은 별도 확인이 필요합니다.'})
     }
     if(action==='arm'){
+      // Even with the explicit deployment flag, do not arm on a stale
+      // or unreachable KB order-history service. This check does not submit.
+      if(String(body.confirmation||'')!=='실계좌 1만원 자동매매 실행')
+        return reply({success:false,enabled:false,message:'1만원 실거래 실행 확인 문구가 일치하지 않습니다.'},423)
+      if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
+        return reply({success:false,enabled:false,message:'KB 주문조회 인증 정보가 없습니다.'},423)
+      try {
+        const verified=await listKbRecentOrders(env,1)
+        if(verified.partial||verified.checkedDates.length!==1)
+          return reply({success:false,enabled:false,message:'KB 주문·체결조회가 완전하지 않아 실주문을 차단합니다.'},423)
+      }catch {
+        return reply({success:false,enabled:false,message:'KB 주문·체결조회가 실패하여 실주문을 차단합니다.'},423)
+      }
       const success=await armLiveTrading(db,env||{},String(body.confirmation||''))
       return reply({success,enabled:success,message:success?
         '실계좌 1만 원 시험 운용이 오늘 정규장 동안만 활성화됐습니다.':
