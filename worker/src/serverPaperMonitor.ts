@@ -17,18 +17,17 @@ export async function readServerCronMonitor(db: Db): Promise<{
   last_tick: MonitorRow | null; recent: MonitorRow[]; last_success: MonitorRow | null;
   today: { total: number; completed: number; errors: number; skipped: number };
 }> {
-  const recentQuery = await db.prepare(
-    'SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 12'
-  ).all()
-  const recent = (recentQuery.results || []) as MonitorRow[]
-  const lastGood = await db.prepare(
-    "SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs WHERE result IN ('scanned','watched') ORDER BY slot DESC LIMIT 1"
-  ).first<MonitorRow>()
   const kst = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0,10)
   const from = Date.parse(kst+'T00:00:00+09:00')
-  const daily = await db.prepare(
-    "SELECT COUNT(*) AS total, SUM(CASE WHEN result IN ('scanned','watched') THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?"
-  ).bind(Math.floor(from/60000)).first<Record<string,number|null>>()
+  // Independent D1 reads run concurrently. The common 30-second heartbeat
+  // does not invoke this function at all.
+  const [recentQuery,lastGood,daily] = await Promise.all([
+    db.prepare('SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 12').all(),
+    db.prepare("SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs WHERE result IN ('scanned','watched') ORDER BY slot DESC LIMIT 1").first<MonitorRow>(),
+    db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN result IN ('scanned','watched') THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?")
+      .bind(Math.floor(from/60000)).first<Record<string,number|null>>()
+  ])
+  const recent = (recentQuery.results || []) as MonitorRow[]
   return {last_tick:recent[0] || null,recent,last_success:lastGood || null,
     today: {total:Number(daily?.total)||0,completed:Number(daily?.completed)||0,errors:Number(daily?.errors)||0,skipped:Number(daily?.skipped)||0}}
 }
