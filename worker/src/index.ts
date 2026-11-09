@@ -96,11 +96,13 @@ const service = {
     if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
-      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number}> = {};
+      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number;upstream_cf_ray?:string}> = {};
+      const holdingsOnly=request.headers.get("X-KB-Probe-Scope")==="holdings";
       let upstreamUnavailable=false;
       for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
         // This is deployment verification, not an availability stress test.
         // Never initiate valuation after an unresolved KB gateway failure.
+        if (holdingsOnly && name==="valuation") break;
         if (upstreamUnavailable) {
           checks[name]={success:false,stage:'skipped_upstream_unavailable',http_status:503};
           continue;
@@ -125,6 +127,7 @@ const service = {
           const successful=reply.ok&&result.success===true;
           checks[name]={success:successful,stage,http_status:reply.status,
             ...(upstreamStatus?{upstream_status:upstreamStatus}:{}),
+            ...(typeof result.upstream_cf_ray==="string"?{upstream_cf_ray:result.upstream_cf_ray}:{}),
             ...(authIssue?{auth_issue:authIssue}:{})};
           upstreamUnavailable=!successful&&(
             stage==='authentication' || stage.endsWith('_network') ||
@@ -138,7 +141,7 @@ const service = {
           upstreamUnavailable=true;
         }
       }
-      const success=checks.holdings.success&&checks.valuation.success;
+      const success=checks.holdings.success&&(holdingsOnly||checks.valuation.success);
       return new Response(JSON.stringify({
         success,stage:success?'ok':'kb_account_probe',checks,checked_at:new Date().toISOString(),
       }),{status:success?200:503,headers:{...corsHeaders,'Cache-Control':'no-store'}});
@@ -321,6 +324,7 @@ const service = {
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
+          ...(checked.cfRay?{upstream_cf_ray:checked.cfRay}:{}),
           message:"KB 보유주식 응답 오류 · "+checked.issue+
             (checked.status?" (KB HTTP "+checked.status+")":"")},502);
       }

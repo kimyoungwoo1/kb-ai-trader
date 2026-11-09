@@ -10,10 +10,11 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
+const holdingsProofOnly = process.argv.includes('--holdings-proof-only')
 const privateEgress = process.argv.includes('--private-egress')
 const livePilot10000 = process.argv.includes('--live-pilot-10000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000'].includes(arg))||
-  (privateEgress&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000','--holdings-proof-only'].includes(arg))||
+  (privateEgress&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress||holdingsProofOnly))||(holdingsProofOnly&&tlsProofOnly))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot10000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인')
   throw Error('1만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -413,6 +414,24 @@ async function main(){
   // production traffic when Version URLs are disabled or not yet propagated.
   console.log('7/7 신규 버전 URL에서 계좌 실조회 검증 (운영 트래픽 미변경)')
   const previewOrigin=versionOrigin(createdId)
+  if(holdingsProofOnly){
+    console.log('○ 보유주식 조회 전용 진단 · 운영 전환 없음 · version '+createdId)
+    const startedAt=new Date().toISOString()
+    const reply=await fetch(previewOrigin+'/api/deploy/verify',{
+      method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Probe-Scope':'holdings'},
+      signal:AbortSignal.timeout(80000)
+    })
+    const body=await reply.json().catch(()=>null)
+    const holdings=body?.checks?.holdings
+    console.log(JSON.stringify({
+      startedAt,checkedAt:body?.checked_at||new Date().toISOString(),
+      workerHttp:reply.status,stage:holdings?.stage||'probe_unavailable',
+      holdingsHttp:holdings?.http_status??null,kbHttp:holdings?.upstream_status??null,
+      kbCfRay:holdings?.upstream_cf_ray??null
+    }))
+    ensure(reply.ok&&holdings?.success===true,'격리 버전 보유주식 조회 실패')
+    return
+  }
   if(tlsProofOnly){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))

@@ -1,7 +1,7 @@
 /** KB account READ-ONLY transport. Never reuse for orders or cancels. */
 export type SafeAccountResult =
  {success:true;status:number;data:unknown} |
- {success:false;status:number;issue:'NETWORK'|'TIMEOUT'|'NON_JSON'|'HTTP_ERROR';contentType:string;retried:boolean}
+ {success:false;status:number;issue:'NETWORK'|'TIMEOUT'|'NON_JSON'|'HTTP_ERROR';contentType:string;retried:boolean;cfRay?:string}
 export async function readKbAccountJson(url:string,headers:Record<string,string>,body:unknown):Promise<SafeAccountResult>{
  let retried=false
  for(let attempt=0;attempt<2;attempt++){
@@ -21,10 +21,12 @@ export async function readKbAccountJson(url:string,headers:Record<string,string>
    await response.body?.cancel().catch(()=>{})
    continue
   }
+  const ray=response.headers.get('cf-ray') || ''
+  const trace=/^[0-9a-f]{16,32}(?:-[A-Z]{3})?$/i.test(ray)?{cfRay:ray}:{}
   let data:unknown
   try{data=await response.json()}
-  catch{return {success:false,status:response.status,issue:'NON_JSON',contentType,retried}}
-  if(!response.ok)return {success:false,status:response.status,issue:'HTTP_ERROR',contentType,retried}
+  catch{return {success:false,status:response.status,issue:'NON_JSON',contentType,retried,...trace}}
+  if(!response.ok)return {success:false,status:response.status,issue:'HTTP_ERROR',contentType,retried,...trace}
   return {success:true,status:response.status,data}
  }
  return {success:false,status:0,issue:'NETWORK',contentType:'',retried}
