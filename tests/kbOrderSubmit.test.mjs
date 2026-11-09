@@ -63,3 +63,45 @@ test('cancel is only accepted on 0014 and a new cancellation number',async()=>{
   assert.equal(r.brokerOrderNo,'0060000712')
  }finally{globalThis.fetch=orig}
 })
+
+test('write redirects stay UNKNOWN and are never followed for buys, sells or cancels',async()=>{
+ const order={code:'005930',price:9000,quantity:1}
+ const writes=[
+  ()=>submitKbLimitOnce(env,'BUY',order),
+  ()=>submitKbLimitOnce(env,'SELL',order),
+  ()=>submitKbCancelOnce(env,order.code,'0060000705'),
+ ]
+ for(const status of [307,308]){
+  const redirects=[]
+  globalThis.fetch=async(url,options)=>{
+   if(String(url).endsWith(key))return tokenReply()
+   redirects.push(options.redirect)
+   return Response.json({dataHeader:{resultCode:'400',processFlag:'E'}},{
+    status,
+    headers:{Location:'/other-order-endpoint'},
+   })
+  }
+  try{
+   for(const write of writes)assert.equal((await write()).state,'UNKNOWN')
+   assert.deepEqual(redirects,['manual','manual','manual'])
+  }finally{globalThis.fetch=orig}
+ }
+})
+
+test('success-shaped broker body on HTTP 503 never acknowledges any write',async()=>{
+ const order={code:'005930',price:9000,quantity:1}
+ const codes={ssam1802:'0005',ssam1801:'0004',ssam1806:'0014'}
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith(key))return tokenReply()
+  const code=codes[String(url).split('/').at(-1)]
+  return Response.json({
+   dataHeader:{resultCode:'200',processFlag:'A',processCode:code},
+   dataBody:{ordr_no:'0060000712'},
+  },{status:503})
+ }
+ try{
+  assert.equal((await submitKbLimitOnce(env,'BUY',order)).state,'UNKNOWN')
+  assert.equal((await submitKbLimitOnce(env,'SELL',order)).state,'UNKNOWN')
+  assert.equal((await submitKbCancelOnce(env,order.code,'0060000705')).state,'UNKNOWN')
+ }finally{globalThis.fetch=orig}
+})
