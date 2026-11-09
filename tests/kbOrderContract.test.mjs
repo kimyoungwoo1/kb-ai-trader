@@ -10,15 +10,15 @@ const orderSample=(side='BUY')=>({dataHeader:head(side==='BUY'?'0005':'0004'),
 const fillSample=(nextKey='')=>({dataHeader:head('0015'),
  dataBody:{nxt_key:nextKey,Record1:[{ordr_no:'0060000705',stnd_is_no:'A005930',
  trd_dl_ccd_nm:'매수',ordr_q:'000000000000000001',tl_ccls_q:'000000000000000000',
- nccls_q:'000000000000000001',ordr_uprc:'000000000000049000',crct_cncl_ccd:' '}]}})
+ nccls_q:'000000000000000001',ordr_uprc:'00000000000009000',crct_cncl_ccd:' '}]}})
 test('KB V2 buy/sell limit order has exact SSAM1801/1802 fields',()=>{
- const buy=makeLimitOrder('BUY',{code:'005930',quantity:1,price:49000})
+ const buy=makeLimitOrder('BUY',{code:'005930',quantity:1,price:9000})
  assert.equal(buy.path,'/api/v1/ssam1802')
- assert.deepEqual(buy.body.dataBody,{ordr_uprc:'49000',ordr_ccd:'00',
+ assert.deepEqual(buy.body.dataBody,{ordr_uprc:'9000',ordr_ccd:'00',
  mkt_tm_clsf:'1',is_cd:'005930',ordr_q:'1',sor_ordr_ccd:'S'})
- assert.equal(makeLimitOrder('SELL',{code:'005930',quantity:1,price:49000}).path,'/api/v1/ssam1801')
- assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:2,price:49000}),/5만 원/)
- assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:1,price:49000.5}),/지정가/)
+ assert.equal(makeLimitOrder('SELL',{code:'005930',quantity:1,price:9000}).path,'/api/v1/ssam1801')
+ assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:2,price:9000}),/5만 원/)
+ assert.throws(()=>makeLimitOrder('BUY',{code:'005930',quantity:1,price:9000.5}),/지정가/)
 })
 test('KB V2 cancellation and fill-history request only use specified fields',()=>{
  const cancel=makeCancelOrder('005930','0060000705')
