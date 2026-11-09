@@ -58,3 +58,16 @@ test('partially filled canceled purchase still consumes conservative 50k pilot c
   {side:'BUY',reserved_won:1500,state:'CANCELED',filled_quantity:0}
  ]),45000)
 })
+
+test('all account menus consume App shared snapshot without triggering duplicate KB refresh',()=>{
+ const app=readFileSync('src/App.tsx','utf8')
+ const trial=readFileSync('src/LiveTrial.tsx','utf8')
+ const dashboard=app.slice(app.indexOf('export default function App()'))
+ assert.match(dashboard,/const accountPendingRef = useRef<Promise<void> \| null>\(null\)/)
+ assert.match(dashboard,/if \(accountPendingRef\.current\) return accountPendingRef\.current/)
+ assert.match(dashboard,/accountNextRefreshRef\.current = Date\.now\(\) \+ \(failures\.length \? 15_000 : 10_000\)/)
+ assert.equal((dashboard.match(/fetch\(API \+ '\/api\/kb\/account-batch'/g)||[]).length,1)
+ assert.match(app,/<LiveTrial token=\{token\} holdings=\{holdings\} accountSummary=\{accountSummary\}/)
+ assert.doesNotMatch(trial,/requestedAccountOnce|void onRefreshAccount\(\)/)
+ assert.match(trial,/onRefreshAccount=\{onRefreshAccount\}/)
+})
