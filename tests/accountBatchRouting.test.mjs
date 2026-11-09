@@ -19,7 +19,7 @@ test('batched live account API stays authenticated and read only', () => {
 })
 
 test('frontend uses one batched account request and preserves independent error reporting', () => {
-  const refresh = app.slice(app.indexOf('async function refresh()'), app.indexOf('async function runAiAnalysis()'))
+  const refresh = app.slice(app.indexOf('async function refreshAccountOnce()'), app.indexOf('async function runAiAnalysis()'))
   assert.match(refresh, /fetch\(API \+ '\/api\/kb\/account-batch'/)
   assert.match(refresh, /batch\.results\?\.\[endpoint\]/)
   assert.match(refresh, /await requestAccount\('holdings'/)
