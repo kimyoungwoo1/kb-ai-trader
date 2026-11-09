@@ -7,6 +7,6 @@ export function validateLiveBuyInput(code:string,quantity:string,price:string):s
     return '지정가는 1원 이상의 정수로 입력해 주세요.'
   const total=Number(quantity)*Number(price)
   if(!Number.isSafeInteger(total))return '매수금액을 정확히 계산할 수 없습니다.'
-  if(total>50_000)return `매수 예정 금액 ${total.toLocaleString('ko-KR')}원이 50,000원 한도를 초과합니다. 수량 또는 지정가를 낮춰 주세요.`
+  if(total>10_000)return `매수 예정 금액 ${total.toLocaleString('ko-KR')}원이 10,000원 한도를 초과합니다. 수량 또는 지정가를 낮춰 주세요.`
   return null
 }
