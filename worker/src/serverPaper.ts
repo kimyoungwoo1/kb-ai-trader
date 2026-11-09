@@ -29,11 +29,30 @@ function summarize(row: StateRow | null) {
   return { success: true, migrated: true, mode: row.mode, revision: row.revision,
     updated_at: row.updated_at, last_error: row.last_error, snapshot };
 }
-export async function serverPaperApi(db: Db | undefined, action: string, expectedSignature = ''): Promise<Response> {
+export async function serverPaperApi(db: Db | undefined, action: string, expectedSignature = '', knownRevision = -1): Promise<Response> {
   if (!db) return ok({ success: false, message: 'PAPER_DB 연결이 필요합니다.' }, 503);
   try {
+    if (action === 'status') {
+      // A 15-second browser poll must not repeatedly retrieve, parse, and
+      // serialize the potentially large D1 paper journal when unchanged.
+      const meta = await db.prepare(
+        'SELECT revision, mode, updated_at, last_error FROM server_paper_state WHERE id=1'
+      ).first<{ revision:number; mode:string; updated_at:string; last_error:string|null }>();
+      if (!meta) return ok({ success:true, migrated:false, mode:'not_migrated' });
+      const common = { success:true, migrated:true, mode:meta.mode,
+        revision:meta.revision, updated_at:meta.updated_at, last_error:meta.last_error };
+      if (knownRevision === meta.revision) return ok({ ...common, unchanged:true });
+      const current = await state(db);
+      if (!current) return ok({ success:true, migrated:false, mode:'not_migrated' });
+      // snapshot_json already contains validated persisted JSON. Embed it as
+      // raw JSON to avoid materializing and reserializing a 600KB+ object.
+      const prefix = JSON.stringify({ success:true, migrated:true, mode:current.mode,
+        revision:current.revision, updated_at:current.updated_at, last_error:current.last_error });
+      return new Response(prefix.slice(0,-1)+',"snapshot":'+current.snapshot_json+'}', {
+        headers:{ 'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store' }
+      });
+    }
     const row = await state(db);
-    if (action === 'status') return ok(summarize(row));
     if (action === 'migrate') {
       if (row) return ok(summarize(row)); // Never overwrite existing server trades.
       const current = await db.prepare('SELECT revision, snapshot_json FROM paper_backup_head WHERE id=1').first<{revision:number;snapshot_json:string}>();
