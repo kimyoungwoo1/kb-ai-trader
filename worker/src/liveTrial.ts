@@ -149,7 +149,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
           const reason=date?verified.failedReasons[date]:'INCOMPLETE'
           const business=date?verified.failedBusinessCodes[date]:null
           const code=business?
-            ' · 업무코드 '+business.resultCode+'/'+business.processCode+'/'+business.processFlag:''
+            ' · 업무코드 '+business.resultCode+'/'+business.processCode+'/'+business.processFlag+' · '+String(business.processMessage||'미제공'):''
           return reply({success:false,enabled:false,
             message:'KB 주문·체결조회 미완료 ('+String(reason||'UNKNOWN')+code+') · 실주문 차단. 상태를 확인하고 재시도하세요.'},423)
         }
