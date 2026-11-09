@@ -3,7 +3,7 @@
 // Run in Codespaces to compare direct network path to Cloudflare Worker edge.
 // HTTP 403/404 from GET / proves HTTP reached an upstream; HTTP 522 does not.
 const target='https://developer.kbsec.com:32484/'
-const attempts=3
+const attempts=1 // Detailed TCP/TLS checks below replace repeated opaque fetch failures
 for(let n=1;n<=attempts;n++){
  const started=performance.now()
  try{
