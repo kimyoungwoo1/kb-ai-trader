@@ -134,9 +134,9 @@ export default function App() {
     // Do not expose API tokens, account identifiers, or raw response bodies.
     const failures: string[] = []
     let sessionExpired = false
-    // Single same-isolate Worker request. All three KB account endpoints run
-    // concurrently and share the in-flight OAuth token request.
-    // Each result retains independent success/failure handling.
+    // One shared account refresh for every menu. The Worker serializes
+    // the three read-only KB endpoints and stops after upstream failure.
+    // No live-order execution uses these browser values.
     const accountBatch = fetch(API + '/api/kb/account-batch', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token },
@@ -236,7 +236,8 @@ export default function App() {
     } finally {
       // A manual refresh within this window reuses the shared menu state,
       // rather than creating new provider sessions during an outage.
-      accountNextRefreshRef.current = Date.now() + (failures.length ? 15_000 : 10_000)
+      if (!sessionExpired) accountNextRefreshRef.current =
+        Date.now() + (failures.length ? 15_000 : 10_000)
       setLoading(false)
     }
   }
