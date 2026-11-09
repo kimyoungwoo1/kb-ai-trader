@@ -109,7 +109,7 @@ test('KB business rejection displays safe category without exposing provider mes
   const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-reject'},1,saturday)
   assert.equal(found.partial,true)
   assert.equal(found.failedReasons['20261106'],'BUSINESS_REJECTED')
-  assert.deepEqual(found.failedBusinessCodes['20261106'],{resultCode:'5007',processCode:'F123',processFlag:'N'})
+  assert.deepEqual(found.failedBusinessCodes['20261106'],{resultCode:'5007',processCode:'F123',processFlag:'N',processMessage:'미제공'})
   assert.ok(!JSON.stringify(found).includes('PRIVATE ACCOUNT RECORD'))
   assert.ok(!JSON.stringify(found).includes('SENSITIVE'))
  }finally{globalThis.fetch=before}
@@ -144,5 +144,21 @@ test('broker status fields with unsafe characters are never revealed in diagnost
   assert.equal(found.failedBusinessCodes['20261106'].processCode,'미제공')
   assert.ok(!JSON.stringify(found).includes('123-45-6789'))
   assert.ok(!JSON.stringify(found).includes('Secret user details'))
+ }finally{globalThis.fetch=previous}
+})
+
+test('only short Korean vendor diagnostics survive error redaction; account-related English and digits are excluded',async()=>{
+ const previous=globalThis.fetch
+ globalThis.fetch=async(uri)=>{
+  if(String(uri).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'mock-order-token',expires_in:3600}})
+  return Response.json({dataHeader:{resultCode:'200',processCode:'1861',processFlag:'B',
+   processMessage:'조회 조건을 확인하세요'},dataBody:{}})
+ }
+ try{
+  const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-korean-diagnostic'},1,saturday)
+  assert.equal(found.partial,true)
+  assert.equal(found.failedReasons['20261106'],'BUSINESS_REJECTED')
+  assert.equal(found.failedBusinessCodes['20261106'].processMessage,'조회 조건을 확인하세요')
  }finally{globalThis.fetch=previous}
 })
