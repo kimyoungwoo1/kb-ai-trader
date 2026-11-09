@@ -9,7 +9,7 @@ const freeze=()=>{globalThis.Date=class extends ActualDate{
  constructor(...args){super(...(args.length?args:[now.getTime()]))}
  static now(){return now.getTime()}
 };return ()=>{globalThis.Date=ActualDate}}
-const env={KB_APP_KEY:'cancel-test-only',KB_APP_SECRET:'dummy',LIVE_TRADING_HARD_ENABLE:'ALLOW_REAL_50000_TRIAL_2026'}
+const env={KB_APP_KEY:'cancel-test-only',KB_APP_SECRET:'dummy',LIVE_TRADING_HARD_ENABLE:'ALLOW_REAL_10000_TRIAL_2026'}
 const order=()=>({id:'trial-buy-sample',trading_day:'2026-11-09',side:'BUY',code:'005930',
  quantity:5,limit_price:9000,reserved_won:45450,state:'ACCEPTED',
  broker_order_id:'0060000705',filled_quantity:0,created_at:'2026-11-09T00:30:00Z',updated_at:'2026-11-09T00:30:00Z'})
