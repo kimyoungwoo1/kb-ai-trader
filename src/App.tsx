@@ -51,6 +51,11 @@ export default function App() {
   const [depositMessage, setDepositMessage] = useState('예수금 조회 전')
   const [message, setMessage] = useState('로그인 후 계좌 새로고침을 눌러주세요.')
   const [loading, setLoading] = useState(false)
+  // Single account snapshot for every menu. Repeated UI requests share one
+  // in-flight promise; brief cooldowns prevent rapid retries after KB 522.
+  // Live order preflight never reads these UI values as authoritative.
+  const accountPendingRef = useRef<Promise<void> | null>(null)
+  const accountNextRefreshRef = useRef(0)
   const [cloudflareAnalysis, setCloudflareAnalysis] = useState('')
   const [geminiAnalysis, setGeminiAnalysis] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
@@ -106,7 +111,22 @@ export default function App() {
     } catch { setError('서버에 연결하지 못했습니다.') }
   }
 
-  async function refresh() {
+  function refresh(): Promise<void> {
+    if (accountPendingRef.current) return accountPendingRef.current
+    if (Date.now() < accountNextRefreshRef.current) {
+      setMessage(previous => previous.includes('실패')
+        ? previous + (previous.includes('재조회 보류') ? '' : ' · KB 재조회 보류 중')
+        : previous)
+      return Promise.resolve()
+    }
+    const current = refreshAccountOnce()
+    accountPendingRef.current = current
+    return current.finally(() => {
+      if (accountPendingRef.current === current) accountPendingRef.current = null
+    })
+  }
+
+  async function refreshAccountOnce() {
     setLoading(true)
     setMessage('KB증권 계좌 조회 중...')
     setDepositMessage('예수금 조회 중...')
@@ -214,6 +234,9 @@ export default function App() {
       }
       setMessage(failures.length ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR'))
     } finally {
+      // A manual refresh within this window reuses the shared menu state,
+      // rather than creating new provider sessions during an outage.
+      accountNextRefreshRef.current = Date.now() + (failures.length ? 15_000 : 10_000)
       setLoading(false)
     }
   }
@@ -725,7 +748,15 @@ export default function App() {
 
   useEffect(() => { if (token) refresh() }, [token])
 
-  function logout() { sessionStorage.removeItem('kb-trader-session'); setToken(''); setHoldings([]); setDeposit(null); setAccountSummary(null) }
+  function logout() {
+    sessionStorage.removeItem('kb-trader-session')
+    accountPendingRef.current = null
+    accountNextRefreshRef.current = 0
+    setToken('')
+    setHoldings([])
+    setDeposit(null)
+    setAccountSummary(null)
+  }
 
   const baseHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
   const cloudHealth = getCloudSyncState()
