@@ -248,13 +248,13 @@ const safeIssue=(error:unknown):RecentKbIssue=>{
 export type RecentKbOrder=OrderLine&{orderDate:string}
 export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new Date()):Promise<{
  orders:RecentKbOrder[];checkedDates:string[];failedDates:string[];partial:boolean;
- failedReasons:Record<string,RecentKbIssue>;failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string}>
+ failedReasons:Record<string,RecentKbIssue>;failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string;processMessage?:string}>
 }>{
  const dates=recentKbTradingDates(now,days)
  const token=await getKbAccessToken(env)
  const checkedDates:string[]=[],failedDates:string[]=[]
  const failedReasons:Record<string,RecentKbIssue>={}
- const failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string}>={}
+ const failedBusinessCodes:Record<string,{resultCode:string;processCode:string;processFlag:string;processMessage?:string}>={}
  // Only vendor status fields pass through. Never output dataBody or messages.
  const safeStatus=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,16}$/.test(value)?value:
    typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=999999999999?String(value):'미제공'
@@ -280,7 +280,13 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
       failedBusinessCodes[day]={
        resultCode:safeStatus(payload?.dataHeader?.resultCode),
        processCode:safeStatus(payload?.dataHeader?.processCode),
-       processFlag:safeStatus(payload?.dataHeader?.processFlag)
+       processFlag:safeStatus(payload?.dataHeader?.processFlag),
+       // Display only a short, sanitized vendor explanation. Never expose
+       // raw account/order bodies, identifiers, or HTTP authorization.
+       processMessage:(()=>{
+        const message=String(payload?.dataHeader?.processMessage??'').trim()
+        return /^[가-힣a-zA-Z0-9 .,()\-·_:]{1,90}$/.test(message)?message:'미제공'
+       })()
       }
       throw Error('KB_ORDER_BUSINESS_REJECTED')
     }
