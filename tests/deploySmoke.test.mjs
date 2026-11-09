@@ -68,3 +68,32 @@ test('deploy probe fails closed when holdings or valuation read is rejected',asy
    assert.equal(result.checks.holdings.success,true)
  }finally{globalThis.fetch=original}
 })
+
+test('deploy probe stops at first KB 522 and never claims successful valuation',async()=>{
+ const previous=globalThis.fetch
+ let holdings=0,valuation=0
+ const isolated={...env,KB_APP_KEY:'probe-522-single-flight'}
+ globalThis.fetch=async input=>{
+  const url=String(input)
+  if(url.endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'522-probe-token',expires_in:3600}})
+  if(url.endsWith('/api/v1/ssqm1801')){
+   holdings++
+   return new Response('<html>upstream 522</html>',{status:522,headers:{'content-type':'text/html'}})
+  }
+  if(url.endsWith('/api/v1/ssqm2952')){valuation++;throw Error('Must not query valuation during 522')}
+  throw Error('Unexpected KB request')
+ }
+ try{
+  const response=await worker.fetch(request(env.DEPLOY_PROBE_TOKEN),isolated)
+  const result=await response.json()
+  assert.equal(response.status,503)
+  assert.equal(result.success,false)
+  assert.equal(result.checks.holdings.stage,'holdings_response')
+  assert.equal(result.checks.holdings.upstream_status,522)
+  assert.equal(result.checks.valuation.stage,'skipped_upstream_unavailable')
+  assert.equal(result.checks.valuation.success,false)
+  assert.equal(holdings,1)
+  assert.equal(valuation,0)
+ }finally{globalThis.fetch=previous}
+})
