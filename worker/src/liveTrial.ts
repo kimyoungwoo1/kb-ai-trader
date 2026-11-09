@@ -1,6 +1,7 @@
 import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder, listKbRecentOrders } from './kbOrderContract'
+import {KbAuthError} from './kbToken'
 import {diagnoseLiveReadiness} from './liveReadiness'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
@@ -143,10 +144,22 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
         return reply({success:false,enabled:false,message:'KB 주문조회 인증 정보가 없습니다.'},423)
       try {
         const verified=await listKbRecentOrders(env,1)
-        if(verified.partial||verified.checkedDates.length!==1)
-          return reply({success:false,enabled:false,message:'KB 주문·체결조회가 완전하지 않아 실주문을 차단합니다.'},423)
-      }catch {
-        return reply({success:false,enabled:false,message:'KB 주문·체결조회가 실패하여 실주문을 차단합니다.'},423)
+        if(verified.partial||verified.checkedDates.length!==1){
+          const date=verified.failedDates[0]
+          const reason=date?verified.failedReasons[date]:'INCOMPLETE'
+          const business=date?verified.failedBusinessCodes[date]:null
+          const code=business?
+            ' · 업무코드 '+business.resultCode+'/'+business.processCode+'/'+business.processFlag:''
+          return reply({success:false,enabled:false,
+            message:'KB 주문·체결조회 미완료 ('+String(reason||'UNKNOWN')+code+') · 실주문 차단. 상태를 확인하고 재시도하세요.'},423)
+        }
+      }catch(error){
+        const reason=error instanceof KbAuthError?
+          (error.rateLimited?'KB 인증 요청 제한':'KB OAuth 인증 실패 (HTTP '+error.httpStatus+')'):
+          error instanceof Error&&error.name==='TimeoutError'?'주문조회 시간 초과':
+          '주문조회 연결/응답 실패'
+        return reply({success:false,enabled:false,
+          message:reason+' · 실주문 잠금 유지. KB 인증 및 주문조회 정상화 후 재시도하세요.'},423)
       }
       const success=await armLiveTrading(db,env||{},String(body.confirmation||''))
       return reply({success,enabled:success,message:success?
