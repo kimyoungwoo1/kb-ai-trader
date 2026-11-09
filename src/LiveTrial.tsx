@@ -86,7 +86,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{status?.enabled?'실계좌 시험 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
       <p className="notification-hint">{status?.message||'서버 설정과 당일 D1 실행 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
       <div className="notification-meta">
-        <span>총 매수 한도: 50,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
+        <span>총 매수 한도: 10,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
       </div>
       <div style={{display:'flex',gap:10,alignItems:'center'}}><ShieldCheck size={18}/>
@@ -95,9 +95,9 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
       {status?.hardEnabled&&!status.enabled&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
-          placeholder="실계좌 5만원 자동매매 실행" value={confirmation}
+          placeholder="실계좌 1만원 자동매매 실행" value={confirmation}
           onChange={e=>setConfirmation(e.target.value)}/>
-        <button className="outline-button" disabled={busy||confirmation!=='실계좌 5만원 자동매매 실행'}
+        <button className="outline-button" disabled={busy||confirmation!=='실계좌 1만원 자동매매 실행'}
           onClick={()=>void arm()}>오늘 실거래 활성화</button>
       </div>}
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
@@ -122,7 +122,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
     <LiveOrderLookup token={token}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>시험매매 후보 기록</h3><span>SERVER D1 · DRY RUN ONLY</span></div></div>
-      <p className="notification-hint">가상매매 서버에서 확정된 매수 신호 중 5만 원 이하·정규장·2분 이내·당일 첫 종목 조건을 통과한 후보만 기록됩니다. 후보가 기록되어도 실제 매수는 실행되지 않습니다.</p>
+      <p className="notification-hint">가상매매 서버에서 확정된 매수 신호 중 1만 원 이하·정규장·2분 이내·당일 첫 종목 조건을 통과한 후보만 기록됩니다. 후보가 기록되어도 실제 매수는 실행되지 않습니다.</p>
       {status?.candidates?.length?<div className="notification-list">{status.candidates.map(item=>
         <article key={item.id} className="notification-item">
           <div className="notification-item-heading"><div><span className="notification-tag">DRY RUN</span>
