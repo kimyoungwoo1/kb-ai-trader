@@ -12,8 +12,8 @@ import {transitionOrder,type OrderRecord} from './liveOrderJournal'
 type Db=any
 export type LiveEnv=KbCredentials&{LIVE_TRADING_HARD_ENABLE?:string}
 export type LiveFill={id:string;at:string;code:string;side:'BUY'|'SELL';price:number;quantity:number;test?:boolean}
-export const MAX_PILOT_WON=50_000
-const hardSwitch=(env:LiveEnv)=>env.LIVE_TRADING_HARD_ENABLE==='ALLOW_REAL_50000_TRIAL_2026'
+export const MAX_PILOT_WON=10_000
+const hardSwitch=(env:LiveEnv)=>env.LIVE_TRADING_HARD_ENABLE==='ALLOW_REAL_10000_TRIAL_2026'
 const tradingDay=(date:Date)=>new Date(date.getTime()+9*3600_000).toISOString().slice(0,10)
 const inSession=(date:Date)=>{const k=new Date(date.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
 const num=(value:unknown)=>{const n=Number(value);return value===null||value===undefined||value===''||!Number.isSafeInteger(n)||n<0?NaN:n}
@@ -41,7 +41,7 @@ export async function disarmLiveTrading(db:Db|undefined){
  }catch{return false}
 }
 export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:string,now=new Date()){
- if(!db||!hardSwitch(env)||confirmation!=='실계좌 5만원 자동매매 실행'||!inSession(now))return false
+ if(!db||!hardSwitch(env)||confirmation!=='실계좌 1만원 자동매매 실행'||!inSession(now))return false
  try{
   const active=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first()
   if(num(active?.n)!==0)return false
@@ -184,7 +184,7 @@ export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,
  return fill.side==='BUY'?submitLiveBuy(db,env,fill,now):submitLiveSell(db,env,fill,now)
 }
 async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<string>{
- const quantity=Math.min(fill.quantity,Math.floor(49_500/fill.price))
+ const quantity=Math.min(fill.quantity,Math.floor(9_900/fill.price))
  if(quantity<1)return 'budget_exceeded'
  let balances,held:number
  try{[balances,held]=await Promise.all([readKbBuyingPower(env,fill.code),readKbHeldQuantity(env,fill.code)])}
