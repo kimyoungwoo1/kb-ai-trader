@@ -153,7 +153,7 @@ const service = {
           method:"POST",headers:{Authorization:"Bearer "+env.DASHBOARD_API_KEY}
         }),env)
         const body=await response.json() as Record<string,unknown>
-        return {status:response.status,success:body.success===true,...body}
+        return {...body,status:response.status,success:body.success===true}
       })
       return new Response(JSON.stringify(result),{
         headers:{...corsHeaders,"Cache-Control":"no-store","Content-Type":"application/json"}
