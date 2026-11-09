@@ -11,8 +11,12 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
 const privateEgress = process.argv.includes('--private-egress')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress'].includes(arg))||
-  (privateEgress&&!tlsProofOnly))throw Error('지원하지 않는 배포 옵션 · private egress는 TLS 진단 전용')
+const livePilot10000 = process.argv.includes('--live-pilot-10000')
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000'].includes(arg))||
+  (privateEgress&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress)))
+  throw Error('지원하지 않는 배포 옵션 조합')
+if(livePilot10000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인')
+  throw Error('1만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
 const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
@@ -342,7 +346,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':'paper watch + D1 backup + current live secrets + push notifications'},
+      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · WEB ARM STILL REQUIRED':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
@@ -351,6 +355,7 @@ async function main(){
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
+        ...(livePilot10000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:'ALLOW_REAL_10000_TRIAL_2026'}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
@@ -381,6 +386,9 @@ async function main(){
   ensure(newVersion?.id===createdId,'신규 버전 조회 ID 불일치 · 배포 중단')
   verifyVersion(newVersion,'신규 버전',!!paperDbId)
   const newBindings=new Map(bindings(newVersion).map(x=>[x.name,x.type]))
+  ensure(livePilot10000 ? newBindings.get('LIVE_TRADING_HARD_ENABLE')==='plain_text' :
+    !newBindings.has('LIVE_TRADING_HARD_ENABLE'),
+    '실주문 배포 플래그 일치 검증 실패 · 운영 전환 차단')
   ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
     &&newBindings.has('VAPID_PUBLIC_KEY')&&newBindings.has('VAPID_SUBJECT'),
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
