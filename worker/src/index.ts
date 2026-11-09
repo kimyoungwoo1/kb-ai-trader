@@ -7,6 +7,7 @@ import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './l
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 import {readKbAccountJson} from './kbAccountRead'
+import {runAccountBatch} from './kbAccountBatch'
 
 export interface Env {
   KB_APP_KEY?: string;
@@ -146,28 +147,17 @@ const service = {
     // getKbAccessToken shares its in-flight OAuth promise inside this isolate,
     // avoiding three sequential browser waits and duplicate token requests.
     if (url.pathname === "/api/kb/account-batch" && request.method === "POST") {
-      const routes = [
-        ["holdings", "/api/kb/holdings"],
-        ["valuation", "/api/kb/valuation"],
-        ["deposit", "/api/kb/deposit"],
-      ] as const;
-      const entries = await Promise.all(routes.map(async ([name, route]) => {
-        try {
-          const response = await service.fetch(new Request("https://localhost" + route, {
-            method: "POST",
-            headers: { Authorization: "Bearer " + env.DASHBOARD_API_KEY },
-          }), env);
-          const body = await response.json() as Record<string, unknown>;
-          return [name, { status: response.status, ...body }] as const;
-        } catch {
-          return [name, { success:false, status:502, stage:"account_batch",
-            message:"계좌 조회 중 연결 오류" }] as const;
-        }
-      }));
-      return new Response(JSON.stringify({ success:true, results:Object.fromEntries(entries),
-        checked_at:new Date().toISOString() }), {
-        headers: { ...corsHeaders, "Cache-Control":"no-store", "Content-Type":"application/json" }
-      });
+      const key=String(env.KB_APP_KEY||'')+'|'+String(env.KB_BASE_URL||'')
+      const result=await runAccountBatch(key,async route=>{
+        const response=await service.fetch(new Request("https://localhost"+route,{
+          method:"POST",headers:{Authorization:"Bearer "+env.DASHBOARD_API_KEY}
+        }),env)
+        const body=await response.json() as Record<string,unknown>
+        return {status:response.status,success:body.success===true,...body}
+      })
+      return new Response(JSON.stringify(result),{
+        headers:{...corsHeaders,"Cache-Control":"no-store","Content-Type":"application/json"}
+      })
     }
     if (url.pathname === "/api/live/trial" && request.method === "POST") {
       let input:unknown;
