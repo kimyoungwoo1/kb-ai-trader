@@ -17,7 +17,7 @@ test('a broker order response is classified as ACCEPTED but not FILLED',async()=
   throw Error('Unexpected endpoint')
  }
  try{
-  const r=await submitKbLimitOnce(env,'BUY',{code:'005930',price:49000,quantity:1})
+  const r=await submitKbLimitOnce(env,'BUY',{code:'005930',price:9000,quantity:1})
   assert.deepEqual(r,{state:'ACCEPTED',brokerOrderNo:'0060000705'})
   assert.equal(calls.filter(x=>x.endsWith('/api/v1/ssam1802')).length,1)
  }finally{globalThis.fetch=orig}
@@ -30,7 +30,7 @@ test('lost broker response is UNKNOWN with exactly one order POST',async()=>{
   throw new Error('simulated timeout')
  }
  try{
-  const r=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-timeout'},'BUY',{code:'005930',price:49000,quantity:1})
+  const r=await submitKbLimitOnce({...env,KB_APP_KEY:'fresh-key-timeout'},'BUY',{code:'005930',price:9000,quantity:1})
   assert.equal(r.state,'UNKNOWN')
   assert.equal(orderPosts,1)
  }finally{globalThis.fetch=orig}
