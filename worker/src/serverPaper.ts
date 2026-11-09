@@ -11,7 +11,7 @@ import type { PaperLedger } from '../../src/paperLedger';
 type Db = any;
 type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
-type Post = (path: string, data: unknown) => Promise<any>;
+export type PaperPost = (path: string, data: unknown, signal?: AbortSignal) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[] };
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error FROM server_paper_state WHERE id=1').first<StateRow>();
@@ -93,7 +93,7 @@ export async function serverPaperApi(db: Db | undefined, action: string, expecte
     return ok({ success:false,message:'D1 서버 가상매매 오류: '+(error instanceof Error ? error.message.slice(0,180) : '알 수 없는 오류') },503);
   }
 }
-export async function serverPaperTick(db: Db | undefined, post: Post, date = new Date()): Promise<TickOutcome> {
+export async function serverPaperTick(db: Db | undefined, post: PaperPost, date = new Date()): Promise<TickOutcome> {
   if (!db) return {result:'error',message:'D1 데이터베이스 연결 없음',filled:0,scanned:0};
   if (!marketOpen(date)) return {result:'market_closed',message:'정규장 외 · 매매 검사 없음',filled:0,scanned:0};
   const row = await state(db);
@@ -141,17 +141,23 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
+      const scan = new AbortController();
+      const chunks = Array.from({length:Math.ceil(symbols.length/10)},(_,i)=>symbols.slice(i*10,i*10+10));
       const [flow,disclosures,news] = await Promise.all([
-        Promise.all(Array.from({length:Math.ceil(symbols.length/10)},(_,i)=>symbols.slice(i*10,i*10+10))
-          .map(chunk=>post('/api/market/investor-flow',{stocks:chunk}))),
+        Promise.all(chunks.map(async stocks => {
+          try {
+            const batch = await post('/api/market/investor-flow',{stocks},scan.signal);
+            if (!batch.success || !Array.isArray(batch.results)) throw Error('KB 정밀 시세 조회 실패');
+            return batch.results;
+          } catch (error) {
+            scan.abort();
+            throw error;
+          }
+        })),
         post('/api/market/disclosures',{complete:true}),
         post('/api/market/research',{skip_ai:true}),
       ]);
-      const quotes:any[] = [];
-      for (const f of flow) {
-        if (!f.success || !Array.isArray(f.results)) throw Error('KB 정밀 시세 조회 실패');
-        quotes.push(...f.results);
-      }
+      const quotes = flow.flat();
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {

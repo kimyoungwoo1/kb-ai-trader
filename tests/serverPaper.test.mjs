@@ -122,3 +122,28 @@ test('duplicate scheduled minute does not reserve or trade twice',async()=>{
   assert.equal(calls,1)
   assert.match(db.server.last_error,/provider unavailable/)
 })
+
+test('a failed market batch aborts sibling batches without applying partial scan results', async () => {
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const candidates=Array.from({length:25},(_,i)=>({code:String(100000+i),name:'Stock '+i}))
+  const sizes=[]
+  let aborted=0
+  const post=async(path,body,signal)=>{
+    if(path==='/api/market/discover')return {success:true,candidates}
+    if(path!=='/api/market/investor-flow')return {success:true}
+    sizes.push(body.stocks.length)
+    if(sizes.length===1)throw Error('KB 시장 조회 중단 (HTTP 522)')
+    return new Promise((resolve,reject)=>{
+      signal.addEventListener('abort',()=>{aborted++;reject(Error('sibling canceled'))},{once:true})
+    })
+  }
+  const outcome=await serverPaperTick(db,post,new Date('2026-11-06T01:20:00Z'))
+  assert.deepEqual(sizes,[10,10,5])
+  assert.equal(aborted,2)
+  assert.equal(outcome.result,'error')
+  assert.equal(outcome.filled,0)
+  assert.match(db.server.last_error,/HTTP 522/)
+  assert.equal(JSON.parse(db.server.snapshot_json).account.fills.length,0)
+})

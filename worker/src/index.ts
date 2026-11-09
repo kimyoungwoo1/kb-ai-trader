@@ -698,6 +698,14 @@ const service = {
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
+      const stopScan = (status?: number) => json({
+        success: false, stage: "market_scan_upstream",
+        ...(status ? { upstream_status: status } : {}),
+        message: status ? "KB 시장 조회 중단 (HTTP " + status + ")" : "KB 시장 조회 연결 중단 또는 시간 초과",
+      }, status === 429 ? 429 : 503);
+      const stopStatuses = new Set([429, 502, 503, 504, 522, 524]);
+      const transportFailure = (error: unknown) => request.signal.aborted ||
+        error instanceof TypeError || (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name));
       const results = [];
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
@@ -706,17 +714,23 @@ const service = {
         let quoteError = "";
         let investorError = "";
         try {
+          request.signal.throwIfAborted();
           const response = await fetch(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]),
           });
+          if (stopStatuses.has(response.status)) {
+            await response.body?.cancel().catch(() => {});
+            return stopScan(response.status);
+          }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
           else quoteError = getKbErrorMessage(data);
-        } catch (error) { quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
+        } catch (error) { if (transportFailure(error)) return stopScan(); quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
 
         try {
+          request.signal.throwIfAborted();
           const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
           const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
           const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
@@ -724,12 +738,16 @@ const service = {
           const response = await fetch(`${baseUrl}/api/v1/ivu10430`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]),
           });
+          if (stopStatuses.has(response.status)) {
+            await response.body?.cancel().catch(() => {});
+            return stopScan(response.status);
+          }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
           else investorError = getKbErrorMessage(data);
-        } catch (error) { investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
+        } catch (error) { if (transportFailure(error)) return stopScan(); investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
 
         const toNumber = (value: unknown): number | null => {
           if (value == null || String(value).trim() === "") return null;
@@ -1218,11 +1236,11 @@ const service = {
     return env.ASSETS.fetch(request);
   },
   async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
-    const post = async (path: string, body: unknown): Promise<any> => {
+    const post = async (path: string, body: unknown, signal?: AbortSignal): Promise<any> => {
       if (!env.DASHBOARD_API_KEY) throw Error('서버 API 인증 설정 없음');
       const response = await service.fetch(new Request('https://localhost'+path,{
         method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
-        body:JSON.stringify(body),
+        body:JSON.stringify(body),signal,
       }),env);
       const result = await response.json() as any;
       if (!response.ok || result?.success !== true) throw Error(String(result?.message||'내부 KB 조회 실패').slice(0,180));

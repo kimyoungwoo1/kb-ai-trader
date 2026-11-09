@@ -95,3 +95,34 @@ test('authentication is required, and invalid/too many codes are rejected before
     assert.equal(count, 0)
   } finally { globalThis.fetch = oldFetch }
 })
+
+test('market scan stops before further KB reads on gateway, rate limit or transport failures', async () => {
+  const oldFetch = globalThis.fetch
+  const env = mkEnv('scan-failure')
+  for (const failure of [522, 429, 'TimeoutError']) {
+    for (const failOn of ['/ivu10140', '/ivu10430']) {
+      const calls = []
+      globalThis.fetch = async (url) => {
+        if (String(url).endsWith('/oauth2/token'))
+          return Response.json({ dataBody: { access_token: 'mock', expires_in: 3600 } })
+        const path = new URL(url).pathname
+        calls.push(path)
+        if (path.endsWith(failOn)) {
+          if (typeof failure === 'string') throw new DOMException('mock timeout', failure)
+          return new Response('gateway unavailable', { status: failure })
+        }
+        return Response.json({ dataBody: { now_prc: '1000' } })
+      }
+      try {
+        const response = await worker.fetch(new Request(new URL('/api/market/investor-flow', base), {
+          method: 'POST', headers: { Authorization: 'Bearer ' + env.DASHBOARD_API_KEY },
+          body: JSON.stringify({ stocks }),
+        }), env)
+        assert.equal(response.status, failure === 429 ? 429 : 503)
+        assert.equal((await response.json()).stage, 'market_scan_upstream')
+        assert.deepEqual(calls, failOn === '/ivu10140'
+          ? ['/api/v1/ivu10140'] : ['/api/v1/ivu10140', '/api/v1/ivu10430'])
+      } finally { globalThis.fetch = oldFetch }
+    }
+  }
+})

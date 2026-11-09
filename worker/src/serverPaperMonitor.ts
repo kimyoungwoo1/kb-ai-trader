@@ -2,10 +2,9 @@
  * Server Cron observability; independent from the paper trading ledger.
  * Failures in monitoring do not alter simulation state or trigger orders.
  */
-import { serverPaperTick, type TickOutcome } from './serverPaper'
+import { serverPaperTick, type TickOutcome, type PaperPost } from './serverPaper'
 
 type Db = any
-type Post = (path: string, data: unknown) => Promise<any>
 type MonitorRow = { slot: number; started_at: string; finished_at: string; result: string; message: string; scanned: number; filled: number }
 const iso = (d: Date) => d.toISOString()
 const known = new Set(['market_closed','stopped','duplicate','busy','scanned','watched','no_symbols','error'])
@@ -31,7 +30,7 @@ export async function readServerCronMonitor(db: Db): Promise<{
   return {last_tick:recent[0] || null,recent,last_success:lastGood || null,
     today: {total:Number(daily?.total)||0,completed:Number(daily?.completed)||0,errors:Number(daily?.errors)||0,skipped:Number(daily?.skipped)||0}}
 }
-export async function runMonitoredPaperCron(db: Db | undefined, post: Post, date = new Date()): Promise<TickOutcome> {
+export async function runMonitoredPaperCron(db: Db | undefined, post: PaperPost, date = new Date()): Promise<TickOutcome> {
   const slot = Math.floor(date.getTime()/60_000)
   const started = iso(date)
   let outcome: TickOutcome
