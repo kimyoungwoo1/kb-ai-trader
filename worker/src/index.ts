@@ -168,7 +168,7 @@ const service = {
           knownRevision = Number(body.revision);
       } catch { return json({ success:false, message:"요청 JSON 오류" },400); }
       const response = await serverPaperApi(env.PAPER_DB,action,signature,knownRevision);
-      if (action === 'status' && response.ok && env.PAPER_DB) {
+      if ((action === 'status' || action === 'heartbeat') && response.ok && env.PAPER_DB) {
         // Do not parse/stringify the full D1 journal twice on every poll.
         const raw = await response.text();
         let monitor:unknown = null, available = false;
