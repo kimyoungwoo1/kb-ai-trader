@@ -23,7 +23,7 @@ export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
   cron_monitor_available?: boolean; cron?: ServerCronMonitor;
-  unchanged?: boolean;
+  unchanged?: boolean; heartbeat?: boolean;
   snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot }
 }
 export function isServerPaperMode() { return active }
@@ -54,11 +54,17 @@ export async function serverPaperAction(token: string, action: string): Promise<
   })
   const received = await res.json() as ServerPaperStatus
   if (!res.ok || !received.success) throw Error(received.message || '서버 가상매매 요청 실패')
-  // Reuse the already parsed snapshot only when the server verifies an exact
-  // revision match; never trust a missing snapshot for a changed revision.
+  // Metadata heartbeats never advance the local snapshot revision: doing so
+  // would incorrectly mark an older cached journal as current on next sync.
+  if (action === 'heartbeat' && (!latest?.migrated || !latest.snapshot))
+    throw Error('서버 원장 최초 동기화 필요')
   if (received.unchanged && (!latest?.snapshot || received.revision !== latest.revision))
     throw Error('서버 원장 버전 불일치 · 전체 조회 후 다시 확인 필요')
-  const data = received.unchanged ? { ...latest!, ...received, snapshot:latest!.snapshot } : received
+  const data = action === 'heartbeat'
+    ? { ...latest!, ...received, revision:latest!.revision, snapshot:latest!.snapshot }
+    : received.unchanged
+      ? { ...latest!, ...received, snapshot:latest!.snapshot }
+      : received
   latest = data
   lastConnectionError = ''
   if (data.migrated && data.snapshot) {
