@@ -7,12 +7,56 @@ export type KbCredentials = {
   KB_APP_KEY?: string
   KB_APP_SECRET?: string
   KB_BASE_URL?: string
+  PAPER_DB?: any // optional shared encrypted OAuth token cache
 }
 
 type CachedToken = { token: string; key: string; expiresAt: number }
 let cached: CachedToken | null = null
 let inflight: Promise<string> | null = null
 let inflightKey = ''
+let rejectedToken: string | null = null
+
+// A fresh Cloudflare isolate used to contact KB OAuth for every first request.
+// Store only AES-GCM encrypted access tokens in the existing server-side D1.
+// Encryption uses the KB app secret already held by Workers; D1 alone cannot
+// decrypt or expose the token. A failed/unavailable D1 never disables OAuth.
+const bytesToB64=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes))
+const b64ToBytes=(value:string)=>Uint8Array.from(atob(value),char=>char.charCodeAt(0))
+async function sharedCrypto(env:KbCredentials){
+ const material=new TextEncoder().encode('kb-ai-trader:oauth:v1\n'+env.KB_APP_KEY+'\n'+env.KB_APP_SECRET+'\n'+kbBaseUrl(env))
+ const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',material))
+ const aes=await crypto.subtle.importKey('raw',digest,'AES-GCM',false,['encrypt','decrypt'])
+ return {aes,fingerprint:bytesToB64(digest)}
+}
+async function loadSharedToken(env:KbCredentials,key:string):Promise<string|null>{
+ if(!env.PAPER_DB)return null
+ try{
+  const row=await env.PAPER_DB.prepare('SELECT key_fingerprint,nonce_b64,token_b64,expires_at FROM kb_oauth_token_cache WHERE id=1').first()
+  if(!row||typeof row.expires_at!=='number'||row.expires_at<=Date.now()+30_000||
+     typeof row.key_fingerprint!=='string'||typeof row.nonce_b64!=='string'||typeof row.token_b64!=='string')return null
+  const {aes,fingerprint}=await sharedCrypto(env)
+  if(row.key_fingerprint!==fingerprint)return null
+  const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64ToBytes(row.nonce_b64)},aes,b64ToBytes(row.token_b64))
+  const token=new TextDecoder().decode(plain)
+  if(!token||token===rejectedToken)return null
+  cached={key,token,expiresAt:row.expires_at}
+  return token
+ }catch{return null}
+}
+async function saveSharedToken(env:KbCredentials,token:string,expiresAt:number):Promise<void>{
+ if(!env.PAPER_DB)return
+ try{
+  const {aes,fingerprint}=await sharedCrypto(env)
+  const nonce=crypto.getRandomValues(new Uint8Array(12))
+  const payload=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce},aes,new TextEncoder().encode(token)))
+  await env.PAPER_DB.prepare(`INSERT INTO kb_oauth_token_cache(id,key_fingerprint,nonce_b64,token_b64,expires_at)
+    VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    key_fingerprint=excluded.key_fingerprint,nonce_b64=excluded.nonce_b64,
+    token_b64=excluded.token_b64,expires_at=excluded.expires_at`)
+    .bind(fingerprint,bytesToB64(nonce),bytesToB64(payload),expiresAt).run()
+ }catch{/* Never fail a successful KB authentication due to D1. */}
+}
+
 
 export class KbAuthError extends Error {
   constructor(message: string, readonly httpStatus: number, readonly rateLimited = false) {
@@ -25,6 +69,7 @@ export const kbBaseUrl = (env: KbCredentials): string =>
   (env.KB_BASE_URL || 'https://developer.kbsec.com:32484').replace(/\/$/, '')
 
 export function clearKbAccessToken(): void {
+  rejectedToken = cached?.token ?? rejectedToken
   cached = null
 }
 
@@ -34,6 +79,8 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
   if (cached?.key === key && Date.now() < cached.expiresAt) return cached.token
   if (inflight?.then && inflightKey === key) return inflight
   const load = async (): Promise<string> => {
+    const shared=await loadSharedToken(env,key)
+    if(shared)return shared
     let response: Response | undefined
     // Retry only transient transport failures, never KB-issued HTTP errors or
     // a rejected token. All concurrent requests share this one in-flight promise.
@@ -68,7 +115,10 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
     const reported = Number(data?.dataBody?.expires_in ?? data?.expires_in)
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
     const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 8 * 60 * 60) : 300
-    cached = { token, key, expiresAt: Date.now() + Math.max(1, lifetime - 60) * 1000 }
+    const expiresAt=Date.now() + Math.max(1, lifetime - 60) * 1000
+    cached = { token, key, expiresAt }
+    rejectedToken=null
+    await saveSharedToken(env,token,expiresAt)
     return token
   }
   const promise = load()
