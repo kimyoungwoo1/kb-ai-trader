@@ -268,7 +268,7 @@ async function main(){
   if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
   if(livePilot10000)ensure(!!liveD1&&!!paperDbId,
     '1만원 실주문 시험은 운영 D1 주문 원장 바인딩이 필수입니다. 배포 중단')
-  if(paperDbId&&!tlsProofOnly){
+  if(paperDbId&&!tlsProofOnly&&!holdingsProofOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
     await api(root+'/d1/database/'+paperDbId)
@@ -299,8 +299,8 @@ async function main(){
       ensure(results.every(x=>x?.success!==false),'D1 초기 테이블 SQL 실행 실패')
     }
     console.log('✓ D1 가상매매 백업 데이터베이스 및 테이블 검증 완료')
-  }else if(tlsProofOnly){
-    console.log('✓ 격리 TLS 검증 모드: D1 SQL 조회·쓰기 및 마이그레이션 생략')
+  }else if(tlsProofOnly||holdingsProofOnly){
+    console.log('✓ 격리 진단 모드: 배포 스크립트의 D1 스키마 변경 생략')
   }else{
     console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
   }
