@@ -6,6 +6,7 @@ import { liveTrialApi, observePaperFill } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
+import {readKbAccountJson} from './kbAccountRead'
 
 export interface Env {
   KB_APP_KEY?: string;
@@ -307,49 +308,15 @@ const service = {
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
-      let holdingsResponse: Response;
-      try {
-        holdingsResponse = await fetch(`${baseUrl}/api/v1/ssqm1801`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: { mkt_tm_ccd: "1", nxt_key: "", inq_clsf: "0", is_no: "" },
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-      } catch (error) {
-        return json({
-          success: false,
-          stage: "holdings_network",
-          message: error instanceof Error ? error.message.slice(0, 250) : "보유주식 API 연결 실패",
-        }, 502);
+      const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}});
+      if(!checked.success){
+        return json({success:false,stage:"holdings_response",http_status:checked.status,
+          error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
+          message:"KB 보유주식 응답 오류 · "+checked.issue+
+            (checked.status?" (KB HTTP "+checked.status+")":"")},502);
       }
-
-      let holdingsResult: unknown;
-      try {
-        holdingsResult = await holdingsResponse.json();
-      } catch {
-        return json({
-          success: false,
-          stage: "holdings_response",
-          http_status: holdingsResponse.status,
-          message: "KB 보유주식 응답이 JSON이 아닙니다.",
-        }, 502);
-      }
-
-      if (!holdingsResponse.ok) {
-        return json({
-          success: false,
-          stage: "holdings",
-          http_status: holdingsResponse.status,
-          message: getKbErrorMessage(holdingsResult),
-        }, 502);
-      }
-
+      const holdingsResult=checked.data;
       return json({
         success: true,
         api: "SSQM1801",
@@ -369,26 +336,15 @@ const service = {
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
-      let depositResponse: Response;
-      try {
-        depositResponse = await fetch(`${baseUrl}/api/v1/ssqm0004`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: {},
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-      } catch (error) {
-        return json({ success: false, stage: "deposit_network", message: error instanceof Error ? error.message.slice(0, 250) : "예수금 API 연결 실패" }, 502);
+      const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}});
+      if(!checked.success){
+        return json({success:false,stage:"deposit_response",http_status:checked.status,
+          error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
+          message:"KB 예수금 응답 오류 · "+checked.issue+
+            (checked.status?" (KB HTTP "+checked.status+")":"")},502);
       }
-      let depositResult: unknown;
-      try { depositResult = await depositResponse.json(); }
-      catch { return json({ success: false, stage: "deposit_response", http_status: depositResponse.status, message: "KB 예수금 응답이 JSON이 아닙니다." }, 502); }
-      if (!depositResponse.ok) {
-        return json({ success: false, stage: "deposit", http_status: depositResponse.status, message: getKbErrorMessage(depositResult), data: depositResult }, 502);
-      }
+      const depositResult=checked.data;
       return json({ success: true, api: "SSQM0004", message: "예수금내역 조회 요청이 성공했습니다.", data: depositResult, checked_at: new Date().toISOString() });
     }
 
@@ -400,26 +356,15 @@ const service = {
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
-      let valuationResponse: Response;
-      try {
-        valuationResponse = await fetch(`${baseUrl}/api/v1/ssqm2952`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
-            dataBody: { excg_mktpr_ccd: "A" },
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-      } catch (error) {
-        return json({ success: false, stage: "valuation_network", message: error instanceof Error ? error.message.slice(0, 250) : "계좌자산평가 API 연결 실패" }, 502);
+      const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}});
+      if(!checked.success){
+        return json({success:false,stage:"valuation_response",http_status:checked.status,
+          error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
+          message:"KB 계좌자산평가 응답 오류 · "+checked.issue+
+            (checked.status?" (KB HTTP "+checked.status+")":"")},502);
       }
-      let valuationResult: unknown;
-      try { valuationResult = await valuationResponse.json(); }
-      catch { return json({ success: false, stage: "valuation_response", http_status: valuationResponse.status, message: "KB 계좌자산평가 응답이 JSON이 아닙니다." }, 502); }
-      if (!valuationResponse.ok) {
-        return json({ success: false, stage: "valuation", http_status: valuationResponse.status, message: getKbErrorMessage(valuationResult), data: valuationResult }, 502);
-      }
+      const valuationResult=checked.data;
       return json({ success: true, api: "SSQM2952", message: "계좌자산평가 조회 요청이 성공했습니다.", data: valuationResult, checked_at: new Date().toISOString() });
     }
 
