@@ -4,6 +4,7 @@ import { validateLiveBuyInput } from './liveBuyValidation'
 
 type Status = { enabled: boolean; armed?: boolean; hardEnabled: boolean; orders?: LiveOrder[] }
 type Stock = { code: string; name: string; market?: string }
+type StockQuote = { code: string; price: number; checkedAt: string } | { code: string; error: string }
 type Preview = { permitted: boolean; reasons: string[]; requiredCash: number }
 const results: Record<string, string> = {
   accepted_not_filled: 'KB 주문 접수 · 체결은 주문 기록에서 확인하세요.',
@@ -29,6 +30,8 @@ export default function ManualLimitOrder({ token }: { token: string }) {
   const [stock, setStock] = useState<Stock | null>(null)
   const [searchResult, setSearchResult] = useState<{ term: string; stocks: Stock[] } | null>(null)
   const [searchMessage, setSearchMessage] = useState('')
+  const [quote, setQuote] = useState<StockQuote | null>(null)
+  const [quoteRequest, setQuoteRequest] = useState(0)
   const [quantity, setQuantity] = useState('1')
   const [price, setPrice] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -83,6 +86,35 @@ export default function ManualLimitOrder({ token }: { token: string }) {
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [query, stock, token])
 
+  useEffect(() => {
+    if (!stock) return
+    const controller = new AbortController()
+    const { code, name } = stock
+    void (async () => {
+      try {
+        const response = await fetch('/api/kb/quotes', {
+          method: 'POST', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ stocks: [{ code, name }] }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(48_000)]),
+        })
+        const data = await response.json()
+        if (controller.signal.aborted) return
+        const item = Array.isArray(data.results) ? data.results.find((row: {code?: string}) => row?.code === code) : null
+        if (!response.ok || data.success !== true || item?.error || !Number.isFinite(item?.price) ||
+            item.price <= 0 || !Number.isFinite(Date.parse(item.checked_at))) {
+          setQuote({ code, error: data.rate_limited ? 'KB 현재가 호출 제한 · 잠시 후 다시 조회해 주세요.' :
+            'KB 현재가를 확인할 수 없습니다. 다시 조회해 주세요.' })
+          return
+        }
+        setQuote({ code, price: item.price, checkedAt: item.checked_at })
+      } catch {
+        if (!controller.signal.aborted) setQuote({ code, error: 'KB 현재가 조회에 실패했습니다.' })
+      }
+    })()
+    return () => controller.abort()
+  }, [stock, token, quoteRequest])
+
   const autoArmed = status?.armed ?? status?.enabled
   const allowed = !statusError && status?.hardEnabled && !autoArmed
   const fields = { code: stock?.code ?? '', quantity: Number(quantity), limitPrice: Number(price) }
@@ -94,6 +126,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
   function changeSearch(value: string) {
     edit(setQuery, value)
     setStock(null)
+    setQuote(null)
     setSearchResult(null)
     setSearchMessage('')
     setPrice('')
@@ -101,6 +134,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
   function selectStock(item: Stock) {
     edit(setQuery, item.name)
     setStock(item)
+    setQuote(null)
     setSearchResult(null)
     setSearchMessage('')
   }
@@ -139,6 +173,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
   }
 
   const matches = !stock && searchResult?.term === query.trim() ? searchResult.stocks : []
+  const selectedQuote = stock && quote?.code === stock.code ? quote : null
   const orders = status?.orders?.filter(order => order.id.startsWith('manual-buy-')) ?? []
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">MANUAL LIMIT ORDER</div><h1>지정가 주문</h1>
@@ -160,6 +195,16 @@ export default function ManualLimitOrder({ token }: { token: string }) {
             <b>{item.name}</b><span>{item.code}{item.market ? ' · ' + item.market : ''}</span>
           </button>)}</div>}
       </div>
+      {stock && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <p role="status" className="notification-hint">
+          {!selectedQuote ? 'KB 현재가 조회 중…' : 'error' in selectedQuote ? selectedQuote.error : <>
+            KB 현재가 <strong>{selectedQuote.price.toLocaleString('ko-KR')}원</strong>
+            {' · 조회 '}{new Date(selectedQuote.checkedAt).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul' })} KST
+          </>}
+        </p>
+        <button className="outline-button" type="button" disabled={!selectedQuote || busy}
+          onClick={() => { setQuote(null); setQuoteRequest(value => value + 1) }}>현재가 새로고침</button>
+      </div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <label>수량 <input className="live-trial-field" inputMode="numeric" value={quantity} disabled={busy} onChange={e => edit(setQuantity, e.target.value)} /></label>
         <label>지정가(원) <input className="live-trial-field" inputMode="numeric" value={price} disabled={busy} onChange={e => edit(setPrice, e.target.value)} /></label>
