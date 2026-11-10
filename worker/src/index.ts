@@ -348,7 +348,7 @@ const service = {
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch);
       if(!checked.success){
         return json({success:false,stage:"deposit_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -368,7 +368,7 @@ const service = {
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch);
       if(!checked.success){
         return json({success:false,stage:"valuation_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,

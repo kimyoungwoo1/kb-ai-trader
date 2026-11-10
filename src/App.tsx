@@ -128,8 +128,7 @@ export default function App() {
     const failures: string[] = []
     let sessionExpired = false
     let batchFailure = ''
-    // One shared account refresh for every menu. The Worker serializes
-    // the three read-only KB endpoints and stops after upstream failure.
+    // One shared refresh for every menu. The Worker returns each KB read independently.
     // No live-order execution uses these browser values.
     const accountBatch = fetch(API + '/api/kb/account-batch', {
       method: 'POST',
