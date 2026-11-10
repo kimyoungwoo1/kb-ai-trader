@@ -17,6 +17,7 @@ if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--li
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot10000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인')
   throw Error('1만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
+const livePilotFlag = 'ALLOW_REAL_10000_TRIAL_2026'
 const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
@@ -265,8 +266,14 @@ async function main(){
     }
   }
   if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
-  if(livePilot10000)ensure(!!liveD1&&!!paperDbId,
-    '1만원 실주문 시험은 운영 D1 주문 원장 바인딩이 필수입니다. 배포 중단')
+  const activePilotBinding=oldBindings.get('LIVE_TRADING_HARD_ENABLE')
+  const activePaperDbId=liveD1?.database_id||liveD1?.id
+  if(livePilot10000)ensure(!!activePaperDbId&&paperDbId===activePaperDbId,
+    '1만원 실주문 시험은 현재 운영과 같은 D1 주문 원장을 사용해야 합니다. 배포 중단')
+  const preserveLiveApproval=livePilot10000&&
+    activePilotBinding?.type==='plain_text'&&activePilotBinding.text===livePilotFlag
+  if(livePilot10000&&activePilotBinding)
+    ensure(preserveLiveApproval,'현재 운영 실주문 플래그 값을 확인할 수 없어 승인 상태 보존 배포를 중단합니다.')
   if(paperDbId&&!tlsProofOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
@@ -359,7 +366,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · WEB ARM STILL REQUIRED':'paper watch + D1 backup + current live secrets + push notifications')},
+      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · EXISTING DAILY APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
@@ -368,7 +375,7 @@ async function main(){
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
-        ...(livePilot10000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:'ALLOW_REAL_10000_TRIAL_2026'}]:[]),
+        ...(livePilot10000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
@@ -459,17 +466,18 @@ async function main(){
   const currentVersion=latestSorted[0]?.versions?.find(v=>v.percentage===100)?.version_id
   ensure(currentVersion===rollbackVersion,
     '배포 중 다른 운영 버전이 반영됐습니다. 최신 버전과 Secret 상속을 다시 확인하기 위해 안전 중단합니다.')
-    if(livePilot10000){
-      // Reset the daily live gate only after build and broker checks pass,
-      // never during early test stages. User must still approve in the UI.
-      const reset=await api(root+'/d1/database/'+paperDbId+'/query',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({sql:"INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) VALUES(1,0,NULL,datetime('now')) ON CONFLICT(id) DO UPDATE SET enabled=0,trading_day=NULL,updated_at=excluded.updated_at"})
-      })
-      ensure((Array.isArray(reset)?reset:[reset]).every(x=>x?.success!==false),
-        '실주문 D1 게이트 초기 잠금 실패 · 배포 중단')
-      console.log('✓ 1만원 시험배포 초기 실주문 게이트 OFF · 웹 승인 전 주문 불가')
-    }
+  if(preserveLiveApproval){
+    console.log('✓ 동일 운영 D1의 당일 실주문 승인 상태 보존 · 게이트 변경 없음')
+  }else if(livePilot10000){
+    // First opt-in must not revive an approval left by a previously disabled version.
+    const reset=await api(root+'/d1/database/'+paperDbId+'/query',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sql:"INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) VALUES(1,0,NULL,datetime('now')) ON CONFLICT(id) DO UPDATE SET enabled=0,trading_day=NULL,updated_at=excluded.updated_at"})
+    })
+    ensure((Array.isArray(reset)?reset:[reset]).every(x=>x?.success!==false),
+      '실주문 D1 게이트 초기 잠금 실패 · 배포 중단')
+    console.log('✓ 1만원 시험배포 초기 실주문 게이트 OFF · 웹 승인 전 주문 불가')
+  }
   // A failed/ambiguous deployment API response might already have changed
   // traffic. Mark the attempt before sending it and reconcile via Wrangler.
   switched=true
