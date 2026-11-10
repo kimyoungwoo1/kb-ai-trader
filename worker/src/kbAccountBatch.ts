@@ -60,7 +60,10 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
     }
     // The gateway is already unreachable; avoid immediately opening two more
     // connections. No broker order is submitted from this code path.
-    blocked=originUnreachable(results[name])
+    const failed=results[name]
+    // Valuation can supply the dashboard totals and positions if holdings hits 522.
+    // Probe it once before allowing any further reads, without bypassing auth failures.
+    blocked=originUnreachable(failed)&&!(name==='holdings'&&failed.http_status===522)
    }
   }finally{clearTimeout(timer)}
   const result:AccountBatchResult={success:true,results,checked_at:new Date().toISOString()}

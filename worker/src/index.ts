@@ -72,6 +72,7 @@ function readXmlLink(xml: string): string {
   return (href || (match ? decodeXml(match[2].replace(/<[^>]+>/g, "")) : "")).trim();
 }
 
+const accountBatchRequests = new WeakSet<Request>();
 const service = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -161,13 +162,16 @@ const service = {
         return json({ success: false, message: "로그인이 필요합니다." }, 401);
       }
     }
+    const fromAccountBatch = accountBatchRequests.has(request);
     // One authenticated request returns the completed account views within the UI deadline.
     if (url.pathname === "/api/kb/account-batch" && request.method === "POST") {
       const key=String(env.KB_APP_KEY||'')+'|'+String(env.KB_BASE_URL||'')
       const result=await runAccountBatch(key,async (route,signal)=>{
-        const response=await service.fetch(new Request("https://localhost"+route,{
+        const subrequest=new Request("https://localhost"+route,{
           method:"POST",headers:{Authorization:"Bearer "+env.DASHBOARD_API_KEY},signal
-        }),env)
+        });
+        accountBatchRequests.add(subrequest);
+        const response=await service.fetch(subrequest,env)
         const body=await response.json() as Record<string,unknown>
         return {...body,status:response.status,success:body.success===true}
       })
@@ -315,7 +319,7 @@ const service = {
       catch (error) { return json({ success: false, stage: "authentication",
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch);
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,

@@ -33,19 +33,19 @@ test('repeated concurrent refreshes share one batch of 3 upstream reads',async()
  assert.equal(typeof cached.cache_age_ms,'number')
 })
 
-test('a 522 blocks the remaining read-only account calls and short-term refresh storms',async()=>{
+test('two successive 522s stop further account reads and short-term refresh storms',async()=>{
  let calls=0
  const request=()=>runAccountBatch('522-gate-test',async()=>{
   calls++
   return {success:false,status:502,http_status:522,error_type:'NON_JSON'}
  })
  const first=await request()
- assert.equal(calls,1)
+ assert.equal(calls,2)
  assert.equal(first.results.holdings.http_status,522)
- assert.equal(first.results.valuation.stage,'account_upstream_cooldown')
+ assert.equal(first.results.valuation.http_status,522)
  assert.equal(first.results.deposit.stage,'account_upstream_cooldown')
  const again=await request()
- assert.equal(calls,1)
+ assert.equal(calls,2)
  assert.equal(again.results.holdings.http_status,522)
 })
 
@@ -77,4 +77,18 @@ test('batch deadline returns completed data, aborts the slow route and never sta
  assert.equal(result.results.valuation.error_type,'TIMEOUT')
  assert.equal(result.results.deposit.stage,'account_batch_deadline')
  assert.equal(result.results.deposit.error_type,undefined)
+})
+
+test('valuation and cash can recover after a holdings 522',async()=>{
+ const calls=[]
+ const batch=await runAccountBatch('valuation-fallback-522',async route=>{
+  calls.push(route)
+  return route.endsWith('/holdings')
+   ? {success:false,status:502,http_status:522}
+   : {success:true,status:200}
+ })
+ assert.equal(batch.results.holdings.http_status,522)
+ assert.equal(batch.results.valuation.success,true)
+ assert.equal(batch.results.deposit.success,true)
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
 })
