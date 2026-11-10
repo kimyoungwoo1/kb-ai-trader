@@ -14,8 +14,6 @@ export interface Env {
   KB_APP_KEY?: string;
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
-  KB_ACCOUNT_RELAY_ORIGIN?: string;
-  KB_ACCOUNT_RELAY_TOKEN?: string;
   DASHBOARD_API_KEY?: string;
   GEMINI_API_KEY?: string;
   DART_API_KEY?: string;
@@ -309,38 +307,6 @@ const service = {
         expires_in: tokenData.expires_in ?? null,
         checked_at: new Date().toISOString(),
       });
-    }
-
-    // This opt-in path serves the account display and its deployment probe only.
-    const relayAccount = /^\/api\/kb\/(holdings|valuation|deposit)$/.exec(url.pathname);
-    if (relayAccount && request.method === "POST" && (env.KB_ACCOUNT_RELAY_ORIGIN || env.KB_ACCOUNT_RELAY_TOKEN)) {
-      const kind = relayAccount[1];
-      const origin = env.KB_ACCOUNT_RELAY_ORIGIN || '';
-      const secret = env.KB_ACCOUNT_RELAY_TOKEN || '';
-      if (!/^https:\/\/[a-z0-9.-]+$/i.test(origin) || secret.length < 32)
-        return json({success:false,stage:"relay_configuration",message:"계좌 중계 설정이 올바르지 않습니다."},503);
-      try {
-        const relay = await fetch(origin + '/account/' + kind, {
-          method:"POST", headers:{Authorization:"Bearer " + secret},
-          signal:AbortSignal.any([request.signal,AbortSignal.timeout(25_000)]),
-          redirect:"error",cache:"no-store"
-        });
-        const result = await relay.json() as {success?:boolean;stage?:string;kb_status?:number;data?:{dataBody?:unknown}};
-        if (relay.ok && result.success===true && result.data?.dataBody && typeof result.data.dataBody==='object') {
-          const api = {holdings:"SSQM1801",valuation:"SSQM2952",deposit:"SSQM0004"}[kind];
-          return new Response(JSON.stringify({success:true,api,data:result.data,checked_at:new Date().toISOString()}),
-            {headers:{...corsHeaders,"Content-Type":"application/json","Cache-Control":"no-store"}});
-        }
-        const http_status = Number.isInteger(result.kb_status) ? result.kb_status : undefined;
-        const stage = ['relay_oauth','relay_kb_response','relay_kb_business','relay_kb_format','relay_timeout','relay_connection','relay_configuration']
-          .includes(result.stage || '') ? result.stage : 'account_relay_response';
-        return json({success:false,stage,http_status,message:'Windows 계좌 중계 조회 실패'+
-          (http_status?' (KB HTTP '+http_status+')':'')},relay.status===504?504:502);
-      } catch(error) {
-        const timedOut=error instanceof Error && error.name==='TimeoutError';
-        return json({success:false,stage:'account_relay_network',error_type:timedOut?'TIMEOUT':'NETWORK',
-          message:timedOut?'Windows 계좌 중계 시간 초과':'Windows 계좌 중계 연결 실패'},timedOut?504:502);
-      }
     }
 
     if (url.pathname === "/api/kb/holdings" && request.method === "POST") {

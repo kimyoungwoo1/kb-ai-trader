@@ -97,28 +97,3 @@ test('deploy probe stops after persistent KB 522 and never claims successful val
   assert.equal(valuation,0)
  }finally{globalThis.fetch=previous}
 })
-
-test('account relay uses only authenticated fixed read paths and validates the deployment probe',async()=>{
- const original=globalThis.fetch
- const relay={...env,KB_ACCOUNT_RELAY_ORIGIN:'https://relay.example.com',KB_ACCOUNT_RELAY_TOKEN:'relay-test-token-0123456789abcdef'}
- const calls=[]
- globalThis.fetch=async(input,init)=>{
-  calls.push(String(input))
-  assert.equal(init.headers.Authorization,'Bearer '+relay.KB_ACCOUNT_RELAY_TOKEN)
-  assert.equal(init.redirect,'error')
-  assert.equal(init.body,undefined)
-  return Response.json({success:true,data:{dataBody:{Record1:[]}}})
- }
- try{
-  const blocked=await worker.fetch(new Request('https://kb-ai-trader.ksmsy1.workers.dev/api/kb/deposit',{method:'POST'}),relay)
-  assert.equal(blocked.status,401)
-  assert.deepEqual(calls,[])
-  const proof=await worker.fetch(request(env.DEPLOY_PROBE_TOKEN),relay)
-  assert.equal(proof.status,200)
-  const report=await proof.json()
-  assert.equal(report.checks.holdings.success,true)
-  assert.equal(report.checks.valuation.success,true)
-  assert.deepEqual(calls,['https://relay.example.com/account/holdings','https://relay.example.com/account/valuation'])
-  assert.doesNotMatch(JSON.stringify(report),/relay-test-token|Record1/)
- }finally{globalThis.fetch=original}
-})

@@ -33,19 +33,19 @@ test('repeated concurrent refreshes share one batch of 3 upstream reads',async()
  assert.equal(typeof cached.cache_age_ms,'number')
 })
 
-test('three 522 results are retained during the refresh cooldown',async()=>{
+test('a sustained 522 gets one extra probe and then the cached failure',async()=>{
  let calls=0
  const request=()=>runAccountBatch('522-gate-test',async()=>{
   calls++
   return {success:false,status:502,http_status:522,error_type:'NON_JSON'}
  })
  const first=await request()
- assert.equal(calls,3)
+ assert.equal(calls,4)
  assert.equal(first.results.holdings.http_status,522)
  assert.equal(first.results.valuation.http_status,522)
  assert.equal(first.results.deposit.http_status,522)
  const again=await request()
- assert.equal(calls,3)
+ assert.equal(calls,4)
  assert.equal(again.results.holdings.http_status,522)
 })
 
@@ -89,5 +89,19 @@ test('valuation and cash can recover after a holdings 522',async()=>{
  assert.equal(batch.results.holdings.http_status,522)
  assert.equal(batch.results.valuation.success,true)
  assert.equal(batch.results.deposit.success,true)
- assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit','/api/kb/holdings'])
+})
+
+
+test('a recovered 522 probe allows retrying other failed reads without repeating successful reads',async()=>{
+ const calls=new Map()
+ const batch=await runAccountBatch('recovered-account-522',async route=>{
+  const count=(calls.get(route)??0)+1
+  calls.set(route,count)
+  return count===1&&!route.endsWith('/deposit')
+   ? {success:false,status:502,http_status:522}
+   : {success:true,status:200}
+ })
+ assert.ok(Object.values(batch.results).every(result=>result.success))
+ assert.deepEqual([...calls.values()],[2,2,1])
 })
