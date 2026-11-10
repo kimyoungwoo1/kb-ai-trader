@@ -108,9 +108,10 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
   for(const key of ['oauth','holdings','valuation','orderInquiry']){
    if(!checks[key])checks[key]={status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'}
   }
+  if(!checks.quote)checks.quote={status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'}
   return {
    mode:'ISOLATED_TLS_READ_ONLY' as const,realOrderSent:false as const,
-   ready:['oauth','holdings','valuation','orderInquiry'].every(x=>checks[x].status==='PASS'),
+   ready:['oauth','quote','holdings','valuation','orderInquiry'].every(x=>checks[x].status==='PASS'),
    checks
   }
  }
@@ -151,6 +152,21 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
    }
   }
   return done()
+ }
+ // Exercise the same quote endpoint and header as automatic monitoring.
+ try{
+  const reply=await kbRead({path:'/api/v1/ivu10140',body:payload({excg_clsf:'1',shrt_cd:'005930'}),
+   token,quoteAppKey:env.KB_APP_KEY,timeoutMs:9000})
+  const data=reply.json as any
+  const resultCode=String(data?.dataHeader?.resultCode??'')
+  const body=data?.dataBody
+  const raw=body?.now_prc??body?.stck_prpr??body?.cur_prc??body?.current_price??body?.price??body?.last_price??body?.prpr
+  const price=Number(String(raw??'').replace(/,/g,''))
+  const valid=reply.status===200&&['','0','0000','200'].includes(resultCode)&&Number.isFinite(price)&&price>0
+  checks.quote={status:valid?'PASS':'BLOCKED',httpStatus:reply.status,
+   detail:valid?'KB_QUOTE_PRICE_VALID':'KB_QUOTE_UNAVAILABLE'}
+ }catch(error){
+  checks.quote={status:'BLOCKED',detail:classify(error)}
  }
  const kstDate=new Date(now.getTime()+9*3600_000)
  kstDate.setUTCHours(12,0,0,0)

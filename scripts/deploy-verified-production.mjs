@@ -427,7 +427,7 @@ async function main(){
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
     const result=await fetch(previewOrigin+'/api/deploy/tls-proof',{
       method:'POST',headers:{'X-Deploy-Probe':probeKey},
-      signal:AbortSignal.timeout(80000)
+      signal:AbortSignal.timeout(95000)
     })
     ensure(result.ok,'격리 TLS 진단 Worker 응답 실패 (HTTP '+result.status+')')
     let summary
@@ -436,7 +436,7 @@ async function main(){
       summary?.realOrderSent===false,'진단 Worker 모드 검증 실패 · 안전 중단')
     const safe=(v)=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,36}$/.test(v)?v:
       typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=999999?String(v):'unavailable'
-    for(const key of ['oauth','holdings','valuation','orderInquiry']){
+    for(const key of ['oauth','quote','holdings','valuation','orderInquiry']){
       const record=summary?.checks?.[key]
       ensure(['PASS','BLOCKED','SKIPPED'].includes(record?.status),
         '진단 응답 상태값 오류: '+key)

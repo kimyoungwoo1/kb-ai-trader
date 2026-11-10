@@ -46,6 +46,7 @@ function brokerSocket(overrides={}){
    calls.push({path,body,header})
    let payload
    if(path==='/oauth2/token')payload=overrides.auth??statuses.auth
+   else if(path==='/api/v1/ivu10140')payload={dataHeader:{resultCode:'0'},dataBody:{now_prc:'22222'}}
    else if(path==='/api/v1/ssqm1801')payload=overrides.holdings??statuses.holdings
    else if(path==='/api/v1/ssqm2952')payload=overrides.valuation??statuses.valuation
    else if(path==='/api/v1/ssqm2341')payload=overrides.order??statuses.order
@@ -71,24 +72,27 @@ test('without credentials, isolated Worker never attempts network or displays se
   assert.equal(result.ready,false)
   assert.equal(result.realOrderSent,false)
   assert.equal(result.checks.oauth.detail,'KB_CREDENTIALS_NOT_BOUND')
-  for(const key of ['holdings','valuation','orderInquiry']){
+  for(const key of ['quote','holdings','valuation','orderInquiry']){
    assert.deepEqual(result.checks[key],{status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'})
   }
   assert.equal(calls,0)
  }finally{globalThis.__kbConnectMock=previous}
 })
-test('isolated test does actual token, holdings, valuation and order query via four socket requests only',async()=>{
+test('isolated test does actual token, quote, holdings, valuation and order queries via five socket requests only',async()=>{
  const mock=brokerSocket()
  try{
   const result=await runKbTlsProof(key,new Date('2026-11-07T10:00:00Z'))
   assert.equal(result.ready,true)
   assert.equal(result.realOrderSent,false)
   assert.deepEqual(mock.calls.map(c=>c.path),[
-   '/oauth2/token','/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm2341'
+   '/oauth2/token','/api/v1/ivu10140','/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm2341'
   ])
-  assert.equal(JSON.parse(mock.calls[3].body).dataBody.ordr_dt,'20261106')
+  assert.equal(JSON.parse(mock.calls[4].body).dataBody.ordr_dt,'20261106')
   assert.equal(result.checks.orderInquiry.status,'PASS')
   assert.equal(result.checks.oauth.status,'PASS')
+  assert.equal(result.checks.quote.status,'PASS')
+  assert.ok(mock.calls[1].header.includes('appKey: unit-test-key'))
+  assert.ok(!JSON.stringify(result).includes('22222'))
   assert.ok(mock.calls[1].header.includes('Authorization: Bearer SUPER_PRIVATE_ACCESS_TOKEN'))
   assert.ok(!JSON.stringify(result).includes('SUPER_PRIVATE_ACCESS_TOKEN'))
   assert.ok(!JSON.stringify(result).includes('unit-test-secret'))
@@ -153,7 +157,7 @@ test('OAuth transport failure always produces three SKIPPED rows and no brokerag
   assert.equal(result.realOrderSent,false)
   assert.equal(result.checks.oauth.status,'BLOCKED')
   assert.equal(result.checks.oauth.detail,'KB_SOCKET_TRANSPORT_CONNECT')
-  for(const child of ['holdings','valuation','orderInquiry']){
+  for(const child of ['quote','holdings','valuation','orderInquiry']){
    assert.deepEqual(result.checks[child],{status:'SKIPPED',detail:'KB_OAUTH_NOT_READY'})
   }
   assert.equal(calls,2,'OAuth socket and safe network-only GET are the only attempts')
@@ -199,6 +203,7 @@ test('private Cloudflare Service Binding handles OAuth and read-only KB queries 
   async readOnly(input){
    calls.push(input)
    const obj=input.path==='/oauth2/token'?statuses.auth:
+    input.path==='/api/v1/ivu10140'?{dataBody:{now_prc:22222}}:
     input.path==='/api/v1/ssqm1801'?statuses.holdings:
     input.path==='/api/v1/ssqm2952'?statuses.valuation:
     input.path==='/api/v1/ssqm2341'?statuses.order:null
@@ -212,9 +217,9 @@ test('private Cloudflare Service Binding handles OAuth and read-only KB queries 
   assert.equal(result.ready,true)
   assert.equal(result.realOrderSent,false)
   assert.deepEqual(calls.map(x=>x.path),[
-   '/oauth2/token','/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm2341'
+   '/oauth2/token','/api/v1/ivu10140','/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm2341'
   ])
-  assert.equal(JSON.parse(JSON.stringify(calls[3].body)).dataBody.ordr_dt,'20261106')
+  assert.equal(JSON.parse(JSON.stringify(calls[4].body)).dataBody.ordr_dt,'20261106')
   assert.ok(!JSON.stringify(result).includes(key.KB_APP_SECRET))
   assert.ok(!JSON.stringify(result).includes('SUPER_PRIVATE_ACCESS_TOKEN'))
  }finally{globalThis.__kbConnectMock=previous}

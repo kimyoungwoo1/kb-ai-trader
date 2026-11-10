@@ -15,7 +15,8 @@ const paths=new Set([
  '/api/v1/ssqm2952',
  '/api/v1/ssqm0004',
  '/api/v1/ssqm1802',
- '/api/v1/ssqm2341'
+ '/api/v1/ssqm2341',
+ '/api/v1/ivu10140'
 ])
 const encoder=new TextEncoder()
 const endBy=async<T>(task:Promise<T>,deadline:number):Promise<T>=>{
@@ -34,7 +35,7 @@ const safeHeader=(value:string)=>{
  return value
 }
 export type KbSocketReadRequest={
- path:string;body:unknown;token?:string;timeoutMs?:number
+ path:string;body:unknown;token?:string;quoteAppKey?:string;timeoutMs?:number
 }
 export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
  status:number;json:unknown;durationMs:number
@@ -45,6 +46,8 @@ export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
   throw Error('KB_SOCKET_TOKEN_HEADER_NOT_ALLOWED')
  if(input.token!==undefined&&(!input.token||input.token.length>4096))
   throw Error('KB_SOCKET_TOKEN_INVALID')
+ if(input.quoteAppKey!==undefined&&path!=='/api/v1/ivu10140')
+  throw Error('KB_SOCKET_QUOTE_HEADER_NOT_ALLOWED')
  const deadline=Date.now()+Math.max(1000,Math.min(input.timeoutMs??15000,25000))
  const start=Date.now()
  const body=JSON.stringify(input.body)
@@ -59,6 +62,7 @@ export async function kbReadOnlyTlsRequest(input:KbSocketReadRequest):Promise<{
   'Accept-Encoding: identity\r\n'+
   'Connection: close\r\n'+
   (input.token?'Authorization: Bearer '+safeHeader(input.token)+'\r\n':'')+
+  (input.quoteAppKey?'appKey: '+safeHeader(input.quoteAppKey)+'\r\n':'')+
   'Content-Length: '+serialized.length+'\r\n\r\n')
  // The unauthenticated TLS GET probe succeeded with a single write.
  // Send one full Content-Length framed request to avoid a fragmented request
