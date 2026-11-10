@@ -42,13 +42,13 @@ async function rootConnectionCheck():Promise<SafeResult>{
   phase='WRITE'
   writer=socket.writable.getWriter()
   await bounded(writer.write(new TextEncoder().encode(
-   'GET / HTTP/1.1\\r\\nHost: developer.kbsec.com\\r\\nConnection: close\\r\\n\\r\\n'
+   'GET / HTTP/1.1\r\nHost: developer.kbsec.com:32484\r\nConnection: close\r\n\r\n'
   )))
   writer.releaseLock();writer=undefined
   phase='READ'
   reader=socket.readable.getReader()
   let data=''
-  for(let i=0;i<4&&data.length<500&&!data.includes('\\r\\n');i++){
+  for(let i=0;i<4&&data.length<500&&!data.includes('\r\n');i++){
    const part=await bounded(reader.read())
    if(part.done)break
    data+=new TextDecoder().decode(part.value.subarray(0,500-data.length))
