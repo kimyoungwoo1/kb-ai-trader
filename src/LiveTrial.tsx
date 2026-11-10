@@ -6,7 +6,7 @@ import LiveAccountHoldings from './LiveAccountHoldings'
 import LiveReadiness from './LiveReadiness'
 import type {AccountHolding,AccountValuation} from './liveAccountView'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
-type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
+export type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
 type LiveProgress={
  paperMode:string|null;tick:{result:string;message:string;finished_at:string;scanned:number;filled:number}|null;
  decisions:{event_id:string;code:string;side:string;decision:string;checked_at:string}[]
@@ -26,7 +26,7 @@ const decisionLabels:Record<string,string>={
  sell_not_safe:'시험 매도 조건 미충족', real_holding_insufficient:'실계좌 매도 가능 수량 부족',
  execution_error:'주문 처리 상태 확인 필요 · 원장 확인',
 }
-function orderStatusLabel(order:LiveOrder):string{
+export function orderStatusLabel(order:LiveOrder):string{
  if(order.state==='CANCELED')return order.filled_quantity>0?
    order.side==='BUY'?
     '미체결분 취소 완료 · '+order.filled_quantity+'주 매수 체결 보유':
@@ -93,6 +93,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       setFeedback('✓ '+(data.message||'실주문 잠금 상태를 확인했습니다.')+' · '+new Date().toLocaleTimeString('ko-KR'))
     }catch(e){setError(e instanceof Error?e.message:'잠금 실패')}finally{setBusy(false)}
   }
+  const autoOrders=status?.orders?.filter(order=>!order.id.startsWith('manual-buy-'))??[]
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">LIVE TRADING · CONTROLLED PILOT</div>
       <h1>실계좌 시험매매</h1><p>KB증권 실주문 전송 전 안전 제어와 시험 신호를 검증합니다.</p></div>
@@ -142,13 +143,13 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>실계좌 주문 원장</h3><span>SERVER D1 · 중복 주문/체결 추적</span></div></div>
       <p className="notification-hint">KB 주문번호가 확인되지 않은 SENDING·UNKNOWN 상태는 새 주문으로 자동 재전송하지 않습니다. 잠금은 기존에 접수된 주문을 취소하지 않습니다.</p>
-      {!status?<p className="notification-hint">서버 주문 원장 확인 대기</p>:status.orders?.length?<div className="notification-list">{status.orders.map(order=>
+      {!status?<p className="notification-hint">서버 주문 원장 확인 대기</p>:autoOrders.length?<div className="notification-list">{autoOrders.map(order=>
         <article key={order.id} className="notification-item">
           <div className="notification-item-heading"><strong>{order.side==='BUY'?'매수':'매도'} · {order.code}</strong><span>{orderStatusLabel(order)}</span></div>
           <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 원주문번호 {order.broker_order_id||'확인 불가'} · 갱신 {new Date(order.updated_at).toLocaleString('ko-KR')}</p>
           {order.cancel_order_no&&<p className="notification-hint">KB 취소 주문번호 {order.cancel_order_no} · {order.state==='CANCELED'?'증권사 취소 완료 증빙 확인':'취소 요청 접수 확인 · 최종 완료 미확정'}</p>}
           {(order.state==='UNKNOWN'||order.state==='SENDING'||order.cancel_status==='UNKNOWN')&&<p className="live-trial-inline-error">증권사 처리 여부를 확인하기 전까지 동일 주문을 자동으로 다시 보내지 않아.</p>}
-        </article>)}</div>:<p className="notification-hint">실계좌 주문 기록 없음 · 실제 주문 미전송</p>}
+        </article>)}</div>:<p className="notification-hint">자동매매 주문 기록 없음</p>}
     </div>
     <LiveRiskPreview token={token} holdings={holdings} holdingsLoaded={Boolean(accountSummary||holdings.length)}/>
     <LiveOrderLookup token={token}/>

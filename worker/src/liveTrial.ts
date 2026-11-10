@@ -1,11 +1,11 @@
-import { getLiveGate, disarmLiveTrading, armLiveTrading, type LiveEnv } from './liveExecution'
+import { getLiveGate, disarmLiveTrading, armLiveTrading, submitManualLimitBuy, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder, listKbRecentOrders, listKbRecentOrdersForView } from './kbOrderContract'
 import {KbAuthError} from './kbToken'
 import {diagnoseLiveReadiness} from './liveReadiness'
 /**
  * Real-money trial guard. This version is a deliberately fail-closed
- * readiness layer: it NEVER calls a brokerage order endpoint.
+ * readiness layer. Manual buys require a separate explicit confirmation.
  * Real execution requires an independently verified KB order/contract
  * implementation (including ack, fill, cancel and unknown-status reconciliation).
  */
@@ -54,6 +54,17 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
         candidates:rows.results||[],orders:journal.results||[],gate,progress,
         message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 1만 원 및 1종목·1회 제한':
         '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
+    }
+    if(action==='manualBuy'){
+      if(body.confirmation!=='지정가 실매수 확인'||!env?.KB_APP_KEY||!env.KB_APP_SECRET)
+        return reply({success:false,message:'실주문 확인 문구와 KB 연결 설정을 확인해 주세요.'},423)
+      const id=typeof body.requestId==='string'?body.requestId:''
+      const decision=await submitManualLimitBuy(db,env,{
+        id,code:typeof body.code==='string'?body.code:'',
+        quantity:typeof body.quantity==='number'?body.quantity:NaN,
+        price:typeof body.limitPrice==='number'?body.limitPrice:NaN,
+      })
+      return reply({success:decision==='accepted_not_filled',decision},decision==='accepted_not_filled'?200:409)
     }
     if(action==='readiness'){
       // Read-only D1/KB checks; never runs a broker order or changes the gate.

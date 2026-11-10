@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const bundle=await build({entryPoints:['worker/src/liveExecution.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {getLiveGate,armLiveTrading,disarmLiveTrading,processLiveFill,reconcileLiveOrders}=
+const {getLiveGate,armLiveTrading,disarmLiveTrading,processLiveFill,reconcileLiveOrders,submitManualLimitBuy}=
   await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'))
 const REAL_DATE=globalThis.Date
 const monday=new REAL_DATE('2026-11-09T00:30:00.000Z')
@@ -44,7 +44,8 @@ class Db {
         }
         if(sql.startsWith('INSERT OR IGNORE INTO live_order_journal')){
           const [id,day,code,quantity,price,reserved,created]=this.params
-          if(self.gate.enabled!==1||self.gate.trading_day!==day||self.rows.length)return {meta:{changes:0}}
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&self.gate.trading_day===day
+          if(!gateOk||self.rows.length)return {meta:{changes:0}}
           self.rows.push({id,trading_day:day,code,side:'BUY',quantity,limit_price:price,reserved_won:reserved,
             state:'RESERVED',broker_order_id:null,filled_quantity:0,created_at:created,updated_at:created})
           return {meta:{changes:1}}
@@ -52,7 +53,8 @@ class Db {
         if(sql.includes("SET state='SENDING'")){
           const [,id,day]=this.params
           const row=self.rows.find(x=>x.id===id&&x.state==='RESERVED')
-          if(!row||self.gate.enabled!==1||day!==self.gate.trading_day)return {meta:{changes:0}}
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&day===self.gate.trading_day
+          if(!row||!gateOk)return {meta:{changes:0}}
           row.state='SENDING';return {meta:{changes:1}}
         }
         if(sql.includes('SET state=?,broker_order_id=?')){
@@ -152,4 +154,26 @@ test('wrong confirmation or market closure blocks arming',async()=>{
  assert.equal(await armLiveTrading(db,env('arm-key'),'실계좌 1만원 자동매매 실행',new REAL_DATE('2026-11-08T23:00:00Z')),false)
  assert.equal(await disarmLiveTrading(db),true)
  assert.equal((await getLiveGate(db,env('arm-key'),monday)).enabled,false)
+})
+
+test('manual limit buys require auto OFF, share the daily claim and preserve confirmed quantity',async()=>{
+ const revert=holdClock(),network=mockBroker(),db=new Db()
+ const input={id:'4f835176-818a-4b7c-8f10-1b55beaa00ab',code:'005930',quantity:2,price:4500}
+ const config=env('mock-manual-limit')
+ try{
+  assert.equal(await submitManualLimitBuy(db,config,input,monday),'manual_locked')
+  assert.equal(network.seen.length,0)
+  await disarmLiveTrading(db)
+  assert.equal(await submitManualLimitBuy(db,config,{...input,price:9000},monday),'budget_exceeded')
+  assert.equal(network.seen.length,0)
+  const results=await Promise.all([
+    submitManualLimitBuy(db,config,input,monday),
+    submitManualLimitBuy(db,config,input,monday),
+  ])
+  assert.equal(results.filter(value=>value==='accepted_not_filled').length,1)
+  assert.equal(network.seen.filter(url=>url.endsWith('/api/v1/ssam1802')).length,1)
+  assert.equal(db.rows[0].quantity,2)
+  assert.equal(db.rows[0].id,'manual-buy-'+input.id)
+  assert.equal(db.gate.enabled,0)
+ }finally{network.restore();revert()}
 })

@@ -1,10 +1,10 @@
 /**
  * Real-account trial engine. HARD LOCKED by default: Cloudflare has no
  * LIVE_TRADING_HARD_ENABLE binding; D1 live_execution_gate defaults to OFF.
- * Only committed paper fills are eligible for live execution, never clients.
+ * Automatic trades require committed paper fills. Manual buys use a separate gate.
  */
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
-import {lookupKbOrder,lookupKbCancelEvidence} from './kbOrderContract'
+import {lookupKbOrder,lookupKbCancelEvidence,listKbRecentOrders} from './kbOrderContract'
 import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
 import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
 import {transitionOrder,type OrderRecord} from './liveOrderJournal'
@@ -23,6 +23,25 @@ const identity=(side:'BUY'|'SELL',eventId:string)=>'trial-'+side.toLowerCase()+'
 const rowFromDb=(r:any):OrderRecord=>({id:String(r.id),tradingDay:String(r.trading_day),code:String(r.code),side:r.side,
  quantity:Number(r.quantity),limitPrice:Number(r.limit_price),reservedWon:Number(r.reserved_won),
  state:r.state,brokerOrderId:r.broker_order_id??null,filledQuantity:Number(r.filled_quantity),updatedAt:String(r.updated_at)})
+const manualGateSql='EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=0)'
+async function manualGateOpen(db:Db,env:LiveEnv,now:Date){
+ if(!hardSwitch(env)||!inSession(now))return false
+ const row=await db.prepare('SELECT enabled,trading_day FROM live_execution_gate WHERE id=1').first()
+ return row?.enabled===0
+}
+export async function submitManualLimitBuy(db:Db,env:LiveEnv,input:{id:string;code:string;price:number;quantity:number},now=new Date()){
+ if(!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(input.id)||
+    !/^\d{6}$/.test(input.code)||!Number.isSafeInteger(input.price)||input.price<1||
+    !Number.isSafeInteger(input.quantity)||input.quantity<1)return 'invalid_signal'
+ if(!(await manualGateOpen(db,env,now)))return 'manual_locked'
+ if(input.quantity>Math.floor(9_900/input.price))return 'budget_exceeded'
+ try{
+  const history=await listKbRecentOrders(env,1,now)
+  if(history.partial||history.checkedDates.length!==1)return 'history_unavailable'
+  if(history.orders.some(order=>order.code===input.code&&order.remainingQuantity>0))return 'duplicate_or_blocked'
+ }catch{return 'history_unavailable'}
+ return submitLiveBuy(db,env,{...input,at:now.toISOString(),side:'BUY'},now,true)
+}
 export async function getLiveGate(db:Db|undefined,env:LiveEnv,now=new Date()){
  if(!db)return {enabled:false,hardEnabled:hardSwitch(env),reason:'D1 연결 없음'}
  try{
@@ -49,9 +68,12 @@ export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:st
   ])
   if(num(active?.n)!==0||num(cancels?.n)!==0)return false
   const today=tradingDay(now)
-  await db.prepare('INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) VALUES(1,1,?,?) ON CONFLICT(id) DO UPDATE SET enabled=1,trading_day=excluded.trading_day,updated_at=excluded.updated_at')
+  const armed=await db.prepare("INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) SELECT 1,1,?,? "+
+   "WHERE NOT EXISTS(SELECT 1 FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')) "+
+   "AND NOT EXISTS(SELECT 1 FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED')) "+
+   "ON CONFLICT(id) DO UPDATE SET enabled=1,trading_day=excluded.trading_day,updated_at=excluded.updated_at")
    .bind(today,now.toISOString()).run()
-  return true
+  return changed(armed)
  }catch{return false}
 }
 /** Independent KB holdings cross-check before any REAL order.
@@ -186,8 +208,8 @@ export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,
  if(!Number.isFinite(age)||age<0||age>90_000)return 'stale_signal'
  return fill.side==='BUY'?submitLiveBuy(db,env,fill,now):submitLiveSell(db,env,fill,now)
 }
-async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<string>{
- const quantity=Math.min(fill.quantity,Math.floor(9_900/fill.price))
+async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,manual=false):Promise<string>{
+ const quantity=manual?fill.quantity:Math.min(fill.quantity,Math.floor(9_900/fill.price))
  if(quantity<1)return 'budget_exceeded'
  let balances,held:number
  try{[balances,held]=await Promise.all([readKbBuyingPower(env,fill.code),readKbHeldQuantity(env,fill.code)])}
@@ -199,21 +221,28 @@ async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<s
   now,dailyBuys:summary.dailyBuys,activeTrialOrders:summary.active,otherTrialSymbols:summary.symbols
  })
  if(!preview.permitted||summary.principal+preview.requiredCash>MAX_PILOT_WON)return 'risk_blocked'
- const id=identity('BUY',fill.id),day=tradingDay(now),stamp=now.toISOString()
+ const day=tradingDay(now),stamp=now.toISOString()
+ if(manual){
+  const checkedAt=new Date()
+  if(!inSession(checkedAt)||tradingDay(checkedAt)!==day)return 'manual_locked'
+ }
+ const id=manual?'manual-buy-'+fill.id:identity('BUY',fill.id)
+ const gate=manual?manualGateSql:'EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?)'
+ const cancelGuard=manual?" AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED'))":''
  // Single D1 INSERT ... SELECT, protected by unique daily BUY index.
  const sql="INSERT OR IGNORE INTO live_order_journal (id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at) "+
-   "SELECT ?,?,?, 'BUY',?,?,?,'RESERVED',NULL,0,?,? WHERE EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?) "+
+   "SELECT ?,?,?, 'BUY',?,?,?,'RESERVED',NULL,0,?,? WHERE "+gate+" "+
    "AND NOT EXISTS (SELECT 1 FROM live_order_journal WHERE trading_day=? AND side='BUY') "+
-   "AND NOT EXISTS (SELECT 1 FROM live_order_journal WHERE state NOT IN ('REJECTED','CANCELED'))"
- const saved=await db.prepare(sql).bind(id,day,fill.code,quantity,fill.price,preview.requiredCash,stamp,stamp,day,day).run()
+   "AND NOT EXISTS (SELECT 1 FROM live_order_journal WHERE state NOT IN ('REJECTED','CANCELED'))"+cancelGuard
+ const saved=await db.prepare(sql).bind(id,day,fill.code,quantity,fill.price,preview.requiredCash,stamp,stamp,...(manual?[]:[day]),day).run()
  if(!changed(saved))return 'duplicate_or_blocked'
- return claimAndSubmit(db,env,id,fill.code,'BUY',quantity,fill.price,now)
+ return claimAndSubmit(db,env,id,fill.code,'BUY',quantity,fill.price,now,manual)
 }
 async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<string>{
- const owned=await db.prepare("SELECT COALESCE(SUM(CASE WHEN side='BUY' THEN filled_quantity ELSE -filled_quantity END),0) AS shares FROM live_order_journal WHERE code=?").bind(fill.code).first()
+ const owned=await db.prepare("SELECT COALESCE(SUM(CASE WHEN side='BUY' THEN filled_quantity ELSE -filled_quantity END),0) AS shares FROM live_order_journal WHERE code=? AND id NOT LIKE 'manual-buy-%'").bind(fill.code).first()
  const shares=num(owned?.shares)
  if(!Number.isSafeInteger(shares)||shares<1)return 'no_trial_shares'
- const buy=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='BUY' AND (state='FILLED' OR (state='CANCELED' AND filled_quantity>0))").bind(fill.code).first()
+ const buy=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND id NOT LIKE 'manual-buy-%' AND side='BUY' AND (state='FILLED' OR (state='CANCELED' AND filled_quantity>0))").bind(fill.code).first()
  const existing=await db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE code=? AND side='SELL'").bind(fill.code).first()
  if(num(buy?.n)!==1||num(existing?.n)!==0)return 'sell_not_safe'
  let realHolding:number,realSellable:number
@@ -230,12 +259,20 @@ async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<
  if(!changed(saved))return 'duplicate_or_blocked'
  return claimAndSubmit(db,env,id,fill.code,'SELL',shares,fill.price,now)
 }
-async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'|'SELL',quantity:number,price:number,now:Date):Promise<string>{
- const claimed=await db.prepare("UPDATE live_order_journal SET state='SENDING',updated_at=? WHERE id=? AND state='RESERVED' AND EXISTS(SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?)")
-  .bind(new Date().toISOString(),id,tradingDay(now)).run()
+async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'|'SELL',quantity:number,price:number,now:Date,manual=false):Promise<string>{
+ const claimed=await db.prepare("UPDATE live_order_journal SET state='SENDING',updated_at=? WHERE id=? AND state='RESERVED' AND "+
+  (manual?manualGateSql:"EXISTS(SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?)"))
+  .bind(new Date().toISOString(),id,...(manual?[]:[tradingDay(now)])).run()
  if(!changed(claimed))return 'not_claimed'
  // A crash AFTER claiming cannot lead to another submission. That row remains SENDING.
- if(!(await getLiveGate(db,env,new Date())).enabled)return 'disarmed_after_claim'
+ const checkAt=new Date()
+ if(manual){
+  if(!(await manualGateOpen(db,env,checkAt))||tradingDay(checkAt)!==tradingDay(now)){
+   await db.prepare("UPDATE live_order_journal SET state='REJECTED',updated_at=? WHERE id=? AND state='SENDING'")
+    .bind(checkAt.toISOString(),id).run()
+   return 'disarmed_after_claim'
+  }
+ }else if(!(await getLiveGate(db,env,checkAt)).enabled)return 'disarmed_after_claim'
  let result
  try{result=await submitKbLimitOnce(env,side,{code,quantity,price})}
  catch{return 'unknown_order_result'
@@ -260,7 +297,7 @@ export async function cancelStaleLiveOrders(
  const result={attempted:0,accepted:0,unknown:0,skipped:0}
  if(!db||!hardSwitch(env)||!(await getLiveGate(db,env,now)).enabled)return result
  const rowsResult=await db.prepare(
-  "SELECT * FROM live_order_journal WHERE state IN ('ACCEPTED','PARTIAL') AND broker_order_id IS NOT NULL AND created_at<=? AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE order_id=live_order_journal.id) ORDER BY created_at ASC LIMIT 10"
+  "SELECT * FROM live_order_journal WHERE state IN ('ACCEPTED','PARTIAL') AND broker_order_id IS NOT NULL AND id NOT LIKE 'manual-buy-%' AND created_at<=? AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE order_id=live_order_journal.id) ORDER BY created_at ASC LIMIT 10"
  ).bind(new Date(now.getTime()-5*60_000).toISOString()).all()
  const rows=Array.isArray(rowsResult?.results)?rowsResult.results:[]
  for(const raw of rows){
