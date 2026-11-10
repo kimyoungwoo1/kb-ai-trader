@@ -318,6 +318,7 @@ const service = {
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
+        http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch);
@@ -346,6 +347,7 @@ const service = {
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
+        http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch);
@@ -366,6 +368,7 @@ const service = {
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
+        http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch);
@@ -479,6 +482,7 @@ const service = {
       catch (error) {
         const limited = error instanceof KbAuthError && error.rateLimited;
         return json({ success: false, stage: "authentication", rate_limited: limited,
+          http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
           message: error instanceof KbAuthError ? error.message : "KB 인증 서버 오류" },
           limited ? 429 : 502);
       }
@@ -551,7 +555,7 @@ const service = {
           await Promise.all(remaining.map(async index => { results[index] = await retry(index); }));
         }
       }
-      if (results.some(item => item.token_expired)) clearKbAccessToken();
+      if (results.some(item => item.token_expired)) clearKbAccessToken(accessToken);
       return Response.json({
         success: true, requested: stocks.length, checked_at: new Date().toISOString(),
         received: results.filter(item => item.price !== null).length,
@@ -573,6 +577,7 @@ const service = {
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
+        http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let quoteResponse: Response;
       try {
@@ -589,7 +594,7 @@ const service = {
       const header = quoteResult?.dataHeader || {};
       const resultCode = String(header.resultCode ?? "");
       if (!quoteResponse.ok || (resultCode && !["0", "0000", "200"].includes(resultCode))) {
-        if (quoteResponse.status === 401 || quoteResponse.status === 403) clearKbAccessToken();
+        if (quoteResponse.status === 401 || quoteResponse.status === 403) clearKbAccessToken(accessToken);
         return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
       }
       const body = quoteResult?.dataBody || {};
@@ -717,6 +722,7 @@ const service = {
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) { return json({ success: false, stage: "authentication",
+        http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
       const results = [];
@@ -736,7 +742,7 @@ const service = {
             signal: AbortSignal.timeout(15000),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if ([401, 403].includes(response.status)) clearKbAccessToken();
+            if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
             return unavailable("KB 시세·수급 HTTP " + response.status);
           }
           const data = await response.json() as any;
@@ -760,7 +766,7 @@ const service = {
             signal: AbortSignal.timeout(15000),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if ([401, 403].includes(response.status)) clearKbAccessToken();
+            if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
             return unavailable("KB 시세·수급 HTTP " + response.status);
           }
           const data = await response.json() as any;

@@ -59,7 +59,7 @@ async function saveSharedToken(env:KbCredentials,token:string,expiresAt:number):
 
 
 export class KbAuthError extends Error {
-  constructor(message: string, readonly httpStatus: number, readonly rateLimited = false) {
+  constructor(message: string, readonly httpStatus: number, readonly rateLimited = false, readonly upstreamStatus?: number) {
     super(message)
     this.name = 'KbAuthError'
   }
@@ -68,8 +68,9 @@ export class KbAuthError extends Error {
 export const kbBaseUrl = (env: KbCredentials): string =>
   (env.KB_BASE_URL || 'https://developer.kbsec.com:32484').replace(/\/$/, '')
 
-export function clearKbAccessToken(): void {
-  rejectedToken = cached?.token ?? rejectedToken
+export function clearKbAccessToken(token: string): void {
+  if (cached?.token !== token) return
+  rejectedToken = token
   cached = null
 }
 
@@ -82,8 +83,8 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
     const shared=await loadSharedToken(env,key)
     if(shared)return shared
     let response: Response | undefined
-    // Retry only transient transport failures, never KB-issued HTTP errors or
-    // a rejected token. All concurrent requests share this one in-flight promise.
+    // Retry an explicit gateway 522 or transport failure once. The whole
+    // attempt sequence is shared by concurrent callers.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         response = await fetch(kbBaseUrl(env) + '/oauth2/token', {
@@ -95,6 +96,11 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
           }),
           signal: AbortSignal.timeout(12_000),
         })
+        if (response.status === 522 && attempt === 0) {
+          await response.body?.cancel().catch(() => {})
+          await new Promise(resolve => setTimeout(resolve, 400))
+          continue
+        }
         break
       } catch (error) {
         if (attempt === 0) {
@@ -106,12 +112,17 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
       }
     }
     if (!response) throw new KbAuthError('KB 인증 서버 응답 없음', 502)
+    if (!response.ok) {
+      const status = response.status
+      await response.body?.cancel().catch(() => {})
+      throw new KbAuthError('KB 토큰 발급 실패 (HTTP ' + status + ')',
+        status === 429 ? 429 : 502, status === 429, status)
+    }
     let data: any
     try { data = await response.json() } catch { throw new KbAuthError('KB 인증 응답 형식 오류', 502) }
     const token = data?.dataBody?.access_token
-    if (!response.ok || typeof token !== 'string' || token.length === 0)
-      throw new KbAuthError('KB 토큰 발급 실패 (HTTP ' + response.status + ')',
-        response.status === 429 ? 429 : 502, response.status === 429)
+    if (typeof token !== 'string' || token.length === 0)
+      throw new KbAuthError('KB 토큰 발급 실패 (HTTP 200)', 502)
     const reported = Number(data?.dataBody?.expires_in ?? data?.expires_in)
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
     const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 8 * 60 * 60) : 300

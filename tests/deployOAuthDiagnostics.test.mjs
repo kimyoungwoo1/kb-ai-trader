@@ -83,3 +83,23 @@ test('deployment retains mandatory real KB account pass before switching live tr
  assert.match(s,/startsWith\('auth_'\)\?12_000\*attempt/)
  assert.match(s,/await probeVersion\(domain,probeKey,'운영 전환 후 구조 재검사',\{checkAccount:false\}\)/)
 })
+
+test('persistent HTML OAuth 522 is surfaced as upstream 522 and blocks account probes',async()=>{
+ const original=globalThis.fetch
+ let calls=0
+ globalThis.fetch=async url=>{
+  assert.ok(String(url).endsWith('/oauth2/token'))
+  calls++
+  return new Response('<html>private gateway body</html>',{status:522})
+ }
+ try{
+  const response=await worker.fetch(probe(),{...base,KB_APP_KEY:'deploy-oauth-html-522'})
+  const result=await response.json()
+  assert.equal(response.status,503)
+  assert.equal(calls,2)
+  assert.equal(result.checks.holdings.upstream_status,522)
+  assert.equal(result.checks.holdings.auth_issue,'auth_upstream_http')
+  assert.equal(result.checks.valuation.stage,'skipped_upstream_unavailable')
+  assert.doesNotMatch(JSON.stringify(result),/private gateway body/)
+ }finally{globalThis.fetch=original}
+})

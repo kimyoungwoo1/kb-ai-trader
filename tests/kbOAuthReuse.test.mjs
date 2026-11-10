@@ -134,3 +134,24 @@ test('a KB-issued authentication rejection is not retried',async()=>{
    assert.equal(authCalls,1)
  }finally{globalThis.fetch=previous}
 })
+
+test('an HTML 522 during OAuth is retried once and concurrent readers share recovery',async()=>{
+ const previous=globalThis.fetch
+ let authCalls=0,quotes=0
+ globalThis.fetch=async(input)=>{
+  if(String(input).endsWith('/oauth2/token')){
+   authCalls++
+   return authCalls===1?new Response('<html>gateway</html>',{status:522}):
+    Response.json({dataBody:{access_token:'recovered-token',expires_in:3600}})
+  }
+  quotes++
+  return Response.json({dataHeader:{resultCode:'0'},dataBody:{now_prc:'80000'}})
+ }
+ try{
+  const isolated={...env,KB_APP_KEY:'oauth-html-522'}
+  const replies=await Promise.all([worker.fetch(quote(),isolated),worker.fetch(quote('035720'),isolated)])
+  assert.ok(replies.every(reply=>reply.status===200))
+  assert.equal(authCalls,2)
+  assert.equal(quotes,2)
+ }finally{globalThis.fetch=previous}
+})
