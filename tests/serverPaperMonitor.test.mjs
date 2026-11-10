@@ -79,5 +79,5 @@ test('Cron only monitors weekday sessions and runs a single scheduled close job'
  assert.equal(check('2026-11-09T06:36:00Z'),'off')
  assert.equal(check('2026-11-14T06:35:00Z'),'off')
  assert.deepEqual(JSON.parse(readFileSync('worker/wrangler.jsonc','utf8')).triggers.crons,
-  ['* 0-5 * * MON-FRI','0-29 6 * * MON-FRI','35 6 * * MON-FRI'])
+  ['* 0-6 * * MON-FRI'])
 })
