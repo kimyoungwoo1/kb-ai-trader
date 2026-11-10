@@ -366,7 +366,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · EXISTING DAILY APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
+      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
@@ -467,7 +467,7 @@ async function main(){
   ensure(currentVersion===rollbackVersion,
     '배포 중 다른 운영 버전이 반영됐습니다. 최신 버전과 Secret 상속을 다시 확인하기 위해 안전 중단합니다.')
   if(preserveLiveApproval){
-    console.log('✓ 동일 운영 D1의 당일 실주문 승인 상태 보존 · 게이트 변경 없음')
+    console.log('✓ 동일 운영 D1의 실주문 승인 상태 보존 · 게이트 변경 없음')
   }else if(livePilot10000){
     // First opt-in must not revive an approval left by a previously disabled version.
     const reset=await api(root+'/d1/database/'+paperDbId+'/query',{

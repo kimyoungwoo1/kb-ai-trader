@@ -9,12 +9,13 @@ type LiveProgress={
  paperMode:string|null;tick:{result:string;message:string;finished_at:string;scanned:number;filled:number}|null;
  decisions:{event_id:string;code:string;side:string;decision:string;checked_at:string}[]
 }
-type TrialStatus={enabled:boolean;hardEnabled?:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};orders?:LiveOrder[];progress?:LiveProgress|null}
+type TrialStatus={enabled:boolean;armed?:boolean;hardEnabled?:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};orders?:LiveOrder[];progress?:LiveProgress|null}
 const API='/api/live/trial'
 const decisionLabels:Record<string,string>={
  accepted_not_filled:'KB 주문 접수 · 체결 확인 대기', rejected:'KB 주문 거부',
  unknown_order_result:'주문 접수 여부 미확정 · 원장 확인 필요',
  budget_exceeded:'지정가가 시험 예산을 초과해 매수 보류',
+ history_unavailable:'KB 주문·체결 조회 미확인 · 신규 매수 보류',
  account_not_verified:'KB 계좌·주문가능금액 조회 미확인',
  already_held_in_real_account:'실계좌에 이미 보유한 종목',
  journal_unavailable:'서버 주문 원장 확인 실패', risk_blocked:'주문 한도 또는 위험 조건 미충족',
@@ -67,7 +68,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       if(!response.ok||!data.success)throw Error(data.message||'서버 실거래 잠금 상태')
       setConfirmation('')
       await load()
-      setFeedback('✓ '+String(data.message||'오늘 1만원 시험매매 승인 완료')+' · 실제 주문이 발생할 수 있습니다.')
+      setFeedback('✓ '+String(data.message||'자동매매 승인 완료')+' · 실제 주문이 발생할 수 있습니다.')
     }catch(e){setError(e instanceof Error?e.message:'활성화 불가')}
     finally{setBusy(false)}
   }
@@ -91,6 +92,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       setFeedback('✓ '+(data.message||'실주문 잠금 상태를 확인했습니다.')+' · '+new Date().toLocaleTimeString('ko-KR'))
     }catch(e){setError(e instanceof Error?e.message:'잠금 실패')}finally{setBusy(false)}
   }
+  const armed=status?.armed??status?.enabled??false
   const autoOrders=status?.orders?.filter(order=>!order.id.startsWith('manual-buy-'))??[]
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">LIVE TRADING · CONTROLLED PILOT</div>
@@ -98,20 +100,20 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <button className="outline-button" disabled={busy} onClick={()=>void load()}><RefreshCw size={14}/> 새로고침</button>
     </div>
     <div className="panel" style={{padding:20,display:'grid',gap:14}}>
-      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':status.enabled?'실계좌 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
-      <p className="notification-hint">{status?.message||'서버 설정과 당일 D1 실행 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
+      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':armed?(status.enabled?'실계좌 자동매매 활성화':'실계좌 자동매매 · 정규장 대기'):'실주문 잠금 · 기본 비활성화'}</strong></div>
+      <p className="notification-hint">{status?.message||'서버 설정과 실주문 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
       <div className="notification-meta">
         <span>총 매수 한도: 10,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
       </div>
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
-      {status?.hardEnabled&&!status.enabled&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 승인 후 자동 매수는 별도 재확인 없이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
-      {status?.hardEnabled&&!status.enabled&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+      {status?.hardEnabled&&!armed&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 직접 잠글 때까지 다음 정규장에도 자동 주문이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
+      {status?.hardEnabled&&!armed&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
           placeholder="실주문 시작" value={confirmation}
           onChange={e=>setConfirmation(e.target.value)}/>
         <button className="outline-button" disabled={busy||confirmation!=='실주문 시작'}
-          onClick={()=>void arm()}>오늘 실거래 활성화</button>
+          onClick={()=>void arm()}>자동매매 켜기</button>
       </div>}
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
       {(error||statusError)&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error||statusError}</p>}
@@ -119,7 +121,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>실계좌 자동매매 진행 상황</h3><span>서버에서 30초마다 상태 갱신</span></div></div>
       {!status?.progress?<p className="notification-hint">{status||statusError?'서버 진행 기록을 확인할 수 없습니다.':'서버 진행 상황 조회 중'}</p>:<>
-        <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!status.enabled?'실주문 잠금 상태':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버의 새 체결 신호를 받아 주문 조건을 검사합니다.'}</p>
+        <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!armed?'실주문 잠금 상태':!status.enabled?'자동매매 승인 유지 · 정규장 대기':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버의 새 체결 신호를 받아 주문 조건을 검사합니다.'}</p>
         {status.progress.tick&&<p className="notification-hint">
           최근 서버 감시 {new Date(status.progress.tick.finished_at).toLocaleString('ko-KR')} · {status.progress.tick.message} · 가상 체결 {status.progress.tick.filled}건
         </p>}

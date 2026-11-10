@@ -23,6 +23,10 @@ const identity=(side:'BUY'|'SELL',eventId:string)=>'trial-'+side.toLowerCase()+'
 const rowFromDb=(r:any):OrderRecord=>({id:String(r.id),tradingDay:String(r.trading_day),code:String(r.code),side:r.side,
  quantity:Number(r.quantity),limitPrice:Number(r.limit_price),reservedWon:Number(r.reserved_won),
  state:r.state,brokerOrderId:r.broker_order_id??null,filledQuantity:Number(r.filled_quantity),updatedAt:String(r.updated_at)})
+// Legacy approvals store a KST date. Only a fresh explicit approval can
+// write the persistent marker, which older Worker versions treat as locked.
+const persistentApproval='PERSISTENT'
+const automaticGateSql="EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND (trading_day=? OR trading_day='"+persistentApproval+"'))"
 const manualGateSql='EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=0)'
 async function manualGateOpen(db:Db,env:LiveEnv,now:Date){
  if(!hardSwitch(env)||!inSession(now))return false
@@ -40,16 +44,19 @@ export async function submitManualLimitBuy(db:Db,env:LiveEnv,input:{id:string;co
   if(history.partial||history.checkedDates.length!==1)return 'history_unavailable'
   if(history.orders.some(order=>order.code===input.code&&order.remainingQuantity>0))return 'duplicate_or_blocked'
  }catch{return 'history_unavailable'}
- return submitLiveBuy(db,env,{...input,at:now.toISOString(),side:'BUY'},now,true)
+ return submitLiveBuy(db,env,{...input,at:now.toISOString(),side:'BUY'},now,'manual')
 }
 export async function getLiveGate(db:Db|undefined,env:LiveEnv,now=new Date()){
- if(!db)return {enabled:false,hardEnabled:hardSwitch(env),reason:'D1 연결 없음'}
+ if(!db)return {enabled:false,armed:false,persistent:false,hardEnabled:hardSwitch(env),reason:'D1 연결 없음'}
  try{
   const row=await db.prepare('SELECT enabled,trading_day,updated_at FROM live_execution_gate WHERE id=1').first()
-  const enabled=hardSwitch(env)&&row?.enabled===1&&row?.trading_day===tradingDay(now)&&inSession(now)
-  return {enabled,hardEnabled:hardSwitch(env),tradingDay:row?.trading_day||null,
-    reason:enabled?'오늘 정규장에 한해 주문 허용':'기본 잠금 · 주문 발송 불가'}
- }catch{return {enabled:false,hardEnabled:hardSwitch(env),reason:'D1 실행 잠금 확인 실패'}}
+  const persistent=hardSwitch(env)&&row?.enabled===1&&row.trading_day===persistentApproval
+  const armed=persistent||(hardSwitch(env)&&row?.enabled===1&&row.trading_day===tradingDay(now))
+  const enabled=armed&&inSession(now)
+  return {enabled,armed,persistent,hardEnabled:hardSwitch(env),
+    tradingDay:persistent?null:row?.trading_day||null,
+    reason:enabled?'정규장 주문 허용':armed?'승인 유지 · 정규장 대기':'기본 잠금 · 주문 발송 불가'}
+ }catch{return {enabled:false,armed:false,persistent:false,hardEnabled:hardSwitch(env),reason:'D1 실행 잠금 확인 실패'}}
 }
 export async function disarmLiveTrading(db:Db|undefined){
  if(!db)return false
@@ -67,12 +74,11 @@ export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:st
    db.prepare("SELECT COUNT(*) AS n FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED')").first()
   ])
   if(num(active?.n)!==0||num(cancels?.n)!==0)return false
-  const today=tradingDay(now)
   const armed=await db.prepare("INSERT INTO live_execution_gate(id,enabled,trading_day,updated_at) SELECT 1,1,?,? "+
    "WHERE NOT EXISTS(SELECT 1 FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')) "+
    "AND NOT EXISTS(SELECT 1 FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED')) "+
    "ON CONFLICT(id) DO UPDATE SET enabled=1,trading_day=excluded.trading_day,updated_at=excluded.updated_at")
-   .bind(today,now.toISOString()).run()
+   .bind(persistentApproval,now.toISOString()).run()
   return changed(armed)
  }catch{return false}
 }
@@ -200,15 +206,17 @@ async function journalSummary(db:Db,now:Date){
 /** This is the ONLY entry point for prospective live trades from Cron. */
 export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,now=new Date()):Promise<string>{
  if(!db||!hardSwitch(env))return 'locked'
- if(!(await getLiveGate(db,env,now)).enabled)return 'locked'
+ const gate=await getLiveGate(db,env,now)
+ if(!gate.enabled)return 'locked'
  if(!fill||fill.test||!['BUY','SELL'].includes(fill.side)||!/^[0-9]{6}$/.test(String(fill.code))||
     !Number.isSafeInteger(fill.price)||fill.price<1||!Number.isSafeInteger(fill.quantity)||fill.quantity<1||
     !/^[A-Za-z0-9:_.-]{1,120}$/.test(fill.id||''))return 'invalid_signal'
  const age=now.getTime()-Date.parse(fill.at)
  if(!Number.isFinite(age)||age<0||age>90_000)return 'stale_signal'
- return fill.side==='BUY'?submitLiveBuy(db,env,fill,now):submitLiveSell(db,env,fill,now)
+ return fill.side==='BUY'?submitLiveBuy(db,env,fill,now,gate.persistent?'persistent':'auto'):submitLiveSell(db,env,fill,now)
 }
-async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,manual=false):Promise<string>{
+async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,mode:'auto'|'persistent'|'manual'):Promise<string>{
+ const manual=mode==='manual'
  const quantity=manual?fill.quantity:Math.min(fill.quantity,Math.floor(9_900/fill.price))
  if(quantity<1)return 'budget_exceeded'
  let balances,held:number
@@ -221,13 +229,24 @@ async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,manual=fal
   now,dailyBuys:summary.dailyBuys,activeTrialOrders:summary.active,otherTrialSymbols:summary.symbols
  })
  if(!preview.permitted||summary.principal+preview.requiredCash>MAX_PILOT_WON)return 'risk_blocked'
+ // Persistent consent replaces the daily click, so check the current day's
+ // KB order-history path before placing a new buy.
+ if(mode==='persistent'){
+  try{
+   const history=await listKbRecentOrders(env,1,now)
+   if(history.partial||history.checkedDates.length!==1)return 'history_unavailable'
+  }catch{return 'history_unavailable'}
+  const checkedAt=new Date()
+  if(!inSession(checkedAt)||tradingDay(checkedAt)!==tradingDay(now))return 'locked'
+  if(checkedAt.getTime()-Date.parse(fill.at)>90_000)return 'stale_signal'
+ }
  const day=tradingDay(now),stamp=now.toISOString()
  if(manual){
   const checkedAt=new Date()
   if(!inSession(checkedAt)||tradingDay(checkedAt)!==day)return 'manual_locked'
  }
  const id=manual?'manual-buy-'+fill.id:identity('BUY',fill.id)
- const gate=manual?manualGateSql:'EXISTS (SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?)'
+ const gate=manual?manualGateSql:automaticGateSql
  const cancelGuard=manual?" AND NOT EXISTS (SELECT 1 FROM live_cancel_journal WHERE status IN ('CLAIMED','UNKNOWN','REJECTED'))":''
  // Single D1 INSERT ... SELECT, protected by unique daily BUY index.
  const sql="INSERT OR IGNORE INTO live_order_journal (id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at) "+
@@ -252,7 +271,7 @@ async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<
  if(realHolding<shares||realSellable<shares)return 'real_holding_insufficient'
  const id=identity('SELL',fill.id),day=tradingDay(now),stamp=now.toISOString()
  const sql="INSERT OR IGNORE INTO live_order_journal (id,trading_day,code,side,quantity,limit_price,reserved_won,state,broker_order_id,filled_quantity,created_at,updated_at) "+
-  "SELECT ?,?,?,'SELL',?,?,0,'RESERVED',NULL,0,?,? WHERE EXISTS(SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?) "+
+  "SELECT ?,?,?,'SELL',?,?,0,'RESERVED',NULL,0,?,? WHERE "+automaticGateSql+" "+
   "AND NOT EXISTS(SELECT 1 FROM live_order_journal WHERE side='SELL' AND code=?) "+
   "AND NOT EXISTS(SELECT 1 FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED'))"
  const saved=await db.prepare(sql).bind(id,day,fill.code,shares,fill.price,stamp,stamp,day,fill.code).run()
@@ -261,7 +280,7 @@ async function submitLiveSell(db:Db,env:LiveEnv,fill:LiveFill,now:Date):Promise<
 }
 async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'|'SELL',quantity:number,price:number,now:Date,manual=false):Promise<string>{
  const claimed=await db.prepare("UPDATE live_order_journal SET state='SENDING',updated_at=? WHERE id=? AND state='RESERVED' AND "+
-  (manual?manualGateSql:"EXISTS(SELECT 1 FROM live_execution_gate WHERE id=1 AND enabled=1 AND trading_day=?)"))
+  (manual?manualGateSql:automaticGateSql))
   .bind(new Date().toISOString(),id,...(manual?[]:[tradingDay(now)])).run()
  if(!changed(claimed))return 'not_claimed'
  // A crash AFTER claiming cannot lead to another submission. That row remains SENDING.

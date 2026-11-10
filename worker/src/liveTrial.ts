@@ -49,11 +49,11 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const gate=await getLiveGate(db,env||{})
       const journal=await db.prepare("SELECT j.id,j.trading_day,j.code,j.side,j.quantity,j.limit_price,j.reserved_won,j.state,j.broker_order_id,j.filled_quantity,j.created_at,j.updated_at,c.status AS cancel_status,c.cancel_order_no FROM live_order_journal j LEFT JOIN live_cancel_journal c ON c.order_id=j.id ORDER BY j.created_at DESC LIMIT 20").all()
       const progress=await readLiveProgress(db)
-      return reply({success:true,enabled:gate.enabled,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
-        mode:gate.enabled?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
+      return reply({success:true,enabled:gate.enabled,armed:gate.armed,persistent:gate.persistent,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
+        mode:gate.armed?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
         candidates:rows.results||[],orders:journal.results||[],gate,progress,
-        message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 1만 원 및 1종목·1회 제한':
-        '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
+        message:gate.armed?(gate.persistent?'자동매매 승인 유지 · 정규장에만 주문':'기존 당일 승인 · 계속 유지하려면 잠금 후 다시 활성화')+
+        (gate.enabled?'':' · 정규장 대기'):'실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
     }
     if(action==='manualBuy'){
       if(body.confirmation!=='지정가 실매수 확인'||!env?.KB_APP_KEY||!env.KB_APP_SECRET)
@@ -175,7 +175,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       }
       const success=await armLiveTrading(db,env||{},String(body.confirmation||''))
       return reply({success,enabled:success,message:success?
-        '실계좌 1만 원 시험 운용이 오늘 정규장 동안만 활성화됐습니다.':
+        '실계좌 자동매매를 활성화했습니다. 직접 잠글 때까지 정규장마다 주문 조건을 검사합니다.':
         '서버 실거래 잠금 또는 확인 조건 미충족 · 실주문 비활성화'},success?200:423)
     }
     if(action==='enable'||action==='order'||action==='buy'||action==='sell'||action==='cancel')

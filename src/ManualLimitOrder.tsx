@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { orderStatusLabel, type LiveOrder } from './LiveTrial'
 import { validateLiveBuyInput } from './liveBuyValidation'
 
-type Status = { enabled: boolean; hardEnabled: boolean; orders?: LiveOrder[] }
+type Status = { enabled: boolean; armed?: boolean; hardEnabled: boolean; orders?: LiveOrder[] }
 type Stock = { code: string; name: string; market?: string }
 type Preview = { permitted: boolean; reasons: string[]; requiredCash: number }
 const results: Record<string, string> = {
@@ -83,7 +83,8 @@ export default function ManualLimitOrder({ token }: { token: string }) {
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [query, stock, token])
 
-  const allowed = !statusError && status?.hardEnabled && !status.enabled
+  const autoArmed = status?.armed ?? status?.enabled
+  const allowed = !statusError && status?.hardEnabled && !autoArmed
   const fields = { code: stock?.code ?? '', quantity: Number(quantity), limitPrice: Number(price) }
   const edit = (set: (value: string) => void, value: string) => {
     set(value)
@@ -145,7 +146,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
     </div><button className="outline-button" onClick={() => void refresh()}>새로고침</button></div>
     <div className="panel" style={{ padding: 20, display: 'grid', gap: 12 }}>
       <p className="notification-hint">{statusError || !status ? '서버 주문 상태 확인 필요' :
-        status.enabled ? '실계좌 자동매매 메뉴에서 자동매매를 잠근 뒤 진행하세요.' :
+        autoArmed ? '실계좌 자동매매 메뉴에서 자동매매를 잠근 뒤 진행하세요.' :
         status.hardEnabled ? '종목과 금액을 점검한 뒤 확인 버튼으로 실제 주문을 보냅니다.' : '서버 시험매매 설정이 잠겨 있습니다.'}</p>
       <div className="paper-stock-search" style={{width:'min(100%, 380px)'}}>
         <label>종목명 <input className="live-trial-field" value={query} disabled={busy} autoComplete="off"

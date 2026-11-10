@@ -6,10 +6,10 @@ const {getLiveGate,armLiveTrading,disarmLiveTrading,processLiveFill,reconcileLiv
   await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'))
 const REAL_DATE=globalThis.Date
 const monday=new REAL_DATE('2026-11-09T00:30:00.000Z')
-const holdClock=()=>{
+const holdClock=(at=monday)=>{
   globalThis.Date=class extends REAL_DATE{
-    constructor(...args){super(...(args.length?args:[monday.getTime()]))}
-    static now(){return monday.getTime()}
+    constructor(...args){super(...(args.length?args:[at.getTime()]))}
+    static now(){return at.getTime()}
   }
   return ()=>{globalThis.Date=REAL_DATE}
 }
@@ -27,6 +27,7 @@ class Db {
       async first(){
         if(sql.startsWith('SELECT enabled,trading_day'))return self.gate
         if(sql.includes("trading_day=? AND side='BUY'"))return {n:self.rows.filter(x=>x.trading_day===this.params[0]&&x.side==='BUY').length}
+        if(sql.includes('FROM live_cancel_journal')&&sql.includes('COUNT(*)'))return {n:0}
         if(sql.includes('state IN')&&sql.includes('COUNT(*)'))return {n:self.rows.filter(x=>activeStates.has(x.state)).length}
         if(sql.includes('COUNT(DISTINCT code)'))return {n:new Set(self.rows.filter(x=>x.side==='BUY'&&!['REJECTED','CANCELED'].includes(x.state)).map(x=>x.code)).size}
         if(sql.includes('COALESCE(SUM(reserved_won)'))return {n:self.rows.filter(x=>x.side==='BUY'&&!['REJECTED','CANCELED'].includes(x.state)).reduce((n,x)=>n+x.reserved_won,0)}
@@ -44,7 +45,7 @@ class Db {
         }
         if(sql.startsWith('INSERT OR IGNORE INTO live_order_journal')){
           const [id,day,code,quantity,price,reserved,created]=this.params
-          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&self.gate.trading_day===day
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&(self.gate.trading_day===day||sql.includes("trading_day='PERSISTENT'")&&self.gate.trading_day==='PERSISTENT')
           if(!gateOk||self.rows.length)return {meta:{changes:0}}
           self.rows.push({id,trading_day:day,code,side:'BUY',quantity,limit_price:price,reserved_won:reserved,
             state:'RESERVED',broker_order_id:null,filled_quantity:0,created_at:created,updated_at:created})
@@ -53,7 +54,7 @@ class Db {
         if(sql.includes("SET state='SENDING'")){
           const [,id,day]=this.params
           const row=self.rows.find(x=>x.id===id&&x.state==='RESERVED')
-          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&day===self.gate.trading_day
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&(day===self.gate.trading_day||sql.includes("trading_day='PERSISTENT'")&&self.gate.trading_day==='PERSISTENT')
           if(!row||!gateOk)return {meta:{changes:0}}
           row.state='SENDING';return {meta:{changes:1}}
         }
@@ -175,5 +176,25 @@ test('manual limit buys require auto OFF, share the daily claim and preserve con
   assert.equal(db.rows[0].quantity,2)
   assert.equal(db.rows[0].id,'manual-buy-'+input.id)
   assert.equal(db.gate.enabled,0)
+ }finally{network.restore();revert()}
+})
+
+test('persistent approval waits outside regular hours and places an eligible next-day buy without rearming',async()=>{
+ const tomorrow=new REAL_DATE('2026-11-10T00:35:00.000Z')
+ const revert=holdClock(tomorrow),network=mockBroker(),db=new Db()
+ const config=env('mock-persistent-approval')
+ const closed=new REAL_DATE('2026-11-09T08:00:00.000Z')
+ try{
+  assert.equal((await getLiveGate(db,config,tomorrow)).armed,false,'legacy day-only approvals expire')
+  assert.equal(await armLiveTrading(db,config,'실주문 시작',monday),true)
+  assert.equal(db.gate.trading_day,'PERSISTENT')
+  assert.equal((await getLiveGate(db,config,closed)).armed,true)
+  assert.equal((await getLiveGate(db,config,closed)).enabled,false)
+  assert.equal((await getLiveGate(db,config,tomorrow)).enabled,true)
+  assert.equal(await processLiveFill(db,config,{...fill,at:tomorrow.toISOString()},tomorrow),'accepted_not_filled')
+  assert.equal(db.rows[0].trading_day,'2026-11-10')
+  assert.equal(network.seen.filter(url=>url.endsWith('/api/v1/ssqm2341')).length,1)
+  assert.equal(await disarmLiveTrading(db),true)
+  assert.equal((await getLiveGate(db,config,tomorrow)).armed,false)
  }finally{network.restore();revert()}
 })
