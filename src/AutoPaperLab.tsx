@@ -297,7 +297,7 @@ export default function AutoPaperLab({
         <span>매수 후보가 있어도 후속 시세에서 진입 조건을 충족해야만 가상 체결됩니다.</span>
         <span>마지막 수집 {formatTime(checkedAt)}</span>
       </div>
-      <p className="auto-operation-note">{serverMode ? '정규장 서버 시장 탐색 약 5분 · 보유·진입 감시 약 1분. 브라우저 종료 후에도 서버 Cron에서 실행합니다. KB 응답 오류·시장 휴장·스케줄 지연 시 검사는 보류됩니다.' : '정규장 시장 탐색 5분 · 보유·진입 감시 30초. 브라우저가 닫히거나 시세 요청이 지연되면 검사도 멈추거나 늦어질 수 있습니다.'} 실계좌 주문 상태는 실계좌 시험매매 메뉴에서 확인하세요.</p>
+      <p className="auto-operation-note">{serverMode ? '정규장 서버 시장 탐색 약 5분 · 보유·진입 감시 약 1분. 브라우저 종료 후에도 서버 Cron에서 실행합니다. KB 응답 오류·시장 휴장·스케줄 지연 시 검사는 보류됩니다.' : '정규장 시장 탐색 5분 · 보유·진입 감시 30초. 브라우저가 닫히거나 시세 요청이 지연되면 검사도 멈추거나 늦어질 수 있습니다.'} 실계좌 주문 상태는 실계좌 자동매매 메뉴에서 확인하세요.</p>
       <p className="auto-operation-note">뉴스·DART 확인: {catalystSummary}</p>
     </div>
 

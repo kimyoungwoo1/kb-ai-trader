@@ -99,7 +99,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
     </div><button className="outline-button" onClick={() => void refresh()}>새로고침</button></div>
     <div className="panel" style={{ padding: 20, display: 'grid', gap: 12 }}>
       <p className="notification-hint">{statusError || !status ? '서버 주문 상태 확인 필요' :
-        status.enabled ? '실계좌 시험매매 메뉴에서 자동매매를 잠근 뒤 진행하세요.' :
+        status.enabled ? '실계좌 자동매매 메뉴에서 자동매매를 잠근 뒤 진행하세요.' :
         status.hardEnabled ? '종목과 금액을 점검한 뒤 확인 버튼으로 실제 주문을 보냅니다.' : '서버 시험매매 설정이 잠겨 있습니다.'}</p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <label>종목코드 <input className="live-trial-field" inputMode="numeric" maxLength={6} value={code} disabled={busy} onChange={e => edit(setCode, e.target.value)} /></label>

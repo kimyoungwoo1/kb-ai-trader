@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Lock, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Lock, RefreshCw } from 'lucide-react'
 import LiveOrderLookup from './LiveOrderLookup'
-import LiveRiskPreview from './LiveRiskPreview'
 import LiveAccountHoldings from './LiveAccountHoldings'
 import LiveReadiness from './LiveReadiness'
 import type {AccountHolding,AccountValuation} from './liveAccountView'
-type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
 export type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
 type LiveProgress={
  paperMode:string|null;tick:{result:string;message:string;finished_at:string;scanned:number;filled:number}|null;
  decisions:{event_id:string;code:string;side:string;decision:string;checked_at:string}[]
 }
-type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[];orders?:LiveOrder[];progress?:LiveProgress|null}
+type TrialStatus={enabled:boolean;hardEnabled?:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};orders?:LiveOrder[];progress?:LiveProgress|null}
 const API='/api/live/trial'
 const decisionLabels:Record<string,string>={
  accepted_not_filled:'KB 주문 접수 · 체결 확인 대기', rejected:'KB 주문 거부',
@@ -96,18 +94,15 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
   const autoOrders=status?.orders?.filter(order=>!order.id.startsWith('manual-buy-'))??[]
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">LIVE TRADING · CONTROLLED PILOT</div>
-      <h1>실계좌 시험매매</h1><p>KB증권 실주문 전송 전 안전 제어와 시험 신호를 검증합니다.</p></div>
+      <h1>실계좌 자동매매</h1><p>실주문 잠금, 자동매매 진행 상황, 주문·체결을 확인합니다.</p></div>
       <button className="outline-button" disabled={busy} onClick={()=>void load()}><RefreshCw size={14}/> 새로고침</button>
     </div>
     <div className="panel" style={{padding:20,display:'grid',gap:14}}>
-      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':status.enabled?'실계좌 시험 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
+      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':status.enabled?'실계좌 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
       <p className="notification-hint">{status?.message||'서버 설정과 당일 D1 실행 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
       <div className="notification-meta">
         <span>총 매수 한도: 10,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
-      </div>
-      <div style={{display:'flex',gap:10,alignItems:'center'}}><ShieldCheck size={18}/>
-        <span>실주문 API 검증: {status?.brokerOrdersVerified?'완료':'실운영 미검증 · 소액 시험 전 확인'}</span>
       </div>
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
       {status?.hardEnabled&&!status.enabled&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 승인 후 자동 매수는 별도 재확인 없이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
@@ -136,10 +131,6 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
           </article>)}</div>:<p className="notification-hint">기록된 실주문 판단 없음 · 접수와 체결은 아래 주문 원장에서 확인</p>}
       </>}
     </div>
-    <LiveReadiness token={token}/>
-    <LiveAccountHoldings holdings={holdings} summary={accountSummary} deposit={deposit}
-      depositMessage={depositMessage} accountMessage={accountMessage} accountLoading={accountLoading}
-      onRefreshAccount={onRefreshAccount} pilotOrders={status?.orders}/>
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>실계좌 주문 원장</h3><span>SERVER D1 · 중복 주문/체결 추적</span></div></div>
       <p className="notification-hint">KB 주문번호가 확인되지 않은 SENDING·UNKNOWN 상태는 새 주문으로 자동 재전송하지 않습니다. 잠금은 기존에 접수된 주문을 취소하지 않습니다.</p>
@@ -151,18 +142,16 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
           {(order.state==='UNKNOWN'||order.state==='SENDING'||order.cancel_status==='UNKNOWN')&&<p className="live-trial-inline-error">증권사 처리 여부를 확인하기 전까지 동일 주문을 자동으로 다시 보내지 않아.</p>}
         </article>)}</div>:<p className="notification-hint">자동매매 주문 기록 없음</p>}
     </div>
-    <LiveRiskPreview token={token} holdings={holdings} holdingsLoaded={Boolean(accountSummary||holdings.length)}/>
-    <LiveOrderLookup token={token}/>
-    <div className="panel" style={{padding:20}}>
-      <div className="panel-heading"><div><h3>시험매매 후보 기록</h3><span>SERVER D1 · DRY RUN ONLY</span></div></div>
-      <p className="notification-hint">가상매매 서버에서 확정된 매수 신호 중 1만 원 이하·정규장·2분 이내·당일 첫 종목 조건을 통과한 후보만 기록됩니다. 후보가 기록되어도 실제 매수는 실행되지 않습니다.</p>
-      {status?.candidates?.length?<div className="notification-list">{status.candidates.map(item=>
-        <article key={item.id} className="notification-item">
-          <div className="notification-item-heading"><div><span className="notification-tag">DRY RUN</span>
-          <strong>{item.name} ({item.code})</strong></div><span>{new Date(item.created_at).toLocaleString('ko-KR')}</span></div>
-          <p>{item.quantity}주 × {item.limit_price.toLocaleString('ko-KR')}원 · 총 {item.notional.toLocaleString('ko-KR')}원</p>
-          <p>{item.reason}</p>
-        </article>)}</div>:<div className="ai-empty"><CheckCircle2 size={18}/> 아직 기록된 주문 후보가 없습니다.</div>}
-    </div>
+    <LiveReadiness token={token}/>
+    <details className="panel" style={{padding:20}}>
+      <summary>계좌 잔고·기존 보유종목</summary>
+    <LiveAccountHoldings holdings={holdings} summary={accountSummary} deposit={deposit}
+      depositMessage={depositMessage} accountMessage={accountMessage} accountLoading={accountLoading}
+      onRefreshAccount={onRefreshAccount} pilotOrders={status?.orders}/>
+    </details>
+    <details className="panel" style={{padding:20}}>
+      <summary>KB 주문·체결 조회</summary>
+      <LiveOrderLookup token={token}/>
+    </details>
   </section>
 }

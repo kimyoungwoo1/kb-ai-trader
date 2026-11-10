@@ -38,7 +38,7 @@ export default function LiveAccountHoldings({
   </div>
   <div className="live-pilot-budget">
    <ShieldCheck size={17}/>
-   <span>실계좌 시험매매 한도 <strong>10,000원</strong></span>
+   <span>실계좌 자동매매 한도 <strong>10,000원</strong></span>
    <span>실주문 원장 예약금 <strong>{fmt(reserved)}</strong></span>
    <span>한도 잔여(예약금 기준) <strong>{fmt(trialLeft)}</strong></span>
   </div>
