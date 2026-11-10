@@ -11,7 +11,7 @@ test('batched live account API stays authenticated and read only', () => {
   const route = worker.indexOf('if (url.pathname === "/api/kb/account-batch" && request.method === "POST")')
   assert.ok(auth >= 0 && auth < route)
   const handler = worker.slice(route, worker.indexOf('if (url.pathname === "/api/live/trial"', route))
-  assert.match(handler, /runAccountBatch\(key,async route/)
+  assert.match(handler, /runAccountBatch\(key,async \(route,signal\)/)
   assert.match(batch, /\/api\/kb\/holdings/)
   assert.match(batch, /\/api\/kb\/valuation/)
   assert.match(batch, /\/api\/kb\/deposit/)

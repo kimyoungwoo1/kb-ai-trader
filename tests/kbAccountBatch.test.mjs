@@ -60,3 +60,21 @@ test('normal per-route HTTP 4xx error does not conceal the remaining account rea
  assert.equal(results.results.valuation.success,true)
  assert.equal(results.results.deposit.success,true)
 })
+
+test('batch deadline returns completed data, aborts the slow route and never starts remaining routes',async()=>{
+ const calls=[]
+ let slowSignal
+ const result=await runAccountBatch('deadline-test',async(route,signal)=>{
+  calls.push(route)
+  if(route.endsWith('/holdings'))return {success:true,status:200,data:{dataBody:{Record1:[]}}}
+  slowSignal=signal
+  return new Promise(resolve=>signal.addEventListener('abort',()=>resolve({success:false,status:502}),{once:true}))
+ },Date.now(),15)
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation'])
+ assert.equal(slowSignal.aborted,true)
+ assert.equal(result.results.holdings.success,true)
+ assert.equal(result.results.valuation.stage,'account_batch_deadline')
+ assert.equal(result.results.valuation.error_type,'TIMEOUT')
+ assert.equal(result.results.deposit.stage,'account_batch_deadline')
+ assert.equal(result.results.deposit.error_type,undefined)
+})

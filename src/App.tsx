@@ -131,10 +131,10 @@ export default function App() {
     setLoading(true)
     setMessage('KB증권 계좌 조회 중...')
     setDepositMessage('예수금 조회 중...')
-    // Query independently: failure of holdings or valuation must not skip cash.
     // Do not expose API tokens, account identifiers, or raw response bodies.
     const failures: string[] = []
     let sessionExpired = false
+    let batchFailure = ''
     // One shared account refresh for every menu. The Worker serializes
     // the three read-only KB endpoints and stops after upstream failure.
     // No live-order execution uses these browser values.
@@ -167,8 +167,9 @@ export default function App() {
         }
         return result
       } catch (error) {
-        const reason = error instanceof Error ? error.name + ': ' + error.message : '원인 미확인'
-        failures.push(label + ': 요청 실패 (' + reason.slice(0, 150) + ')')
+        batchFailure = error instanceof Error && error.name === 'TimeoutError'
+          ? '계좌 조회 서버 응답 시간 초과'
+          : '계좌 조회 요청 실패'
         return null
       }
     }
@@ -225,7 +226,7 @@ export default function App() {
           setDepositMessage('예수금 조회 성공 · ' + new Date().toLocaleString('ko-KR'))
         } else {
           setDeposit(null)
-          setDepositMessage(failures.filter(item => item.startsWith('예수금:')).join(' / ') || '예수금 조회 실패')
+          setDepositMessage(batchFailure || failures.find(item => item.startsWith('예수금:')) || '예수금 조회 실패')
         }
       }
       if (sessionExpired) {
@@ -233,12 +234,12 @@ export default function App() {
         setError('세션이 만료되었습니다. 다시 로그인해 주세요.')
         return
       }
-      setMessage(failures.length ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR'))
+      setMessage(batchFailure || (failures.length ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR')))
     } finally {
       // A manual refresh within this window reuses the shared menu state,
       // rather than creating new provider sessions during an outage.
       if (!sessionExpired) accountNextRefreshRef.current =
-        Date.now() + (failures.length ? 15_000 : 10_000)
+        Date.now() + (batchFailure || failures.length ? 15_000 : 10_000)
       setLoading(false)
     }
   }

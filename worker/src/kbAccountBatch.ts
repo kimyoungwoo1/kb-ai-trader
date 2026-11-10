@@ -21,31 +21,48 @@ const originUnreachable=(r:AccountBatchEntry)=>(
    (r.status===502 && String(r.stage||'')==='authentication')
  )
 )
-export async function runAccountBatch(key:string,fetchRoute:(route:string)=>Promise<AccountBatchEntry>,
- now=Date.now()):Promise<AccountBatchResult>{
+export async function runAccountBatch(key:string,fetchRoute:(route:string,signal:AbortSignal)=>Promise<AccountBatchEntry>,
+ now=Date.now(), budgetMs=40_000):Promise<AccountBatchResult>{
  if(cache?.key===key&&now<cache.expires){
   return {...cache.result,cache_age_ms:Math.max(0,now-cache.savedAt)}
  }
  if(inflight?.key===key)return inflight.promise
  const task=(async()=>{
   const results:Record<string,AccountBatchEntry>={}
+  const controller=new AbortController()
+  let timer:ReturnType<typeof setTimeout>|undefined
+  const deadline=new Promise<null>(resolve=>{
+   timer=setTimeout(()=>{
+    resolve(null)
+    controller.abort()
+   },budgetMs)
+  })
   let blocked=false
-  for(const [name,path] of routes){
-   if(blocked){
-    results[name]={success:false,status:503,stage:'account_upstream_cooldown',
-      message:'KB 연결 장애로 나머지 화면 조회를 보류했습니다.'}
-    continue
+  try{
+   for(const [name,path] of routes){
+    if(controller.signal.aborted){
+     results[name]={success:false,status:504,stage:'account_batch_deadline',
+       message:'계좌 조회 시간 한도 도달로 이 항목의 조회를 시작하지 못했습니다.'}
+     continue
+    }
+    if(blocked){
+     results[name]={success:false,status:503,stage:'account_upstream_cooldown',
+       message:'KB 연결 장애로 나머지 화면 조회를 보류했습니다.'}
+     continue
+    }
+    try{
+     const entry=await Promise.race([fetchRoute(path,controller.signal),deadline])
+     results[name]=entry??{success:false,status:504,stage:'account_batch_deadline',
+       error_type:'TIMEOUT',message:'KB 응답이 계좌 조회 시간 한도를 초과했습니다.'}
+    }catch{
+     results[name]={success:false,status:502,stage:'account_batch',
+       error_type:'NETWORK',message:'계좌 조회 중 연결 오류'}
+    }
+    // The gateway is already unreachable; avoid immediately opening two more
+    // connections. No broker order is submitted from this code path.
+    blocked=originUnreachable(results[name])
    }
-   try{
-    results[name]=await fetchRoute(path)
-   }catch{
-    results[name]={success:false,status:502,stage:'account_batch',
-      error_type:'NETWORK',message:'계좌 조회 중 연결 오류'}
-   }
-   // The gateway is already unreachable; avoid immediately opening two more
-   // connections. No broker order is submitted from this code path.
-   blocked=originUnreachable(results[name])
-  }
+  }finally{clearTimeout(timer)}
   const result:AccountBatchResult={success:true,results,checked_at:new Date().toISOString()}
   // Cache a consistent read-only UI snapshot for at most 10 seconds, or a
   // gateway failure for 15 seconds to prevent refresh storms. Never persist
