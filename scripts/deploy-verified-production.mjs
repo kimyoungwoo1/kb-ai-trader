@@ -230,6 +230,19 @@ async function main(){
   // release creates it inside the new Worker version; subsequent deploys
   // inherit that SAME key from the currently active deployment.
   const oldBindings=new Map(bindingEntries(live).map(b=>[b.name,b]))
+  const relayNames=['KB_ACCOUNT_RELAY_ORIGIN','KB_ACCOUNT_RELAY_TOKEN']
+  const relayInput=relayNames.map(name=>process.env[name])
+  const inheritedRelay=relayNames.filter(name=>oldBindings.has(name))
+  ensure(tlsProofOnly||!relayInput.some(Boolean)||relayInput.every(Boolean),
+    'Windows 계좌 중계 URL과 인증 토큰을 함께 설정해야 합니다.')
+  ensure(tlsProofOnly||relayInput.every(Boolean)||inheritedRelay.length!==1,
+    '운영 계좌 중계 설정이 일부만 있어 배포를 중단합니다.')
+  if(!tlsProofOnly&&relayInput.every(Boolean))
+    ensure(/^https:\/\/[a-z0-9.-]+$/i.test(relayInput[0])&&relayInput[1].length>=32,
+      'Windows 계좌 중계 HTTPS 주소 또는 인증 토큰 형식 오류')
+  const relayBindings=tlsProofOnly?[]:relayInput.every(Boolean)?
+    relayNames.map((name,index)=>({name,type:'secret_text',text:relayInput[index]})):
+    inheritedRelay.map(name=>({name,type:'inherit',version_id:rollbackVersion}))
   const pushNames=['VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY','VAPID_SUBJECT']
   const present=pushNames.filter(name=>oldBindings.has(name))
   ensure(present.length===0||present.length===pushNames.length,'VAPID 키가 일부만 설정되어 있습니다. 키가 교체되지 않도록 배포 중단')
@@ -380,6 +393,7 @@ async function main(){
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
+        ...relayBindings,
         ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
@@ -419,6 +433,8 @@ async function main(){
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
+  ensure(relayBindings.every(binding=>newBindings.get(binding.name)==='secret_text'),
+    'Windows 계좌 중계 바인딩 확인 실패 · 운영 전환 없음')
   if(privateEgress)ensure(newBindings.get('KB_EGRESS')==='service',
     '격리 진단 Private Egress Service Binding 확인 실패 · 운영 전환 없음')
   console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인'+
