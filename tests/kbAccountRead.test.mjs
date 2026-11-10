@@ -14,6 +14,15 @@ test('temporary upstream 502 HTML is retried once and recovers',async()=>{
   assert.equal(calls,2)
  }finally{globalThis.fetch=old}
 })
+test('temporary upstream 522 HTML is retried once and recovers',async()=>{
+ const old=globalThis.fetch;let calls=0
+ globalThis.fetch=async()=>{calls++;return calls===1?new Response('<html>Bad Gateway</html>',{status:522,headers:{'content-type':'text/html'}}):Response.json({dataBody:{Record1:[]}})}
+ try{
+  const r=await run()
+  assert.equal(r.success,true)
+  assert.equal(calls,2)
+ }finally{globalThis.fetch=old}
+})
 test('repeated 502 HTML fails closed with safe status/type not body or credentials',async()=>{
  const old=globalThis.fetch;let calls=0
  globalThis.fetch=async()=>{calls++;return new Response('<html>account=SECRET</html>',{status:502,headers:{'content-type':'text/html'}})}

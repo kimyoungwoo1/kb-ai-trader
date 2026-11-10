@@ -16,7 +16,7 @@ export async function readKbAccountJson(url:string,headers:Record<string,string>
   const contentType=(response.headers.get('content-type')||'').split(';')[0].trim().slice(0,60)
   // Some KB/WAF gateway failures return HTML instead of JSON, often with 502/503.
   // Retry only read-only upstream transport failures, never ambiguous 200 responses.
-  if((response.status===502||response.status===503||response.status===504)&&attempt===0){
+  if((response.status===502||response.status===503||response.status===504||response.status===522)&&attempt===0){
    retried=true
    await response.body?.cancel().catch(()=>{})
    continue

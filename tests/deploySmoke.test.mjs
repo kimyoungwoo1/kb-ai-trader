@@ -69,7 +69,7 @@ test('deploy probe fails closed when holdings or valuation read is rejected',asy
  }finally{globalThis.fetch=original}
 })
 
-test('deploy probe stops at first KB 522 and never claims successful valuation',async()=>{
+test('deploy probe stops after persistent KB 522 and never claims successful valuation',async()=>{
  const previous=globalThis.fetch
  let holdings=0,valuation=0
  const isolated={...env,KB_APP_KEY:'probe-522-single-flight'}
@@ -93,7 +93,7 @@ test('deploy probe stops at first KB 522 and never claims successful valuation',
   assert.equal(result.checks.holdings.upstream_status,522)
   assert.equal(result.checks.valuation.stage,'skipped_upstream_unavailable')
   assert.equal(result.checks.valuation.success,false)
-  assert.equal(holdings,1)
+  assert.equal(holdings,2)
   assert.equal(valuation,0)
  }finally{globalThis.fetch=previous}
 })
