@@ -60,7 +60,7 @@ export async function disarmLiveTrading(db:Db|undefined){
  }catch{return false}
 }
 export async function armLiveTrading(db:Db|undefined,env:LiveEnv,confirmation:string,now=new Date()){
- if(!db||!hardSwitch(env)||confirmation!=='실계좌 1만원 자동매매 실행'||!inSession(now))return false
+ if(!db||!hardSwitch(env)||confirmation!=='실주문 시작'||!inSession(now))return false
  try{
   const [active,cancels]=await Promise.all([
    db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),

@@ -108,9 +108,9 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       {status?.hardEnabled&&!status.enabled&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 승인 후 자동 매수는 별도 재확인 없이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
       {status?.hardEnabled&&!status.enabled&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
-          placeholder="실계좌 1만원 자동매매 실행" value={confirmation}
+          placeholder="실주문 시작" value={confirmation}
           onChange={e=>setConfirmation(e.target.value)}/>
-        <button className="outline-button" disabled={busy||confirmation!=='실계좌 1만원 자동매매 실행'}
+        <button className="outline-button" disabled={busy||confirmation!=='실주문 시작'}
           onClick={()=>void arm()}>오늘 실거래 활성화</button>
       </div>}
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}

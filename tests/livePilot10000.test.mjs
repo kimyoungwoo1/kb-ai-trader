@@ -19,7 +19,7 @@ test('10,000 KRW pilot cap is enforced at every independent buy boundary',()=>{
 })
 test('ordinary production deployment remains hard-locked against real orders',()=>{
  assert.match(execution,/ALLOW_REAL_10000_TRIAL_2026/)
- assert.match(execution,/실계좌 1만원 자동매매 실행/)
+ assert.match(execution,/실주문 시작/)
  assert.match(deploy,/LIVE_TRADING_HARD_ENABLE is deliberately never inherited/)
  assert.doesNotMatch(deploy,/\{name:'LIVE_TRADING_HARD_ENABLE',type:'secret_text'/)
 })

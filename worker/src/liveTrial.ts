@@ -150,7 +150,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
     if(action==='arm'){
       // Even with the explicit deployment flag, do not arm on a stale
       // or unreachable KB order-history service. This check does not submit.
-      if(String(body.confirmation||'')!=='실계좌 1만원 자동매매 실행')
+      if(String(body.confirmation||'')!=='실주문 시작')
         return reply({success:false,enabled:false,message:'1만원 실거래 실행 확인 문구가 일치하지 않습니다.'},423)
       if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
         return reply({success:false,enabled:false,message:'KB 주문조회 인증 정보가 없습니다.'},423)

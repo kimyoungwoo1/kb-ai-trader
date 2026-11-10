@@ -114,7 +114,7 @@ test('production remains HARD LOCKED when execution flag is absent',async()=>{
   const gate=await getLiveGate(db,{KB_APP_KEY:'mock'},monday)
   assert.equal(gate.enabled,false)
   assert.equal(await processLiveFill(db,{KB_APP_KEY:'mock'},fill,monday),'locked')
-  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'실계좌 1만원 자동매매 실행',monday),false)
+  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'실주문 시작',monday),false)
   assert.equal(network,0)
   assert.equal(db.rows.length,0)
  }finally{globalThis.fetch=orig}
@@ -151,7 +151,7 @@ test('missing broker response permanently blocks automatic retry',async()=>{
 test('wrong confirmation or market closure blocks arming',async()=>{
  const db=new Db()
  assert.equal(await armLiveTrading(db,env('arm-key'),'wrong',monday),false)
- assert.equal(await armLiveTrading(db,env('arm-key'),'실계좌 1만원 자동매매 실행',new REAL_DATE('2026-11-08T23:00:00Z')),false)
+ assert.equal(await armLiveTrading(db,env('arm-key'),'실주문 시작',new REAL_DATE('2026-11-08T23:00:00Z')),false)
  assert.equal(await disarmLiveTrading(db),true)
  assert.equal((await getLiveGate(db,env('arm-key'),monday)).enabled,false)
 })
