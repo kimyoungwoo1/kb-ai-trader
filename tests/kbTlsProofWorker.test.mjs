@@ -248,3 +248,26 @@ test('private service binding is opted-in only for isolated version URLs and nev
  assert.match(source,/env\.KB_EGRESS\?env\.KB_EGRESS\.readOnly/)
  assert.ok(!main.includes('KB_EGRESS'))
 })
+
+test('same quote and OAuth token are compared in both orders without exposing the response body',async()=>{
+ const original=globalThis.fetch, socket=brokerSocket()
+ const calls=[]
+ globalThis.fetch=async(url,options)=>{
+  calls.push(String(url))
+  if(String(url).endsWith('/oauth2/token'))return Response.json(statuses.auth)
+  assert.ok(String(url).endsWith('/api/v1/ivu10140'))
+  assert.equal(options.headers.Authorization,'bearer SUPER_PRIVATE_ACCESS_TOKEN')
+  assert.equal(JSON.parse(options.body).dataBody.shrt_cd,'005930')
+  return new Response('gateway body', {status:522})
+ }
+ try{
+  const report=await imported.compareKbQuoteTransports(key)
+  assert.equal(report.oauth.status,'PASS')
+  assert.deepEqual(report.attempts.map(({transport,httpStatus})=>[transport,httpStatus]),
+   [['fetch',522],['tls',200],['tls',200],['fetch',522]])
+  assert.equal(calls.filter(url=>url.endsWith('/oauth2/token')).length,1)
+  assert.ok(socket.calls.every(call=>call.path==='/api/v1/ivu10140'&&
+   call.header.includes('SUPER_PRIVATE_ACCESS_TOKEN')&&JSON.parse(call.body).dataBody.shrt_cd==='005930'))
+  assert.doesNotMatch(JSON.stringify(report),/SUPER_PRIVATE_ACCESS_TOKEN|gateway body|22222/)
+ }finally{globalThis.fetch=original;socket.restore()}
+})

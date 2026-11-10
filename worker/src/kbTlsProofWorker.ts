@@ -6,6 +6,7 @@
  */
 import {kbReadOnlyTlsRequest} from './kbSocketReadOnly'
 import {connect} from 'cloudflare:sockets'
+import {getKbAccessToken,KbAuthError} from './kbToken'
 
 type Env={
  DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string;
@@ -155,16 +156,9 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  }
  // Exercise the same quote endpoint and header as automatic monitoring.
  try{
-  const reply=await kbRead({path:'/api/v1/ivu10140',body:payload({excg_clsf:'1',shrt_cd:'005930'}),
+  const reply=await kbRead({path:quotePath,body:quoteBody(),
    token,quoteAppKey:env.KB_APP_KEY,timeoutMs:9000})
-  const data=reply.json as any
-  const resultCode=String(data?.dataHeader?.resultCode??'')
-  const body=data?.dataBody
-  const raw=body?.now_prc??body?.stck_prpr??body?.cur_prc??body?.current_price??body?.price??body?.last_price??body?.prpr
-  const price=Number(String(raw??'').replace(/,/g,''))
-  const valid=reply.status===200&&['','0','0000','200'].includes(resultCode)&&Number.isFinite(price)&&price>0
-  checks.quote={status:valid?'PASS':'BLOCKED',httpStatus:reply.status,
-   detail:valid?'KB_QUOTE_PRICE_VALID':'KB_QUOTE_UNAVAILABLE'}
+  checks.quote=quoteResult(reply.status,reply.json)
  }catch(error){
   checks.quote={status:'BLOCKED',detail:classify(error)}
  }
@@ -190,11 +184,61 @@ export async function runKbTlsProof(env:Env,now=new Date()):Promise<{
  }
  return done()
 }
+const quotePath='/api/v1/ivu10140'
+const quoteBody=()=>payload({excg_clsf:'1',shrt_cd:'005930'})
+function quoteResult(status:number,json:unknown):SafeResult{
+ const data=json as any
+ const resultCode=String(data?.dataHeader?.resultCode??'')
+ const body=data?.dataBody
+ const raw=body?.now_prc??body?.stck_prpr??body?.cur_prc??body?.current_price??body?.price??body?.last_price??body?.prpr
+ const price=Number(String(raw??'').replace(/,/g,''))
+ const valid=status===200&&['','0','0000','200'].includes(resultCode)&&Number.isFinite(price)&&price>0
+ return {status:valid?'PASS':'BLOCKED',httpStatus:status,
+  detail:valid?'KB_QUOTE_PRICE_VALID':status===200?'KB_QUOTE_INVALID':'KB_QUOTE_HTTP_ERROR'}
+}
+export async function compareKbQuoteTransports(env:Env){
+ const attempts: Array<SafeResult&{transport:'fetch'|'tls';durationMs:number}>=[]
+ let token:string
+ try{
+  // Use the normal HTTP OAuth route for one shared token, even when socket OAuth cannot connect.
+  token=await getKbAccessToken({KB_APP_KEY:env.KB_APP_KEY,KB_APP_SECRET:env.KB_APP_SECRET})
+ }catch(error){
+  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?error.httpStatus:undefined},attempts}
+ }
+ for(const transport of ['fetch','tls','tls','fetch'] as const){
+  const start=Date.now()
+  let check:SafeResult
+  try{
+   if(transport==='fetch'){
+    const response=await fetch('https://developer.kbsec.com:32484'+quotePath,{
+     method:'POST',headers:{Authorization:'bearer '+token,appKey:env.KB_APP_KEY!,'Content-Type':'application/json'},
+     body:JSON.stringify(quoteBody()),signal:AbortSignal.timeout(12_000),redirect:'error'
+    })
+    const data=response.ok?await response.json().catch(()=>null):null
+    check=quoteResult(response.status,data)
+   }else{
+    const input={path:quotePath,body:quoteBody(),token,quoteAppKey:env.KB_APP_KEY,timeoutMs:12_000}
+    const reply=await (env.KB_EGRESS?env.KB_EGRESS.readOnly(input):kbReadOnlyTlsRequest(input))
+    check=quoteResult(reply.status,reply.json)
+   }
+  }catch(error){
+   check={status:'BLOCKED',detail:transport==='tls'?classify(error):
+    error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)?'KB_FETCH_TIMEOUT':'KB_FETCH_CONNECTION_ERROR'}
+  }
+  attempts.push({...check,transport,durationMs:Date.now()-start})
+  if(check.httpStatus===429)break
+ }
+ return {oauth:{status:'PASS'},attempts}
+}
 export default{
  async fetch(request:Request,env:Env):Promise<Response>{
   if(request.method!=='POST'||new URL(request.url).pathname!=='/api/deploy/tls-proof'||
     !env.DEPLOY_PROBE_TOKEN||request.headers.get('X-Deploy-Probe')!==env.DEPLOY_PROBE_TOKEN){
    return Response.json({success:false},{status:404})
+  }
+  if(request.headers.get('X-KB-Diagnostic')==='quote-compare'){
+   return Response.json({success:true,mode:'ISOLATED_KB_QUOTE_COMPARE',realOrderSent:false,
+    ...await compareKbQuoteTransports(env)},{headers:{'Cache-Control':'no-store'}})
   }
   const result=await runKbTlsProof(env)
   return Response.json({success:true,...result},{headers:{

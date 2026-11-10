@@ -10,10 +10,11 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
+const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
 const livePilot10000 = process.argv.includes('--live-pilot-10000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000'].includes(arg))||
-  (privateEgress&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000','--quote-compare'].includes(arg))||
+  (privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot10000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인')
   throw Error('1만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -426,12 +427,25 @@ async function main(){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
     const result=await fetch(previewOrigin+'/api/deploy/tls-proof',{
-      method:'POST',headers:{'X-Deploy-Probe':probeKey},
+      method:'POST',headers:{'X-Deploy-Probe':probeKey,...(quoteCompare?{'X-KB-Diagnostic':'quote-compare'}:{})},
       signal:AbortSignal.timeout(95000)
     })
     ensure(result.ok,'격리 TLS 진단 Worker 응답 실패 (HTTP '+result.status+')')
     let summary
     try{summary=await result.json()}catch{throw Error('격리 TLS 진단 응답 형식 오류')}
+    if(quoteCompare){
+      ensure(summary?.success===true&&summary.mode==='ISOLATED_KB_QUOTE_COMPARE'&&
+        summary.realOrderSent===false&&Array.isArray(summary.attempts),'현재가 경로 비교 결과 오류')
+      const safe=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,48}$/.test(value)?value:
+        Number.isSafeInteger(value)&&value>=0&&value<=999999?String(value):'-'
+      console.log('○ OAuth '+safe(summary.oauth?.status)+' · HTTP '+safe(summary.oauth?.httpStatus))
+      for(const attempt of summary.attempts){
+        console.log('○ '+safe(attempt.transport)+' '+safe(attempt.status)+' · HTTP '+safe(attempt.httpStatus)+
+          ' · '+safe(attempt.durationMs)+'ms · '+safe(attempt.detail))
+      }
+      console.log('✓ 경로 비교 종료 · 운영 트래픽 변경 없음')
+      return
+    }
     ensure(summary?.success===true&&summary?.mode==='ISOLATED_TLS_READ_ONLY'&&
       summary?.realOrderSent===false,'진단 Worker 모드 검증 실패 · 안전 중단')
     const safe=(v)=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,36}$/.test(v)?v:

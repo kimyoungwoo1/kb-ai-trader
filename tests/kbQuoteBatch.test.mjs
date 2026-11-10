@@ -119,6 +119,33 @@ test('HTML gateway 522 is preserved and server scan stops before the next KB req
     const failure = await scan.json()
     assert.equal(failure.stage, 'kb_upstream')
     assert.match(failure.message, /HTTP 522/)
-    assert.equal(requests, 2)
+    assert.equal(requests, 3)
   } finally { globalThis.fetch = oldFetch }
+})
+
+test('intermittent 522 retries only failed symbols and a sustained outage gets one probe',async()=>{
+ const saved=globalThis.fetch
+ let recover=true
+ const calls=new Map()
+ globalThis.fetch=async(url,options)=>{
+  if(String(url).endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'token',expires_in:86400}})
+  const code=JSON.parse(options.body).dataBody.shrt_cd
+  const count=(calls.get(code)||0)+1
+  calls.set(code,count)
+  if(recover&&(code===stocks[2].code||count===2))
+   return Response.json({dataHeader:{resultCode:'0'},dataBody:{now_prc:'12300'}})
+  return new Response('gateway timeout',{status:522})
+ }
+ try{
+  const sample=stocks.slice(0,3)
+  const first=await (await worker.fetch(req(sample),mkEnv('quote-recover'))).json()
+  assert.equal(first.received,3)
+  assert.deepEqual(sample.map(({code})=>calls.get(code)),[2,2,1])
+  recover=false
+  calls.clear()
+  const second=await (await worker.fetch(req(sample),mkEnv('quote-sustained-522'))).json()
+  assert.equal(second.received,0)
+  assert.deepEqual(sample.map(({code})=>calls.get(code)),[2,1,1])
+  assert.ok(second.results.every(item=>item.upstream_status===522))
+ }finally{globalThis.fetch=saved}
 })
