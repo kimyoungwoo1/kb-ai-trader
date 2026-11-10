@@ -2,7 +2,7 @@
  * Server Cron observability; independent from the paper trading ledger.
  * Failures in monitoring do not alter simulation state or trigger orders.
  */
-import { serverPaperTick, type TickOutcome } from './serverPaper'
+import { marketOpen, serverPaperTick, type TickOutcome } from './serverPaper'
 
 type Db = any
 type Post = (path: string, data: unknown) => Promise<any>
@@ -13,6 +13,15 @@ export const isCronHealthy = (last: string | null, now = Date.now()) => {
   const time = Date.parse(last || '')
   return Number.isFinite(time) && now - time >= 0 && now - time <= 3 * 60_000
 }
+export function paperCronPhase(scheduledAt:Date,now:Date):'market'|'close'|'off'{
+  if (marketOpen(scheduledAt) && marketOpen(now)) return 'market'
+  const kst=new Date(scheduledAt.getTime()+9*3600_000)
+  const currentKst=new Date(now.getTime()+9*3600_000)
+  const day=kst.getUTCDay()
+  if(day<1||day>5||kst.getUTCHours()!==15||kst.getUTCMinutes()!==35)return 'off'
+  return now>=scheduledAt&&currentKst.toISOString().slice(0,10)===kst.toISOString().slice(0,10)?'close':'off'
+}
+
 export async function readServerCronMonitor(db: Db): Promise<{
   last_tick: MonitorRow | null; recent: MonitorRow[]; last_success: MonitorRow | null;
   today: { total: number; completed: number; errors: number; skipped: number };
@@ -49,11 +58,6 @@ export async function runMonitoredPaperCron(db: Db | undefined, post: Post, date
       'finished_at=excluded.finished_at, result=excluded.result, message=excluded.message, scanned=excluded.scanned, filled=excluded.filled ' +
       "WHERE server_paper_cron_runs.result IN ('duplicate','busy','error') AND excluded.result NOT IN ('duplicate','busy')"
     ).bind(slot,started,new Date().toISOString(),outcome.result,outcome.message.slice(0,180),outcome.scanned,outcome.filled).run()
-    // Daily pruning; retain 14 days of execution history without growing D1 indefinitely.
-    const kstHour = new Date(date.getTime()+9*3600_000).getUTCHours()
-    const kstMinute = new Date(date.getTime()+9*3600_000).getUTCMinutes()
-    if (kstHour===0 && kstMinute===0) await db.prepare('DELETE FROM server_paper_cron_runs WHERE slot < ?')
-      .bind(slot-14*24*60).run()
   } catch (error) {
     // The core simulation result should survive an observability outage.
     console.error('Cron monitor D1 write failed',error instanceof Error ? error.name : 'unknown')

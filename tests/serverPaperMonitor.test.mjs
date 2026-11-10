@@ -4,7 +4,7 @@ import { build } from 'esbuild'
 import {readFileSync} from 'node:fs'
 
 const bundled = await build({entryPoints:['worker/src/serverPaperMonitor.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const { isCronHealthy, runMonitoredPaperCron, readServerCronMonitor } = await import('data:text/javascript;base64,'+
+const { isCronHealthy, paperCronPhase, runMonitoredPaperCron, readServerCronMonitor } = await import('data:text/javascript;base64,'+
   Buffer.from(bundled.outputFiles[0].contents).toString('base64'))
 
 const createDb = () => {
@@ -65,4 +65,19 @@ test('high-frequency heartbeat bypasses Cron monitor and full snapshot assembly'
  assert.doesNotMatch(route,/action === 'status' \|\| action === 'heartbeat'/)
  assert.match(paper,/if \(action === 'heartbeat'\) return ok\(\{ \.\.\.common, heartbeat:true \}\)/)
  assert.match(client,/\+\+polls % 4 === 0 \? 'status' : 'heartbeat'/)
+})
+
+test('Cron only monitors weekday sessions and runs a single scheduled close job',()=>{
+ const check=(scheduled,actual=scheduled)=>paperCronPhase(new Date(scheduled),new Date(actual))
+ assert.equal(check('2026-11-08T23:59:00Z'),'off')
+ assert.equal(check('2026-11-09T00:00:00Z'),'market')
+ assert.equal(check('2026-11-09T06:29:00Z'),'market')
+ assert.equal(check('2026-11-09T06:29:00Z','2026-11-09T06:30:00Z'),'off')
+ assert.equal(check('2026-11-09T06:30:00Z'),'off')
+ assert.equal(check('2026-11-09T06:35:00Z','2026-11-09T06:36:00Z'),'close')
+ assert.equal(check('2026-11-09T06:35:00Z','2026-11-10T06:36:00Z'),'off')
+ assert.equal(check('2026-11-09T06:36:00Z'),'off')
+ assert.equal(check('2026-11-14T06:35:00Z'),'off')
+ assert.deepEqual(JSON.parse(readFileSync('worker/wrangler.jsonc','utf8')).triggers.crons,
+  ['* 0-5 * * MON-FRI','0-29 6 * * MON-FRI','35 6 * * MON-FRI'])
 })

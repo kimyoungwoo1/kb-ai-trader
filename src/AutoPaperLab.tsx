@@ -230,8 +230,8 @@ export default function AutoPaperLab({
       {serverMode && serverInfo?.migrated && <section className="panel" aria-label="서버 Cron 실행 모니터">
         <div className="panel-heading">
           <div><h3>서버 자동매매 실행 모니터</h3><span>SERVER CRON · D1 실행 이력 · 최근 12회</span></div>
-          <span className={'analysis-source-state ' + (cronRecent && serverInfo.cron_monitor_available ? 'ready' : 'blocked')}>
-            {!serverInfo.cron_monitor_available ? '모니터 연결 확인 필요' : !lastCronAt ? '첫 실행 기록 대기' : cronRecent ? '최근 실행 확인' : '최근 실행 지연'}
+          <span className={'analysis-source-state ' + ((cronRecent || !health.inSession) && serverInfo.cron_monitor_available ? 'ready' : 'blocked')}>
+            {!serverInfo.cron_monitor_available ? '모니터 연결 확인 필요' : !health.inSession ? '정규장 대기' : !lastCronAt ? '첫 실행 기록 대기' : cronRecent ? '최근 실행 확인' : '최근 실행 지연'}
           </span>
         </div>
         <div className="auto-health-grid">
@@ -254,7 +254,7 @@ export default function AutoPaperLab({
             </table>
           </div>
         </details>
-        <p className="auto-operation-note">Cron 호출은 장 마감에도 기록됩니다. 서버가 실행 중인지와 실제 장중 매매 검사가 수행됐는지는 별도로 확인해야 합니다. 이 이력은 D1에 최대 14일 보관됩니다.</p>
+        <p className="auto-operation-note">정규장에만 1분 감시를 실행합니다. 장 마감 후에는 15:35에 요약·미확정 주문 조회만 한 번 수행합니다.</p>
       </section>}
       <div className="auto-health-grid">
         <div><span>최근 정상 검사</span><strong>{formatTime(lastCompleted?.processedAt)}</strong><small>진단 결과를 실제로 평가한 시각</small></div>

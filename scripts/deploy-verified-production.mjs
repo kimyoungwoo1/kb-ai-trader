@@ -497,17 +497,29 @@ async function main(){
   // This uploader uses the Cloudflare Versions API, not wrangler deploy.
   // Cron triggers must therefore be applied separately after the Worker code passes smoke checks.
   if(paperDbId){
-    const currentBefore=await api(root+'/workers/scripts/'+name+'/schedules')
-    const oldSchedules=Array.isArray(currentBefore)?currentBefore:currentBefore.schedules||[]
-    const newSchedules=[...oldSchedules.map(item=>({cron:item.cron})).filter(item=>item.cron!=='* * * * *'),{cron:'* * * * *'}]
-    await api(root+'/workers/scripts/'+name+'/schedules',{
-      method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(newSchedules)
+    const schedulePath=root+'/workers/scripts/'+name+'/schedules'
+    const scheduleEntries=value=>(Array.isArray(value)?value:value.schedules||[]).map(({cron})=>({cron}))
+    const oldSchedules=scheduleEntries(await api(schedulePath))
+    const managed=config.triggers.crons
+    const retired='* * * * *'
+    const scheduleKey=cron=>cron.trim().toLowerCase().replace(/\s+/g,' ')
+    const managedKeys=managed.map(scheduleKey)
+    const newSchedules=[...oldSchedules.filter(({cron})=>scheduleKey(cron)!==retired&&!managedKeys.includes(scheduleKey(cron))),
+      ...managed.map(cron=>({cron}))]
+    const putSchedules=schedules=>api(schedulePath,{
+      method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(schedules),
     })
-    const currentSchedules=await api(root+'/workers/scripts/'+name+'/schedules')
-    ensure((Array.isArray(currentSchedules)?currentSchedules:currentSchedules.schedules||[]).some(item=>item.cron==='* * * * *'),
-      '서버 감시 Cron 등록 확인 실패')
-    console.log('✓ 매 1분 서버 가상매매 Cron 활성화 확인')
+    try{
+      await putSchedules(newSchedules)
+      const current=scheduleEntries(await api(schedulePath)).map(({cron})=>scheduleKey(cron))
+      ensure(!current.includes(retired)&&managedKeys.every(cron=>current.includes(cron)),
+        '정규장 및 마감 작업 Cron 등록 확인 실패')
+    }catch(error){
+      try{await putSchedules(oldSchedules)}
+      catch{console.error('⚠ 기존 Cron 스케줄 복구 실패 · 운영 설정 확인 필요')}
+      throw error
+    }
+    console.log('✓ 평일 정규장 1분 감시 · 15:35 마감 작업 Cron 확인')
   }
   console.log('✅ 운영 반영 성공: '+domain)
 }

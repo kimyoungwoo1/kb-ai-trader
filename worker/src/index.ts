@@ -1,5 +1,5 @@
 import { serverPaperApi } from './serverPaper'
-import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
+import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
@@ -1217,7 +1217,11 @@ const service = {
     if (url.pathname.startsWith("/api/")) return json({ success: false, message: "Not Found" }, 404);
     return env.ASSETS.fetch(request);
   },
-  async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+    const now=new Date();
+    const scheduledAt=new Date(controller.scheduledTime ?? now.getTime());
+    const phase=paperCronPhase(scheduledAt,now);
+    if(phase==='off')return;
     const post = async (path: string, body: unknown): Promise<any> => {
       if (!env.DASHBOARD_API_KEY) throw Error('서버 API 인증 설정 없음');
       const response = await service.fetch(new Request('https://localhost'+path,{
@@ -1229,8 +1233,8 @@ const service = {
       return result;
     };
     context.waitUntil((async()=>{
-      const outcome=await runMonitoredPaperCron(env.PAPER_DB,post);
-      if(outcome.fills?.length){
+      const outcome=phase==='market'?await runMonitoredPaperCron(env.PAPER_DB,post,now):null;
+      if(outcome?.fills?.length){
         for(const fill of outcome.fills){
           // Audit only: no live order calls. DB uniqueness prevents duplicate
           // candidate creation even across repeated Cron events.
@@ -1253,37 +1257,42 @@ const service = {
         // order was rejected and never submit a duplicate order.
         try{await reconcileLiveOrders(env.PAPER_DB,env)}
         catch{console.warn('Real pilot reconciliation unavailable')}
-        // Cancel still-open limit orders at most once after 5 minutes.
-        // An irrevocable D1 cancel claim is written before any broker request.
-        // Every ordinary deployment remains hard-locked from real order writes.
-        try{await cancelStaleLiveOrders(env.PAPER_DB,env)}
-        catch{console.warn('Real pilot cancellation monitoring unavailable')}
-        // A 3-error streak triggers a single event keyed by the beginning of the streak.
-        // A successful scan immediately after an error streak triggers recovery.
-        try{
-          const rows=await env.PAPER_DB.prepare(
-            "SELECT slot,result,message FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 5"
-          ).all();
-          const recent=(rows.results||[]) as Array<{slot:number;result:string;message:string}>;
-          const current=recent[0];
-          if(current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
-            const cooldownAt=new Date(Date.now()-30*60_000).toISOString();
-            const recentAlert=await env.PAPER_DB.prepare("SELECT id FROM paper_notifications WHERE kind='error' AND created_at>? ORDER BY id DESC LIMIT 1")
-              .bind(cooldownAt).first();
-            if(!recentAlert)await publishNotification(env,{eventKey:'error:'+current.slot,kind:'error',
-              title:'KB AI TRADER · 서버/API 연속 오류',
-              body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
-          }
-          if((current?.result==='scanned'||current?.result==='watched')&&recent[1]?.result==='error'){
-            await publishNotification(env,{eventKey:'recovery:'+current.slot,kind:'recovery',
-              title:'KB AI TRADER · 서버 검사 복구',
-              body:'KB증권 시세/전략 서버 검사 재개 · '+current.message.slice(0,150)});
-          }
-        }catch {console.warn('Notification monitoring event failed')}
+        if(phase==='market'){
+          // Cancel still-open limit orders at most once after 5 minutes.
+          // An irrevocable D1 cancel claim is written before any broker request.
+          // Every ordinary deployment remains hard-locked from real order writes.
+          try{await cancelStaleLiveOrders(env.PAPER_DB,env)}
+          catch{console.warn('Real pilot cancellation monitoring unavailable')}
+          // A 3-error streak triggers a single event keyed by the beginning of the streak.
+          // A successful scan immediately after an error streak triggers recovery.
+          try{
+            const rows=await env.PAPER_DB.prepare(
+              "SELECT slot,result,message FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 5"
+            ).all();
+            const recent=(rows.results||[]) as Array<{slot:number;result:string;message:string}>;
+            const current=recent[0];
+            if(current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
+              const cooldownAt=new Date(Date.now()-30*60_000).toISOString();
+              const recentAlert=await env.PAPER_DB.prepare("SELECT id FROM paper_notifications WHERE kind='error' AND created_at>? ORDER BY id DESC LIMIT 1")
+                .bind(cooldownAt).first();
+              if(!recentAlert)await publishNotification(env,{eventKey:'error:'+current.slot,kind:'error',
+                title:'KB AI TRADER · 서버/API 연속 오류',
+                body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
+            }
+            if((current?.result==='scanned'||current?.result==='watched')&&recent[1]?.result==='error'){
+              await publishNotification(env,{eventKey:'recovery:'+current.slot,kind:'recovery',
+                title:'KB AI TRADER · 서버 검사 복구',
+                body:'KB증권 시세/전략 서버 검사 재개 · '+current.message.slice(0,150)});
+            }
+          }catch {console.warn('Notification monitoring event failed')}
+        }
         // Daily summary is recorded once after the regular session and never triggers orders.
-        const now=new Date(),kst=new Date(now.getTime()+9*3600_000);
-        const day=kst.getUTCDay(),min=kst.getUTCHours()*60+kst.getUTCMinutes();
-        if(day>=1&&day<=5&&min>=15*60+35&&min<=15*60+40){
+        if(phase==='close'){
+          const kst=new Date(scheduledAt.getTime()+9*3600_000);
+          try{
+            await env.PAPER_DB.prepare('DELETE FROM server_paper_cron_runs WHERE slot < ?')
+              .bind(Math.floor(scheduledAt.getTime()/60_000)-14*24*60).run();
+          }catch {console.warn('Cron history pruning failed')}
           try{
             const server=await env.PAPER_DB.prepare('SELECT snapshot_json FROM server_paper_state WHERE id=1').first();
             if(server?.snapshot_json){

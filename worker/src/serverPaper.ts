@@ -18,7 +18,7 @@ const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
   Number.isFinite(s.ledger.cash) && Array.isArray(s.ledger.positions) && Array.isArray(s.ledger.trades) &&
   s.account && Array.isArray(s.account.fills) && Array.isArray(s.account.positions) && Array.isArray(s.account.pending);
-const marketOpen = (d = new Date()) => {
+export const marketOpen = (d = new Date()) => {
   const date = new Date(d.getTime() + 9 * 3600_000);
   const min = date.getUTCHours() * 60 + date.getUTCMinutes();
   return date.getUTCDay() >= 1 && date.getUTCDay() <= 5 && min >= 540 && min < 930;
