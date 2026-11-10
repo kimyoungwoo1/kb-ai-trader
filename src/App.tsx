@@ -1,3 +1,4 @@
+import {isKrxRegularSession as isKrxSession} from './marketSession'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './styles.css'
 import PaperTrading from './PaperTrading'
@@ -33,14 +34,6 @@ function getInvestorDays(stock: MarketStock): InvestorDay[] {
 type Disclosure = { company: string; stock_code: string; title: string; date: string; receipt_no: string; reporter: string; remark: string; link: string; listed: boolean; priority?: string; matched?: boolean }
 const SIGNAL_MAX_POSITION_WON = 200000
 const API = 'https://kb-ai-trader.ksmsy1.workers.dev'
-
-function isKrxSession(date = new Date()) {
-  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000)
-  const day = kst.getUTCDay()
-  const minute = kst.getUTCHours() * 60 + kst.getUTCMinutes()
-  // Weekdays only; the trade engine additionally rejects timestamps outside the session.
-  return day >= 1 && day <= 5 && minute >= 540 && minute < 930
-}
 
 export default function App() {
   const [password, setPassword] = useState('')

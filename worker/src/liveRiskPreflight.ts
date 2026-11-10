@@ -1,3 +1,4 @@
+import {isKrxRegularSession} from '../../src/marketSession'
 import {LIVE_BUY_LIMIT_WON,isLiveOrderTick,liveBuyRequiredCash} from '../../src/livePilotLimits'
 /**
  * Read-only real-account preflight. No trade endpoint, no D1 writes.
@@ -62,10 +63,7 @@ export function evaluateBuyPreview(code:string,price:number,quantity:number,
       reasons.push('KB 실제 주문가능금액 부족')
   }
   // No live orders outside regular continuous session (KST weekdays 09:00-15:30).
-  const kst=new Date(now.getTime()+9*3600_000)
-  const minutes=kst.getUTCHours()*60+kst.getUTCMinutes()
-  if(kst.getUTCDay()<1||kst.getUTCDay()>5||minutes<540||minutes>=930)
-    reasons.push('정규장 외 신규 주문 금지')
+  if(!isKrxRegularSession(now))reasons.push('정규장 외 신규 주문 금지')
   return {permitted:reasons.length===0,code,quantity,limitPrice:price,notional,
     feeBuffer:reserve,requiredCash,
     orderableCash:balances?.orderableCash??null,buyingPower:balances?.buyingPower??null,

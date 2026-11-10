@@ -9,10 +9,10 @@ function mockDb(counts={daily:0,active:0,positions:0,committed:0}){
  return {calls,prepare(sql){
   calls.push(sql)
   return {bind(){return this},async first(){
-   if(sql.includes('side=\'BUY\' AND trading_day'))return {total:counts.daily}
-   if(sql.includes('state IN'))return {total:counts.active}
-   if(sql.includes('COUNT(DISTINCT code)'))return {total:counts.positions}
-   if(sql.includes('SUM(reserved_won)'))return {total:counts.committed}
+   if(sql.includes("trading_day=? AND side='BUY'"))return {n:counts.daily}
+   if(sql.includes('state IN'))return {n:counts.active}
+   if(sql.includes('COUNT(DISTINCT code)'))return {n:counts.positions}
+   if(sql.includes('SUM(reserved_won)'))return {n:counts.committed}
    throw Error('unexpected sql '+sql)
   },async run(){throw Error('read-only preflight attempted D1 write')}}
  }}

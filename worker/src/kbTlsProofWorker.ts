@@ -1,3 +1,4 @@
+import {kbQuotePrice} from './kbQuotePrice'
 /**
  * Isolated, single-purpose Cloudflare Worker version for real KB TLS checks.
  * This is never the production main module and must NEVER be traffic-switched.
@@ -190,7 +191,7 @@ function quoteResult(status:number,json:unknown):SafeResult{
  const data=json as any
  const resultCode=String(data?.dataHeader?.resultCode??'')
  const body=data?.dataBody
- const raw=body?.now_prc??body?.stck_prpr??body?.cur_prc??body?.current_price??body?.price??body?.last_price??body?.prpr
+ const raw=kbQuotePrice(body)
  const price=Number(String(raw??'').replace(/,/g,''))
  const valid=status===200&&['','0','0000','200'].includes(resultCode)&&Number.isFinite(price)&&price>0
  return {status:valid?'PASS':'BLOCKED',httpStatus:status,

@@ -1,3 +1,4 @@
+import {kbQuotePrice} from './kbQuotePrice'
 import { KbWatchUnavailable, serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
@@ -514,8 +515,7 @@ const service = {
             upstream_status: response.status, rate_limited: rateLimited, token_expired: tokenExpired,
           };
           const payload = data?.dataBody || {};
-          const raw = payload.now_prc ?? payload.stck_prpr ?? payload.cur_prc ??
-            payload.current_price ?? payload.price ?? payload.last_price ?? payload.prpr;
+          const raw = kbQuotePrice(payload);
           const parsed = raw == null ? NaN : Number(String(raw).replace(/,/g, ""));
           const good = Number.isFinite(parsed) && parsed > 0;
           return {
@@ -593,7 +593,7 @@ const service = {
         return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
       }
       const body = quoteResult?.dataBody || {};
-      const rawPrice = body.now_prc ?? body.stck_prpr ?? body.cur_prc ?? body.current_price ?? body.price ?? body.last_price ?? body.prpr ?? null;
+      const rawPrice = kbQuotePrice(body) ?? null;
       const price = rawPrice == null ? null : Number(String(rawPrice).replace(/,/g, ""));
       return json({
         success: true,
@@ -778,7 +778,7 @@ const service = {
           const parsed = Number(String(value).replace(/,/g, "").trim());
           return Number.isFinite(parsed) ? parsed : null;
         };
-        const rawPrice = toNumber(quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price ?? quote?.last_price ?? quote?.prpr);
+        const rawPrice = toNumber(kbQuotePrice(quote));
         const previousClose = toNumber(quote?.bdy_cls_prc);
         const change = rawPrice != null && previousClose != null
           ? rawPrice - previousClose

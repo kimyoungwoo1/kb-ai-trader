@@ -1,3 +1,4 @@
+import {isKrxRegularSession as inSession,kstTradingDay as tradingDay} from '../../src/marketSession'
 import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,isLiveOrderTick,liveBuyRequiredCash,liveOrderTick} from '../../src/livePilotLimits'
 /**
  * Real-account trial engine. HARD LOCKED by default: Cloudflare has no
@@ -8,15 +9,13 @@ import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
 import {lookupKbOrder,lookupKbCancelEvidence,listKbRecentOrders} from './kbOrderContract'
 import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
 import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
-import {transitionOrder,type OrderRecord} from './liveOrderJournal'
+import {readLiveBuyJournalSummary,transitionOrder,type OrderRecord} from './liveOrderJournal'
 
 type Db=any
 export type LiveEnv=KbCredentials&{LIVE_TRADING_HARD_ENABLE?:string}
 export type LiveFill={id:string;at:string;code:string;side:'BUY'|'SELL';price:number;quantity:number;test?:boolean}
 export const MAX_PILOT_WON=LIVE_BUY_LIMIT_WON
 const hardSwitch=(env:LiveEnv)=>env.LIVE_TRADING_HARD_ENABLE==='ALLOW_REAL_50000_TRIAL_2026'
-const tradingDay=(date:Date)=>new Date(date.getTime()+9*3600_000).toISOString().slice(0,10)
-const inSession=(date:Date)=>{const k=new Date(date.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
 const num=(value:unknown)=>{const n=Number(value);return value===null||value===undefined||value===''||!Number.isSafeInteger(n)||n<0?NaN:n}
 const changed=(result:any)=>Number(result?.meta?.changes)===1
 const dateToKb=(day:string)=>day.replaceAll('-','')
@@ -192,18 +191,6 @@ export async function readKbSellableQuantity(env:KbCredentials,code:string):Prom
  }
  throw Error('KB 주문가능 보유수량 페이지 한도 초과')
 }
-async function journalSummary(db:Db,now:Date){
- const day=tradingDay(now)
- const [buy,active,held,principal]=await Promise.all([
-  db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE trading_day=? AND side='BUY'").bind(day).first(),
-  db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
-  db.prepare("SELECT COUNT(DISTINCT code) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first(),
-  db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first()
- ])
- const values=[buy?.n,active?.n,held?.n,principal?.n].map(num)
- if(values.some(v=>!Number.isSafeInteger(v)))throw Error('D1 원장 위험금액 조회 실패')
- return {dailyBuys:values[0],active:values[1],symbols:values[2],principal:values[3]}
-}
 /** This is the ONLY entry point for prospective live trades from Cron. */
 export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,now=new Date()):Promise<string>{
  if(!db||!hardSwitch(env))return 'locked'
@@ -228,7 +215,7 @@ async function inspectLiveBuy(db:Db,env:LiveEnv,fill:Pick<LiveFill,'code'|'price
  catch{return 'account_not_verified'}
  if(held>0)return 'already_held_in_real_account'
  let summary
- try{summary=await journalSummary(db,now)}catch{return 'journal_unavailable'}
+ try{summary=await readLiveBuyJournalSummary(db,tradingDay(now))}catch{return 'journal_unavailable'}
  const preview=evaluateBuyPreview(fill.code,fill.price,quantity,balances,{
   now,dailyBuys:summary.dailyBuys,activeTrialOrders:summary.active,otherTrialSymbols:summary.symbols
  })

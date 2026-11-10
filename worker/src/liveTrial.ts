@@ -1,3 +1,6 @@
+import {isKrxRegularSession as isRegularSession,kstTradingDay} from '../../src/marketSession'
+export {isKrxRegularSession as isRegularSession,kstTradingDay} from '../../src/marketSession'
+import {readLiveBuyJournalSummary} from './liveOrderJournal'
 import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,liveBuyRequiredCash} from '../../src/livePilotLimits'
 import { getLiveGate, disarmLiveTrading, armLiveTrading, submitManualLimitBuy, diagnoseAutoBuy, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
@@ -19,13 +22,6 @@ export type TrialCandidate={
   reason:string;createdAt:string;side:'BUY'|'SELL';
 }
 const reply=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}})
-export function kstTradingDay(at=new Date()):string{
-  return new Date(at.getTime()+9*3600_000).toISOString().slice(0,10)
-}
-export function isRegularSession(at=new Date()):boolean{
-  const k=new Date(at.getTime()+9*3600_000),mins=k.getUTCHours()*60+k.getUTCMinutes()
-  return k.getUTCDay()>=1&&k.getUTCDay()<=5&&mins>=540&&mins<930
-}
 export function validateTrialCandidate(value:TrialCandidate,now=new Date()):string|null{
   if(!value||value.side!=='BUY')return '실매수 후보만 허용'
   if(!/^[0-9]{6}$/.test(value.code))return '유효하지 않은 종목코드'
@@ -86,33 +82,19 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const day=kstTradingDay()
       // Read authoritative order journal first. Never infer safety from a
       // browser-local balance or uncommitted simulated position.
-      const [today,unfinished,positions,committed]=await Promise.all([
-        db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE side='BUY' AND trading_day=?").bind(day).first(),
-        db.prepare("SELECT COUNT(*) AS total FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
-        db.prepare("SELECT COUNT(DISTINCT code) AS total FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first(),
-        db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS total FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first()
-      ])
-      // Null or omitted SQL aggregates must fail closed, never coerce to zero.
-      const requiredNonnegative=(value:unknown):number => {
-        if(value===null||value===undefined||value==='')return NaN
-        const parsed=Number(value)
-        return Number.isSafeInteger(parsed)&&parsed>=0?parsed:NaN
-      }
-      const pendingWon=requiredNonnegative(committed?.total)
-      const countFields=[today?.total,unfinished?.total,positions?.total].map(requiredNonnegative)
-      if(!Number.isSafeInteger(pendingWon)||pendingWon<0||
-        countFields.some(n=>!Number.isSafeInteger(n)||n<0))
-        return reply({success:false,locked:true,message:'D1 실주문 원장 검증 실패 · 안전 차단'},503)
+      let journal
+      try{journal=await readLiveBuyJournalSummary(db,day)}
+      catch{return reply({success:false,locked:true,message:'D1 실주문 원장 검증 실패 · 안전 차단'},503)}
       // Read-only request against KB's per-symbol buying power endpoint.
       // A provider error is a rejection of this preflight, NEVER a trade trigger.
       let balances
       try{balances=await readKbBuyingPower(env,code)}
       catch{return reply({success:false,locked:true,message:'KB 주문가능금액 실조회 실패 · 주문 안전성 점검 보류'},503)}
       const preview=evaluateBuyPreview(code,limitPrice,quantity,balances,{
-        dailyBuys:countFields[0],activeTrialOrders:countFields[1],
-        otherTrialSymbols:countFields[2],
+        dailyBuys:journal.dailyBuys,activeTrialOrders:journal.active,
+        otherTrialSymbols:journal.symbols,
       })
-      if(pendingWon+preview.requiredCash>LIVE_TRIAL_BUDGET){
+      if(journal.principal+preview.requiredCash>LIVE_TRIAL_BUDGET){
         preview.permitted=false
         preview.reasons.push('기존 시험 주문 예약금 포함 5만 원 한도 초과')
       }

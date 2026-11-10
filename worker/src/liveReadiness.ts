@@ -1,3 +1,4 @@
+import {isKrxRegularSession as isRegularSession} from '../../src/marketSession'
 /**
  * Live brokerage pre-activation diagnostics, strictly READ ONLY.
  * This checks real KB SSQM2341 and D1 risk gates, never SSAM writes.
@@ -7,7 +8,6 @@ import {getLiveGate,type LiveEnv} from './liveExecution'
 import {listKbRecentOrdersForView,type RecentKbIssue} from './kbOrderContract'
 import {KbAuthError} from './kbToken'
 
-const isRegularSession=(at:Date)=>{const k=new Date(at.getTime()+9*3600_000),m=k.getUTCHours()*60+k.getUTCMinutes();return k.getUTCDay()>=1&&k.getUTCDay()<=5&&m>=540&&m<930}
 type Db=any
 export type ReadinessCheck={
  id:string;label:string;status:'PASS'|'BLOCKED'|'UNVERIFIED';detail:string

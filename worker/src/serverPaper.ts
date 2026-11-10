@@ -1,3 +1,5 @@
+import {isKrxRegularSession as marketOpen} from '../../src/marketSession'
+export {isKrxRegularSession as marketOpen} from '../../src/marketSession'
 /**
  * Server-owned paper account. D1 is authoritative; browsers are read-only mirrors.
  * No real securities orders are issued. Scheduler is idempotent per UTC minute.
@@ -20,11 +22,6 @@ const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
   Number.isFinite(s.ledger.cash) && Array.isArray(s.ledger.positions) && Array.isArray(s.ledger.trades) &&
   s.account && Array.isArray(s.account.fills) && Array.isArray(s.account.positions) && Array.isArray(s.account.pending);
-export const marketOpen = (d = new Date()) => {
-  const date = new Date(d.getTime() + 9 * 3600_000);
-  const min = date.getUTCHours() * 60 + date.getUTCMinutes();
-  return date.getUTCDay() >= 1 && date.getUTCDay() <= 5 && min >= 540 && min < 930;
-};
 function summarize(row: StateRow | null) {
   if (!row) return { success: true, migrated: false, mode: 'not_migrated' };
   const snapshot = JSON.parse(row.snapshot_json) as Snapshot;

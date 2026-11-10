@@ -70,3 +70,19 @@ export const LIVE_ORDER_API_CONTRACT={
  // without validating the provider's full field-level contract and responses.
  verified:false,
 } as const
+
+export async function readLiveBuyJournalSummary(db:any,day:string){
+ const [buy,active,held,principal]=await Promise.all([
+  db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE trading_day=? AND side='BUY'").bind(day).first(),
+  db.prepare("SELECT COUNT(*) AS n FROM live_order_journal WHERE state IN ('RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED')").first(),
+  db.prepare("SELECT COUNT(DISTINCT code) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first(),
+  db.prepare("SELECT COALESCE(SUM(reserved_won),0) AS n FROM live_order_journal WHERE side='BUY' AND (state NOT IN ('REJECTED','CANCELED') OR (state='CANCELED' AND filled_quantity>0))").first()
+ ])
+ const values=[buy?.n,active?.n,held?.n,principal?.n].map(value=>{
+  if(value===null||value===undefined||value==='')return NaN
+  const number=Number(value)
+  return Number.isSafeInteger(number)&&number>=0?number:NaN
+ })
+ if(values.some(v=>!Number.isSafeInteger(v)))throw Error('D1 원장 위험금액 조회 실패')
+ return {dailyBuys:values[0],active:values[1],symbols:values[2],principal:values[3]}
+}
