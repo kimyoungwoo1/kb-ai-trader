@@ -122,3 +122,25 @@ test('duplicate scheduled minute does not reserve or trade twice',async()=>{
   assert.equal(calls,1)
   assert.match(db.server.last_error,/provider unavailable/)
 })
+test('failed KB scan stops additional lookups and backs off across scheduled minutes',async()=>{
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const calls=[]
+  const post=async path=>{
+    calls.push(path)
+    if(path==='/api/market/discover')return {success:true,candidates:Array.from({length:25},(_,i)=>({code:String(100000+i),name:'Test'}))}
+    if(path==='/api/market/investor-flow')return {success:true,results:[{price:null}]}
+    throw Error('unexpected provider call')
+  }
+  const fail=await serverPaperTick(db,post,new Date('2026-11-06T01:20:00Z'))
+  assert.equal(fail.result,'error')
+  assert.match(fail.message,/유효한 가격 없음/)
+  assert.deepEqual(calls,['/api/market/discover','/api/market/investor-flow'])
+  const wait=await serverPaperTick(db,post,new Date('2026-11-06T01:21:00Z'))
+  assert.equal(wait.result,'kb_cooldown')
+  assert.equal(calls.length,2)
+  const retried=await serverPaperTick(db,post,new Date('2026-11-06T01:25:00Z'))
+  assert.equal(retried.result,'error')
+  assert.equal(calls.length,4)
+})

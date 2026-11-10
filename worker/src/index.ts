@@ -1,4 +1,4 @@
-import { serverPaperApi } from './serverPaper'
+import { KbWatchUnavailable, serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
@@ -494,7 +494,8 @@ const service = {
           let data: any;
           try { data = await response.json(); }
           catch { return { code: stock.code, name: stock.name,
-            price: null, checked_at: "", error: "KB 현재가 응답 형식 오류", rate_limited: false, token_expired: false }; }
+            price: null, checked_at: "", error: response.ok ? "KB 현재가 응답 형식 오류" : "KB 현재가 HTTP " + response.status,
+            upstream_status: response.status, rate_limited: response.status === 429, token_expired: [401, 403].includes(response.status) }; }
           const resultCode = String(data?.dataHeader?.resultCode ?? "");
           const apiFailure = resultCode && !["0", "0000", "200"].includes(resultCode);
           const failed = !response.ok || !!apiFailure;
@@ -507,7 +508,7 @@ const service = {
             code: stock.code, name: stock.name, price: null, checked_at: "",
             error: rateLimited ? "KB API 호출 제한" :
               tokenExpired ? "KB 인증 만료" : ("KB 응답 오류 HTTP " + response.status + " · " + diagnostic),
-            rate_limited: rateLimited, token_expired: tokenExpired,
+            upstream_status: response.status, rate_limited: rateLimited, token_expired: tokenExpired,
           };
           const payload = data?.dataBody || {};
           const raw = payload.now_prc ?? payload.stck_prpr ?? payload.cur_prc ??
@@ -526,6 +527,7 @@ const service = {
           return {
             code: stock.code, name: stock.name, price: null, checked_at: "",
             error: timedOut ? "KB 현재가 응답 20초 초과" : "KB 현재가 서버 연결 실패",
+            transport_error: timedOut ? "timeout" : "network",
             rate_limited: false, token_expired: false,
           };
         }
@@ -682,8 +684,8 @@ const service = {
 
     if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
       if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
-      let input: { stocks?: { code?: string; name?: string }[] };
-      try { input = await request.json() as { stocks?: { code?: string; name?: string }[] }; }
+      let input: { stocks?: { code?: string; name?: string }[]; stopOnUpstream?: boolean };
+      try { input = await request.json() as { stocks?: { code?: string; name?: string }[]; stopOnUpstream?: boolean }; }
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
       const stocks = (Array.isArray(input.stocks) ? input.stocks : [])
         .map(item => ({ code: String(item.code || "").trim(), name: String(item.name || "").trim() }))
@@ -699,6 +701,9 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
       const results = [];
+      const unavailable = (message: string) => json({
+        success: false, stage: "kb_upstream", message,
+      }, 502);
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
@@ -711,10 +716,19 @@ const service = {
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
             signal: AbortSignal.timeout(15000),
           });
+          if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
+            if ([401, 403].includes(response.status)) clearKbAccessToken();
+            return unavailable("KB 시세·수급 HTTP " + response.status);
+          }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
           else quoteError = getKbErrorMessage(data);
-        } catch (error) { quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
+        } catch (error) {
+          if (input.stopOnUpstream === true)
+            return unavailable(error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
+              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류");
+          quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패";
+        }
 
         try {
           const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -726,17 +740,26 @@ const service = {
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
             signal: AbortSignal.timeout(15000),
           });
+          if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
+            if ([401, 403].includes(response.status)) clearKbAccessToken();
+            return unavailable("KB 시세·수급 HTTP " + response.status);
+          }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
           else investorError = getKbErrorMessage(data);
-        } catch (error) { investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
+        } catch (error) {
+          if (input.stopOnUpstream === true)
+            return unavailable(error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
+              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류");
+          investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패";
+        }
 
         const toNumber = (value: unknown): number | null => {
           if (value == null || String(value).trim() === "") return null;
           const parsed = Number(String(value).replace(/,/g, "").trim());
           return Number.isFinite(parsed) ? parsed : null;
         };
-        const rawPrice = toNumber(quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price);
+        const rawPrice = toNumber(quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ?? quote?.current_price ?? quote?.price ?? quote?.last_price ?? quote?.prpr);
         const previousClose = toNumber(quote?.bdy_cls_prc);
         const change = rawPrice != null && previousClose != null
           ? rawPrice - previousClose
@@ -1229,7 +1252,11 @@ const service = {
         body:JSON.stringify(body),
       }),env);
       const result = await response.json() as any;
-      if (!response.ok || result?.success !== true) throw Error(String(result?.message||'내부 KB 조회 실패').slice(0,180));
+      if (!response.ok || result?.success !== true) {
+        const message=String(result?.message||'내부 조회 실패').slice(0,150);
+        if (result?.stage==='authentication' || result?.stage==='kb_upstream') throw new KbWatchUnavailable(message);
+        throw Error(message);
+      }
       return result;
     };
     context.waitUntil((async()=>{
@@ -1267,11 +1294,11 @@ const service = {
           // A successful scan immediately after an error streak triggers recovery.
           try{
             const rows=await env.PAPER_DB.prepare(
-              "SELECT slot,result,message FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 5"
+              "SELECT slot,result,message FROM server_paper_cron_runs WHERE result <> 'kb_cooldown' ORDER BY slot DESC LIMIT 5"
             ).all();
             const recent=(rows.results||[]) as Array<{slot:number;result:string;message:string}>;
             const current=recent[0];
-            if(current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
+            if(outcome?.result==='error'&&current?.result==='error'&&recent.length>=3&&recent.slice(0,3).every(x=>x.result==='error')){
               const cooldownAt=new Date(Date.now()-30*60_000).toISOString();
               const recentAlert=await env.PAPER_DB.prepare("SELECT id FROM paper_notifications WHERE kind='error' AND created_at>? ORDER BY id DESC LIMIT 1")
                 .bind(cooldownAt).first();
@@ -1279,7 +1306,7 @@ const service = {
                 title:'KB AI TRADER · 서버/API 연속 오류',
                 body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
             }
-            if((current?.result==='scanned'||current?.result==='watched')&&recent[1]?.result==='error'){
+            if((outcome?.result==='scanned'||outcome?.result==='watched')&&current?.result===outcome.result&&recent[1]?.result==='error'){
               await publishNotification(env,{eventKey:'recovery:'+current.slot,kind:'recovery',
                 title:'KB AI TRADER · 서버 검사 복구',
                 body:'KB증권 시세/전략 서버 검사 재개 · '+current.message.slice(0,150)});

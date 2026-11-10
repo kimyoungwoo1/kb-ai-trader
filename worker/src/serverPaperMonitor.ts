@@ -8,7 +8,7 @@ type Db = any
 type Post = (path: string, data: unknown) => Promise<any>
 type MonitorRow = { slot: number; started_at: string; finished_at: string; result: string; message: string; scanned: number; filled: number }
 const iso = (d: Date) => d.toISOString()
-const known = new Set(['market_closed','stopped','duplicate','busy','scanned','watched','no_symbols','error'])
+const known = new Set(['market_closed','stopped','duplicate','busy','scanned','watched','no_symbols','kb_cooldown','error'])
 export const isCronHealthy = (last: string | null, now = Date.now()) => {
   const time = Date.parse(last || '')
   return Number.isFinite(time) && now - time >= 0 && now - time <= 3 * 60_000
@@ -33,7 +33,7 @@ export async function readServerCronMonitor(db: Db): Promise<{
   const [recentQuery,lastGood,daily] = await Promise.all([
     db.prepare('SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 12').all(),
     db.prepare("SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs WHERE result IN ('scanned','watched') ORDER BY slot DESC LIMIT 1").first<MonitorRow>(),
-    db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN result IN ('scanned','watched') THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?")
+    db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN result IN ('scanned','watched') THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols','kb_cooldown') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?")
       .bind(Math.floor(from/60000)).first<Record<string,number|null>>()
   ])
   const recent = (recentQuery.results || []) as MonitorRow[]

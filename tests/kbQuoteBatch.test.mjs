@@ -95,3 +95,30 @@ test('authentication is required, and invalid/too many codes are rejected before
     assert.equal(count, 0)
   } finally { globalThis.fetch = oldFetch }
 })
+test('HTML gateway 522 is preserved and server scan stops before the next KB request', async () => {
+  const oldFetch = globalThis.fetch
+  let requests = 0
+  globalThis.fetch = async target => {
+    if (String(target).endsWith('/oauth2/token'))
+      return Response.json({ dataBody: { access_token: 'mock-token', expires_in: 86400 } })
+    requests++
+    assert.ok(String(target).endsWith('/ivu10140'))
+    return new Response('<html>Gateway timeout</html>', { status: 522 })
+  }
+  try {
+    const env = mkEnv('quote-batch-522')
+    const batch = await (await worker.fetch(req([stocks[0]]), env)).json()
+    assert.equal(batch.results[0].upstream_status, 522)
+    assert.match(batch.results[0].error, /HTTP 522/)
+    const scan = await worker.fetch(new Request(base.replace('/kb/quotes', '/market/investor-flow'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer dashboard-pass' },
+      body: JSON.stringify({ stocks, stopOnUpstream: true }),
+    }), env)
+    assert.equal(scan.status, 502)
+    const failure = await scan.json()
+    assert.equal(failure.stage, 'kb_upstream')
+    assert.match(failure.message, /HTTP 522/)
+    assert.equal(requests, 2)
+  } finally { globalThis.fetch = oldFetch }
+})
