@@ -48,9 +48,10 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const rows=await db.prepare('SELECT id,trading_day,event_id,code,name,side,quantity,limit_price,notional,reason,status,created_at FROM live_trial_candidates ORDER BY id DESC LIMIT 30').all()
       const gate=await getLiveGate(db,env||{})
       const journal=await db.prepare("SELECT j.id,j.trading_day,j.code,j.side,j.quantity,j.limit_price,j.reserved_won,j.state,j.broker_order_id,j.filled_quantity,j.created_at,j.updated_at,c.status AS cancel_status,c.cancel_order_no FROM live_order_journal j LEFT JOIN live_cancel_journal c ON c.order_id=j.id ORDER BY j.created_at DESC LIMIT 20").all()
+      const progress=await readLiveProgress(db)
       return reply({success:true,enabled:gate.enabled,hardEnabled:gate.hardEnabled,brokerOrdersVerified:false,
         mode:gate.enabled?'ARMED_PILOT':'LOCKED_PILOT',limits,updatedAt:settings?.updated_at||null,
-        candidates:rows.results||[],orders:journal.results||[],gate,
+        candidates:rows.results||[],orders:journal.results||[],gate,progress,
         message:gate.enabled?'실계좌 시험 운용 활성화 · 당일 1만 원 및 1종목·1회 제한':
         '실주문 잠금 상태 · 보유·예수금 조회와 자동 가상매매는 기존대로 동작합니다.'})
     }
@@ -192,4 +193,23 @@ export async function observePaperFill(db:Db|undefined,fill:any,now=new Date()):
   ).bind(date,candidate.eventId,candidate.code,candidate.name,candidate.quantity,
     candidate.limitPrice,candidate.quantity*candidate.limitPrice,candidate.reason,now.toISOString()).run()
   return (result.meta?.changes||0)===1
+}
+
+
+async function readLiveProgress(db:Db){
+  try{
+    const [paper,tick,decisions]=await Promise.all([
+      db.prepare('SELECT mode FROM server_paper_state WHERE id=1').first(),
+      db.prepare('SELECT result,message,finished_at,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 1').first(),
+      db.prepare('SELECT event_id,code,side,decision,checked_at FROM live_trial_activity ORDER BY checked_at DESC,event_id DESC LIMIT 10').all(),
+    ])
+    return {paperMode:paper?.mode??null,tick:tick??null,decisions:decisions.results??[]}
+  }catch{return null}
+}
+
+export async function recordLiveDecision(db:Db|undefined,fill:{id:string;code:string;side:string},decision:string,now=new Date()){
+  if(!db||decision==='locked'||!/^\d{6}$/.test(fill.code)||
+     !/^[A-Za-z0-9:_.-]{1,120}$/.test(fill.id)||!['BUY','SELL'].includes(fill.side))return
+  await db.prepare('INSERT OR IGNORE INTO live_trial_activity(event_id,code,side,decision,checked_at) VALUES(?,?,?,?,?)')
+    .bind(fill.id,fill.code,fill.side,decision,now.toISOString()).run()
 }

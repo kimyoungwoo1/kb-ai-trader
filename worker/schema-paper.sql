@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS live_trial_candidates (
 
 -- Future live-order journal is intentionally inert; no live order route exists.
 -- One BUY reservation per day, no duplicated logical order ID, no implicit retry.
+CREATE TABLE IF NOT EXISTS live_trial_activity (event_id TEXT PRIMARY KEY, code TEXT NOT NULL, side TEXT NOT NULL, decision TEXT NOT NULL, checked_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_live_trial_activity_checked ON live_trial_activity(checked_at DESC, event_id DESC);
+
 CREATE TABLE IF NOT EXISTS live_order_journal (
  id TEXT PRIMARY KEY,
  trading_day TEXT NOT NULL,

@@ -2,7 +2,7 @@ import { serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
-import { liveTrialApi, observePaperFill } from './liveTrial'
+import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
@@ -1237,11 +1237,11 @@ const service = {
           try{await observePaperFill(env.PAPER_DB,fill);}catch{console.warn('Live trial audit write failed')}
           // Hard locked by default. A single D1 reservation/claim prevents
           // duplicate broker POSTs even when Cron repeats after an error.
-          try {
-            const result=await processLiveFill(env.PAPER_DB,env,fill);
-            if(result!=='locked'&&result!=='stale_signal'&&result!=='invalid_signal')
-              console.log('Real pilot fill decision: '+result);
-          } catch {console.warn('Real pilot execution blocked by safety error')}
+          let decision='execution_error';
+          try {decision=await processLiveFill(env.PAPER_DB,env,fill);}
+          catch {console.warn('Real pilot execution blocked by safety error')}
+          try {await recordLiveDecision(env.PAPER_DB,fill,decision);}
+          catch {console.warn('Live trial decision audit write failed')}
           const notice=formatPaperFillNotification(fill);
           await publishNotification(env,{
             eventKey:'fill:'+fill.id,kind:'trade',...notice

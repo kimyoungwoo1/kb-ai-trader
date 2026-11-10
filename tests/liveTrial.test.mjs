@@ -2,11 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 const result=await build({entryPoints:['worker/src/liveTrial.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {liveTrialApi,validateTrialCandidate,observePaperFill}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'))
+const {liveTrialApi,validateTrialCandidate,observePaperFill,recordLiveDecision}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'))
 const now=new Date('2026-11-09T00:35:00.000Z')
 const candidate=(overrides={})=>({eventId:'2026-11-09-buy-005930',code:'005930',name:'삼성전자',side:'BUY',quantity:1,limitPrice:9000,reason:'진입 조건',createdAt:now.toISOString(),...overrides})
 function db(){
- const entries=[],settings=[]
+ const entries=[],settings=[],decisions=[]
  return {entries,settings,prepare(sql){
   return {
    bind(...params){return {async run(){
@@ -16,11 +16,16 @@ function db(){
       entries.push({trading_day:tradingDay,event_id:eventId,code,name,quantity,price,notional,reason,createdAt})
       return {meta:{changes:1}}
     }
+    if(sql.includes('live_trial_activity')){
+      const [event_id,code,side,decision,checked_at]=params
+      if(!decisions.some(row=>row.event_id===event_id))decisions.push({event_id,code,side,decision,checked_at})
+      return {meta:{changes:1}}
+    }
     if(sql.includes('live_trial_settings')){settings.push(params);return {meta:{changes:1}}}
     throw Error('Unexpected SQL '+sql)
    }}},
    async first(){return null},
-   async all(){return {results:entries}}
+   async all(){return {results:sql.includes('live_trial_activity')?decisions:entries}}
   }
  }}
 }
@@ -57,4 +62,17 @@ test('audit only uses committed BUY fill, one unique candidate per day, never br
  assert.equal(await observePaperFill(state,{...fill,side:'SELL'},now),false)
  assert.equal(state.entries.length,1)
  assert.equal(state.entries[0].notional,9000)
+})
+
+test('broker decision stays available through status and keeps the original result on replay',async()=>{
+ const state=db()
+ const fill={id:'progress-sample',code:'005930',side:'BUY'}
+ await recordLiveDecision(state,fill,'account_not_verified',now)
+ await recordLiveDecision(state,fill,'duplicate_or_blocked',now)
+ await recordLiveDecision(state,{...fill,id:'locked-fill'},'locked',now)
+ const status=await (await liveTrialApi(state,{action:'status'})).json()
+ assert.equal(status.enabled,false)
+ assert.deepEqual(status.progress.decisions,[{
+  event_id:fill.id,code:fill.code,side:'BUY',decision:'account_not_verified',checked_at:now.toISOString()
+ }])
 })

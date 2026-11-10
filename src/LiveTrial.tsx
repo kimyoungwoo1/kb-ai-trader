@@ -7,8 +7,25 @@ import LiveReadiness from './LiveReadiness'
 import type {AccountHolding,AccountValuation} from './liveAccountView'
 type Candidate={id:number;trading_day:string;code:string;name:string;quantity:number;limit_price:number;notional:number;reason:string;status:string;created_at:string}
 type LiveOrder={id:string;code:string;side:'BUY'|'SELL';trading_day:string;quantity:number;limit_price:number;reserved_won:number;filled_quantity:number;state:string;broker_order_id:string|null;cancel_status?:string|null;cancel_order_no?:string|null;updated_at:string}
-type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[];orders?:LiveOrder[]}
+type LiveProgress={
+ paperMode:string|null;tick:{result:string;message:string;finished_at:string;scanned:number;filled:number}|null;
+ decisions:{event_id:string;code:string;side:string;decision:string;checked_at:string}[]
+}
+type TrialStatus={enabled:boolean;hardEnabled?:boolean;brokerOrdersVerified:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};candidates:Candidate[];orders?:LiveOrder[];progress?:LiveProgress|null}
 const API='/api/live/trial'
+const decisionLabels:Record<string,string>={
+ accepted_not_filled:'KB 주문 접수 · 체결 확인 대기', rejected:'KB 주문 거부',
+ unknown_order_result:'주문 접수 여부 미확정 · 원장 확인 필요',
+ budget_exceeded:'지정가가 시험 예산을 초과해 매수 보류',
+ account_not_verified:'KB 계좌·주문가능금액 조회 미확인',
+ already_held_in_real_account:'실계좌에 이미 보유한 종목',
+ journal_unavailable:'서버 주문 원장 확인 실패', risk_blocked:'주문 한도 또는 위험 조건 미충족',
+ duplicate_or_blocked:'중복 주문 또는 원장 제한으로 보류', not_claimed:'서버 주문 전송권 미확보',
+ disarmed_after_claim:'전송 직전 잠금 또는 정규장 종료', stale_signal:'신호 유효시간 초과',
+ invalid_signal:'신호 데이터 검증 실패', no_trial_shares:'시험매매로 보유한 수량 없음',
+ sell_not_safe:'시험 매도 조건 미충족', real_holding_insufficient:'실계좌 매도 가능 수량 부족',
+ execution_error:'주문 처리 상태 확인 필요 · 원장 확인',
+}
 function orderStatusLabel(order:LiveOrder):string{
  if(order.state==='CANCELED')return order.filled_quantity>0?
    order.side==='BUY'?
@@ -36,6 +53,7 @@ type Props={
 export default function LiveTrial({token,holdings,accountSummary,deposit,depositMessage,accountMessage,accountLoading,onRefreshAccount}:Props){
   const [status,setStatus]=useState<TrialStatus|null>(null)
   const [error,setError]=useState('')
+  const [statusError,setStatusError]=useState('')
   const [busy,setBusy]=useState(false)
   const [feedback,setFeedback]=useState('')
   const [confirmation,setConfirmation]=useState('')
@@ -57,11 +75,11 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
   }
   const load=useCallback(async()=>{
     try{
-      const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({action:'status'}),cache:'no-store'})
+      const response=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({action:'status'}),cache:'no-store',signal:AbortSignal.timeout(15_000)})
       const data=await response.json()
       if(!response.ok||!data.success)throw Error(data.message||'조회 실패')
-      setStatus(data);setError('')
-    }catch(e){setError(e instanceof Error?e.message:'서버 연결 오류')}
+      setStatus(data);setStatusError('')
+    }catch(e){setStatusError(e instanceof Error?e.message:'서버 연결 오류')}
   },[token])
   useEffect(()=>{void load();const id=setInterval(()=>void load(),30000);return()=>clearInterval(id)},[load])
   const disable=async()=>{
@@ -81,7 +99,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <button className="outline-button" disabled={busy} onClick={()=>void load()}><RefreshCw size={14}/> 새로고침</button>
     </div>
     <div className="panel" style={{padding:20,display:'grid',gap:14}}>
-      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{status?.enabled?'실계좌 시험 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
+      <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':status.enabled?'실계좌 시험 자동매매 · 오늘 정규장 활성화':'실주문 잠금 · 기본 비활성화'}</strong></div>
       <p className="notification-hint">{status?.message||'서버 설정과 당일 D1 실행 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
       <div className="notification-meta">
         <span>총 매수 한도: 10,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
@@ -100,7 +118,22 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
           onClick={()=>void arm()}>오늘 실거래 활성화</button>
       </div>}
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}
-      {error&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error}</p>}
+      {(error||statusError)&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error||statusError}</p>}
+    </div>
+    <div className="panel" style={{padding:20}}>
+      <div className="panel-heading"><div><h3>실계좌 자동매매 진행 상황</h3><span>서버에서 30초마다 상태 갱신</span></div></div>
+      {!status?.progress?<p className="notification-hint">{status||statusError?'서버 진행 기록을 확인할 수 없습니다.':'서버 진행 상황 조회 중'}</p>:<>
+        <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!status.enabled?'실주문 잠금 상태':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버의 새 체결 신호를 받아 주문 조건을 검사합니다.'}</p>
+        {status.progress.tick&&<p className="notification-hint">
+          최근 서버 감시 {new Date(status.progress.tick.finished_at).toLocaleString('ko-KR')} · {status.progress.tick.message} · 가상 체결 {status.progress.tick.filled}건
+        </p>}
+        {status.progress.decisions.length?<div className="notification-list">{status.progress.decisions.map(item=>
+          <article key={item.event_id} className="notification-item">
+            <div className="notification-item-heading"><strong>{item.side==='BUY'?'매수':'매도'} · {item.code}</strong>
+              <span>{new Date(item.checked_at).toLocaleString('ko-KR')}</span></div>
+            <p>{decisionLabels[item.decision]??'주문 판단 결과 확인 필요'}</p>
+          </article>)}</div>:<p className="notification-hint">기록된 실주문 판단 없음 · 접수와 체결은 아래 주문 원장에서 확인</p>}
+      </>}
     </div>
     <LiveReadiness token={token}/>
     <LiveAccountHoldings holdings={holdings} summary={accountSummary} deposit={deposit}
@@ -109,10 +142,10 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
     <div className="panel" style={{padding:20}}>
       <div className="panel-heading"><div><h3>실계좌 주문 원장</h3><span>SERVER D1 · 중복 주문/체결 추적</span></div></div>
       <p className="notification-hint">KB 주문번호가 확인되지 않은 SENDING·UNKNOWN 상태는 새 주문으로 자동 재전송하지 않습니다. 잠금은 기존에 접수된 주문을 취소하지 않습니다.</p>
-      {status?.orders?.length?<div className="notification-list">{status.orders.map(order=>
+      {!status?<p className="notification-hint">서버 주문 원장 확인 대기</p>:status.orders?.length?<div className="notification-list">{status.orders.map(order=>
         <article key={order.id} className="notification-item">
           <div className="notification-item-heading"><strong>{order.side==='BUY'?'매수':'매도'} · {order.code}</strong><span>{orderStatusLabel(order)}</span></div>
-          <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 원주문번호 {order.broker_order_id||'확인 불가'}</p>
+          <p className="notification-hint">{order.quantity}주 × {order.limit_price.toLocaleString('ko-KR')}원 · 체결 {order.filled_quantity}주 · KB 원주문번호 {order.broker_order_id||'확인 불가'} · 갱신 {new Date(order.updated_at).toLocaleString('ko-KR')}</p>
           {order.cancel_order_no&&<p className="notification-hint">KB 취소 주문번호 {order.cancel_order_no} · {order.state==='CANCELED'?'증권사 취소 완료 증빙 확인':'취소 요청 접수 확인 · 최종 완료 미확정'}</p>}
           {(order.state==='UNKNOWN'||order.state==='SENDING'||order.cancel_status==='UNKNOWN')&&<p className="live-trial-inline-error">증권사 처리 여부를 확인하기 전까지 동일 주문을 자동으로 다시 보내지 않아.</p>}
         </article>)}</div>:<p className="notification-hint">실계좌 주문 기록 없음 · 실제 주문 미전송</p>}
