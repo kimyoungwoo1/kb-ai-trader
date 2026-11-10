@@ -1,4 +1,4 @@
-import { getLiveGate, disarmLiveTrading, armLiveTrading, submitManualLimitBuy, type LiveEnv } from './liveExecution'
+import { getLiveGate, disarmLiveTrading, armLiveTrading, submitManualLimitBuy, diagnoseAutoBuy, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder, listKbRecentOrders, listKbRecentOrdersForView } from './kbOrderContract'
 import {KbAuthError} from './kbToken'
@@ -65,6 +65,9 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
         price:typeof body.limitPrice==='number'?body.limitPrice:NaN,
       })
       return reply({success:decision==='accepted_not_filled',decision},decision==='accepted_not_filled'?200:409)
+    }
+    if(action==='autoDiagnostic'){
+      return reply({success:true,...await diagnoseAutoBuy(db,env||{}),checkedAt:new Date().toISOString()})
     }
     if(action==='readiness'){
       // Read-only D1/KB checks; never runs a broker order or changes the gate.

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const bundle=await build({entryPoints:['worker/src/liveExecution.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {getLiveGate,armLiveTrading,disarmLiveTrading,processLiveFill,reconcileLiveOrders,submitManualLimitBuy}=
+const {getLiveGate,armLiveTrading,disarmLiveTrading,processLiveFill,reconcileLiveOrders,submitManualLimitBuy,diagnoseAutoBuy}=
   await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'))
 const REAL_DATE=globalThis.Date
 const monday=new REAL_DATE('2026-11-09T00:30:00.000Z')
@@ -26,6 +26,7 @@ class Db {
       bind(...params){this.params=params;return this},
       async first(){
         if(sql.startsWith('SELECT enabled,trading_day'))return self.gate
+        if(sql.includes('FROM server_paper_state'))return self.paper
         if(sql.includes("trading_day=? AND side='BUY'"))return {n:self.rows.filter(x=>x.trading_day===this.params[0]&&x.side==='BUY').length}
         if(sql.includes('FROM live_cancel_journal')&&sql.includes('COUNT(*)'))return {n:0}
         if(sql.includes('state IN')&&sql.includes('COUNT(*)'))return {n:self.rows.filter(x=>activeStates.has(x.state)).length}
@@ -107,6 +108,20 @@ function mockBroker(opts={loseAck:false}){
  }
  return {seen,restore:()=>globalThis.fetch=old}
 }
+test('automatic buy diagnostics use account reads without reserving or submitting an order',async()=>{
+ const db=new Db(),broker=mockBroker(),restoreClock=holdClock()
+ db.paper={mode:'running',snapshot_json:JSON.stringify({screening:{
+  checkedAt:stamp,signals:[{code:'005930',name:'테스트',price:9000}]
+ }})}
+ try{
+  const result=await diagnoseAutoBuy(db,env('mock-auto-diagnostic'),monday)
+  assert.equal(result.decision,'prechecks_passed')
+  assert.equal(result.sample.quantity,1)
+  assert.deepEqual(db.actions,[])
+  assert.ok(broker.seen.some(url=>url.endsWith('/ssqm1801')))
+  assert.ok(broker.seen.every(url=>!url.includes('/ssam')))
+ }finally{broker.restore();restoreClock()}
+})
 test('production remains HARD LOCKED when execution flag is absent',async()=>{
  const db=new Db(),orig=globalThis.fetch
  let network=0

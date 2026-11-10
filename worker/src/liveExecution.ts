@@ -215,8 +215,7 @@ export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,
  if(!Number.isFinite(age)||age<0||age>90_000)return 'stale_signal'
  return fill.side==='BUY'?submitLiveBuy(db,env,fill,now,gate.persistent?'persistent':'auto'):submitLiveSell(db,env,fill,now)
 }
-async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,mode:'auto'|'persistent'|'manual'):Promise<string>{
- const manual=mode==='manual'
+async function inspectLiveBuy(db:Db,env:LiveEnv,fill:Pick<LiveFill,'code'|'price'|'quantity'>,now:Date,manual:boolean,checkHistory:boolean){
  const quantity=manual?fill.quantity:Math.min(fill.quantity,Math.floor(9_900/fill.price))
  if(quantity<1)return 'budget_exceeded'
  let balances,held:number
@@ -231,11 +230,35 @@ async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,mode:'auto
  if(!preview.permitted||summary.principal+preview.requiredCash>MAX_PILOT_WON)return 'risk_blocked'
  // Persistent consent replaces the daily click, so check the current day's
  // KB order-history path before placing a new buy.
- if(mode==='persistent'){
+ if(checkHistory){
   try{
    const history=await listKbRecentOrders(env,1,now)
    if(history.partial||history.checkedDates.length!==1)return 'history_unavailable'
   }catch{return 'history_unavailable'}
+ }
+ return {quantity,requiredCash:preview.requiredCash}
+}
+export async function diagnoseAutoBuy(db:Db,env:LiveEnv,now=new Date()){
+ const gate=await getLiveGate(db,env,now)
+ const row=await db.prepare('SELECT mode,snapshot_json FROM server_paper_state WHERE id=1').first()
+ if(row?.mode!=='running')return {decision:'paper_stopped'}
+ if(!gate.enabled)return {decision:'locked'}
+ const screening=JSON.parse(row.snapshot_json).screening
+ const signals=Array.isArray(screening?.signals)?screening.signals:[]
+ const valid=signals.filter((item:any)=>/^\d{6}$/.test(item?.code)&&Number.isSafeInteger(item.price)&&item.price>0)
+ const item=valid.find((signal:any)=>signal.price<=9_900)??valid[0]
+ if(!item)return {decision:'no_sample'}
+ const sample={code:item.code,name:typeof item.name==='string'?item.name.slice(0,80):item.code,
+  price:item.price,quantity:1,scanAt:screening.checkedAt}
+ const check=await inspectLiveBuy(db,env,sample,now,false,gate.persistent)
+ return {sample,decision:typeof check==='string'?check:'prechecks_passed'}
+}
+async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,mode:'auto'|'persistent'|'manual'):Promise<string>{
+ const manual=mode==='manual'
+ const check=await inspectLiveBuy(db,env,fill,now,manual,mode==='persistent')
+ if(typeof check==='string')return check
+ const {quantity,requiredCash}=check
+ if(mode==='persistent'){
   const checkedAt=new Date()
   if(!inSession(checkedAt)||tradingDay(checkedAt)!==tradingDay(now))return 'locked'
   if(checkedAt.getTime()-Date.parse(fill.at)>90_000)return 'stale_signal'
@@ -253,7 +276,7 @@ async function submitLiveBuy(db:Db,env:LiveEnv,fill:LiveFill,now:Date,mode:'auto
    "SELECT ?,?,?, 'BUY',?,?,?,'RESERVED',NULL,0,?,? WHERE "+gate+" "+
    "AND NOT EXISTS (SELECT 1 FROM live_order_journal WHERE trading_day=? AND side='BUY') "+
    "AND NOT EXISTS (SELECT 1 FROM live_order_journal WHERE state NOT IN ('REJECTED','CANCELED'))"+cancelGuard
- const saved=await db.prepare(sql).bind(id,day,fill.code,quantity,fill.price,preview.requiredCash,stamp,stamp,...(manual?[]:[day]),day).run()
+ const saved=await db.prepare(sql).bind(id,day,fill.code,quantity,fill.price,requiredCash,stamp,stamp,...(manual?[]:[day]),day).run()
  if(!changed(saved))return 'duplicate_or_blocked'
  return claimAndSubmit(db,env,id,fill.code,'BUY',quantity,fill.price,now,manual)
 }

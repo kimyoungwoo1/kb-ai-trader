@@ -10,6 +10,7 @@ type LiveProgress={
  decisions:{event_id:string;code:string;side:string;decision:string;checked_at:string}[]
 }
 type TrialStatus={enabled:boolean;armed?:boolean;hardEnabled?:boolean;mode:string;message:string;limits:{budget:number;maxDailyBuys:number;maxSymbols:number;orderType:string};orders?:LiveOrder[];progress?:LiveProgress|null}
+type AutoDiagnostic={decision:string;checkedAt:string;sample?:{name:string;code:string;price:number;scanAt?:string}}
 const API='/api/live/trial'
 const decisionLabels:Record<string,string>={
  accepted_not_filled:'KB 주문 접수 · 체결 확인 대기', rejected:'KB 주문 거부',
@@ -55,6 +56,9 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
   const [statusError,setStatusError]=useState('')
   const [busy,setBusy]=useState(false)
   const [feedback,setFeedback]=useState('')
+  const [diagnostic,setDiagnostic]=useState<AutoDiagnostic|null>(null)
+  const [diagnosticError,setDiagnosticError]=useState('')
+  const [checkingDiagnostic,setCheckingDiagnostic]=useState(false)
   const [confirmation,setConfirmation]=useState('')
   // Account data is centrally loaded once by App after login.
   // Switching to this menu must never start a second brokerage lookup.
@@ -92,6 +96,18 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       setFeedback('✓ '+(data.message||'실주문 잠금 상태를 확인했습니다.')+' · '+new Date().toLocaleTimeString('ko-KR'))
     }catch(e){setError(e instanceof Error?e.message:'잠금 실패')}finally{setBusy(false)}
   }
+  async function runDiagnostic(){
+    setCheckingDiagnostic(true);setDiagnostic(null);setDiagnosticError('')
+    try{
+      const response=await fetch(API,{method:'POST',cache:'no-store',
+        headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body:JSON.stringify({action:'autoDiagnostic'}),signal:AbortSignal.timeout(110_000)})
+      const data=await response.json()
+      if(!response.ok||data.success!==true)throw Error('자동매매 진단에 실패했습니다.')
+      setDiagnostic(data)
+    }catch{setDiagnosticError('서버 또는 KB 조회를 완료하지 못했습니다.')}
+    finally{setCheckingDiagnostic(false)}
+  }
   const armed=status?.armed??status?.enabled??false
   const autoOrders=status?.orders?.filter(order=>!order.id.startsWith('manual-buy-'))??[]
   return <section className="notification-page">
@@ -119,7 +135,20 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       {(error||statusError)&&<p role="alert" className="news-message"><AlertTriangle size={14}/>{error||statusError}</p>}
     </div>
     <div className="panel" style={{padding:20}}>
-      <div className="panel-heading"><div><h3>실계좌 자동매매 진행 상황</h3><span>서버에서 30초마다 상태 갱신</span></div></div>
+      <div className="panel-heading"><div><h3>실계좌 자동매매 진행 상황</h3><span>서버에서 30초마다 상태 갱신</span></div>
+        <button type="button" className="outline-button" disabled={checkingDiagnostic}
+          onClick={()=>void runDiagnostic()}>{checkingDiagnostic?'진단 중…':'자동매매 진단'}</button>
+      </div>
+      <p className="notification-hint">최근 서버 스캔의 종목으로 가상 매수 신호 1건을 점검합니다. 실주문은 전송하지 않습니다.</p>
+      {diagnosticError&&<p role="alert">{diagnosticError}</p>}
+      {diagnostic&&<div role="status" className="notification-item">
+        {diagnostic.sample&&<p>{diagnostic.sample.name} ({diagnostic.sample.code}) · 1주 · 스캔 가격 {diagnostic.sample.price.toLocaleString('ko-KR')}원
+          {diagnostic.sample.scanAt&&' · 스캔 '+new Date(diagnostic.sample.scanAt).toLocaleString('ko-KR')}</p>}
+        <p>{({prechecks_passed:'매수 사전 검사 통과 · 주문 예약 및 전송 단계는 진단 범위에서 제외됩니다.',
+          locked:'자동매매 잠금 또는 정규장 대기',paper_stopped:'서버 자동 가상매매가 중지돼 있습니다.',
+          no_sample:'아직 진단에 사용할 서버 스캔 종목이 없습니다.'} as Record<string,string>)[diagnostic.decision]
+          ?? decisionLabels[diagnostic.decision] ?? '진단 결과 확인 필요'}</p>
+      </div>}
       {!status?.progress?<p className="notification-hint">{status||statusError?'서버 진행 기록을 확인할 수 없습니다.':'서버 진행 상황 조회 중'}</p>:<>
         <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!armed?'실주문 잠금 상태':!status.enabled?'자동매매 승인 유지 · 정규장 대기':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버의 새 체결 신호를 받아 주문 조건을 검사합니다.'}</p>
         {status.progress.tick&&<p className="notification-hint">
