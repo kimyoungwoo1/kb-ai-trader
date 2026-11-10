@@ -143,7 +143,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <p className="notification-hint">최근 서버 스캔의 종목으로 가상 매수 신호 1건을 점검합니다. 실주문은 전송하지 않습니다.</p>
       {diagnosticError&&<p role="alert">{diagnosticError}</p>}
       {diagnostic&&<div role="status" className="notification-item">
-        {diagnostic.sample&&<p>{diagnostic.sample.name} ({diagnostic.sample.code}) · 1주 · 스캔 가격 {diagnostic.sample.price.toLocaleString('ko-KR')}원
+        {diagnostic.sample&&<p>{diagnostic.sample.name} ({diagnostic.sample.code}) · 1주 · 진단 지정가 {diagnostic.sample.price.toLocaleString('ko-KR')}원
           {diagnostic.sample.scanAt&&' · 스캔 '+new Date(diagnostic.sample.scanAt).toLocaleString('ko-KR')}</p>}
         <p>{({prechecks_passed:'매수 사전 검사 통과 · 주문 예약 및 전송 단계는 진단 범위에서 제외됩니다.',
           locked:'자동매매 잠금 또는 정규장 대기',paper_stopped:'서버 자동 가상매매가 중지돼 있습니다.',

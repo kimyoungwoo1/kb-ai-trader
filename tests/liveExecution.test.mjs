@@ -57,7 +57,15 @@ class Db {
           const row=self.rows.find(x=>x.id===id&&x.state==='RESERVED')
           const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&day===self.gate.trading_day
           if(!row||!gateOk)return {meta:{changes:0}}
-          row.state='SENDING';return {meta:{changes:1}}
+          row.state='SENDING'
+          self.onClaim?.()
+          return {meta:{changes:1}}
+        }
+        if(sql.includes("SET state='REJECTED'")){
+          const row=self.rows.find(x=>x.id===this.params[1]&&x.state==='SENDING'&&x.broker_order_id===null)
+          if(!row)return {meta:{changes:0}}
+          row.state='REJECTED'
+          return {meta:{changes:1}}
         }
         if(sql.includes('SET state=?,broker_order_id=?')){
           const [state,no,,id]=this.params
@@ -214,9 +222,21 @@ test('persistent approval waits outside regular hours and places an eligible nex
   assert.equal(await processLiveFill(db,config,{...fill,price:49504,quantity:9,at:tomorrow.toISOString()},tomorrow),'accepted_not_filled')
   assert.equal(db.rows[0].trading_day,'2026-11-10')
   assert.equal(db.rows[0].quantity,1)
-  assert.equal(db.rows[0].reserved_won,50000)
+  assert.equal(db.rows[0].limit_price,49500)
+  assert.equal(db.rows[0].reserved_won,49995)
   assert.equal(network.seen.filter(url=>url.endsWith('/api/v1/ssqm2341')).length,1)
   assert.equal(await disarmLiveTrading(db),true)
   assert.equal((await getLiveGate(db,config,tomorrow)).armed,false)
  }finally{network.restore();revert()}
+})
+
+
+test('a lock after claiming an automatic buy closes the unsent row without calling KB order submission',async()=>{
+ const db=new Db(),broker=mockBroker(),restoreClock=holdClock()
+ db.onClaim=()=>{db.gate={enabled:0,trading_day:null}}
+ try{
+  assert.equal(await processLiveFill(db,env('mock-disarmed-claim'),fill,monday),'disarmed_after_claim')
+  assert.equal(db.rows[0].state,'REJECTED')
+  assert.ok(broker.seen.every(url=>!url.includes('/ssam')))
+ }finally{broker.restore();restoreClock()}
 })

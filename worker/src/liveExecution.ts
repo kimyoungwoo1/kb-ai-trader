@@ -1,4 +1,4 @@
-import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,liveBuyRequiredCash} from '../../src/livePilotLimits'
+import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,isLiveOrderTick,liveBuyRequiredCash,liveOrderTick} from '../../src/livePilotLimits'
 /**
  * Real-account trial engine. HARD LOCKED by default: Cloudflare has no
  * LIVE_TRADING_HARD_ENABLE binding; D1 live_execution_gate defaults to OFF.
@@ -39,6 +39,7 @@ export async function submitManualLimitBuy(db:Db,env:LiveEnv,input:{id:string;co
     input.quantity!==1)return 'invalid_signal'
  if(!(await manualGateOpen(db,env,now)))return 'manual_locked'
  if(liveBuyRequiredCash(input.price)>MAX_PILOT_WON)return 'budget_exceeded'
+ if(!isLiveOrderTick(input.price))return 'invalid_signal'
  try{
   const history=await listKbRecentOrders(env,1,now)
   if(history.partial||history.checkedDates.length!==1)return 'history_unavailable'
@@ -213,7 +214,11 @@ export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,
     !/^[A-Za-z0-9:_.-]{1,120}$/.test(fill.id||''))return 'invalid_signal'
  const age=now.getTime()-Date.parse(fill.at)
  if(!Number.isFinite(age)||age<0||age>90_000)return 'stale_signal'
- return fill.side==='BUY'?submitLiveBuy(db,env,fill,now,'persistent'):submitLiveSell(db,env,fill,now)
+ const tick=liveOrderTick(fill.price)
+ const price=(fill.side==='BUY'?Math.floor(fill.price/tick):Math.ceil(fill.price/tick))*tick
+ if(!Number.isSafeInteger(price))return 'invalid_signal'
+ const orderFill={...fill,price}
+ return fill.side==='BUY'?submitLiveBuy(db,env,orderFill,now,'persistent'):submitLiveSell(db,env,orderFill,now)
 }
 async function inspectLiveBuy(db:Db,env:LiveEnv,fill:Pick<LiveFill,'code'|'price'|'quantity'>,now:Date,manual:boolean,checkHistory:boolean){
  const quantity=manual?fill.quantity:1
@@ -248,8 +253,9 @@ export async function diagnoseAutoBuy(db:Db,env:LiveEnv,now=new Date()){
  const valid=signals.filter((item:any)=>/^\d{6}$/.test(item?.code)&&Number.isSafeInteger(item.price)&&item.price>0)
  const item=valid.find((signal:any)=>liveBuyRequiredCash(signal.price)<=MAX_PILOT_WON)??valid[0]
  if(!item)return {decision:'no_sample'}
+ const tick=liveOrderTick(item.price)
  const sample={code:item.code,name:typeof item.name==='string'?item.name.slice(0,80):item.code,
-  price:item.price,quantity:1,scanAt:screening.checkedAt}
+  price:Math.floor(item.price/tick)*tick,quantity:1,scanAt:screening.checkedAt}
  const check=await inspectLiveBuy(db,env,sample,now,false,gate.persistent)
  return {sample,decision:typeof check==='string'?check:'prechecks_passed'}
 }
@@ -308,13 +314,13 @@ async function claimAndSubmit(db:Db,env:LiveEnv,id:string,code:string,side:'BUY'
  if(!changed(claimed))return 'not_claimed'
  // A crash AFTER claiming cannot lead to another submission. That row remains SENDING.
  const checkAt=new Date()
- if(manual){
-  if(!(await manualGateOpen(db,env,checkAt))||tradingDay(checkAt)!==tradingDay(now)){
-   await db.prepare("UPDATE live_order_journal SET state='REJECTED',updated_at=? WHERE id=? AND state='SENDING'")
-    .bind(checkAt.toISOString(),id).run()
-   return 'disarmed_after_claim'
-  }
- }else if(!(await getLiveGate(db,env,checkAt)).enabled)return 'disarmed_after_claim'
+ const allowed=manual?await manualGateOpen(db,env,checkAt):(await getLiveGate(db,env,checkAt)).enabled
+ if(!allowed||tradingDay(checkAt)!==tradingDay(now)){
+  // Only this invocation owns the claim, and no broker call has occurred.
+  await db.prepare("UPDATE live_order_journal SET state='REJECTED',updated_at=? WHERE id=? AND state='SENDING' AND broker_order_id IS NULL")
+   .bind(checkAt.toISOString(),id).run()
+  return 'disarmed_after_claim'
+ }
  let result
  try{result=await submitKbLimitOnce(env,side,{code,quantity,price})}
  catch{return 'unknown_order_result'

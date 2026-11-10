@@ -1,4 +1,4 @@
-import {LIVE_BUY_LIMIT_WON,liveBuyRequiredCash} from '../../src/livePilotLimits'
+import {LIVE_BUY_LIMIT_WON,isLiveOrderTick,liveBuyRequiredCash} from '../../src/livePilotLimits'
 /**
  * Read-only real-account preflight. No trade endpoint, no D1 writes.
  * Uses the user-supplied KB V2 SSQM1802 sample ("is_no" input,
@@ -36,6 +36,7 @@ export function evaluateBuyPreview(code:string,price:number,quantity:number,
   const validCode=/^[0-9]{6}$/.test(code)
   if(!validCode)reasons.push('종목코드 형식 오류')
   if(!Number.isSafeInteger(price)||price<1)reasons.push('지정가 오류')
+  else if(!isLiveOrderTick(price))reasons.push('거래소 호가단위에 맞지 않는 지정가')
   if(quantity!==1)reasons.push('매수 수량은 1주로 제한됩니다.')
   const notional=Number.isSafeInteger(price)&&Number.isSafeInteger(quantity)&&price>0&&quantity>0?
     price*quantity:0

@@ -9,7 +9,8 @@ test('one share fits the fee-inclusive 50k ceiling, two shares are rejected',()=
  assert.equal(validateLiveBuyInput('263750','1','9000'),null)
  const error=validateLiveBuyInput('263750','2','9000')
  assert.match(error,/1주/)
- assert.equal(validateLiveBuyInput('263750','1','49504'),null)
+ assert.equal(validateLiveBuyInput('263750','1','49500'),null)
+ assert.match(validateLiveBuyInput('263750','1','49504'),/50원 호가 단위/)
  assert.match(validateLiveBuyInput('263750','1','49505'),/50,000원/)
 })
 test('client rejects bad stock, quantity and price values before contacting KB',()=>{
