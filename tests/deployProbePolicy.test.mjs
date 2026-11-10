@@ -23,3 +23,10 @@ test('post-deploy version identity and automatic rollback verification remain en
  assert.match(code,/ensure\(activeAfter===createdId/)
  assert.match(code,/ensure\(restored===rollbackVersion/)
 })
+
+test('transient KB gateway failures allow longer verification on the same version',()=>{
+ assert.match(code,/gatewayBackoff=\[10_000,20_000,40_000,60_000,90_000\]/)
+ assert.match(code,/maxAttempts=checkAccount\?gatewayBackoff\.length\+1:5/)
+ assert.match(code,/error\?\.gatewayIssue\?maxAttempts:5/)
+ assert.doesNotMatch(code,/gatewayIssue&&attempt>=3/)
+})

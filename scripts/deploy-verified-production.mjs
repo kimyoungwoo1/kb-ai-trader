@@ -78,7 +78,9 @@ const versionOrigin = (id) => {
 }
 const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
   let last='연결되지 않음'
-  for(let attempt=1;attempt<=5;attempt++){
+  const gatewayBackoff=[10_000,20_000,40_000,60_000,90_000]
+  const maxAttempts=checkAccount?gatewayBackoff.length+1:5
+  for(let attempt=1;attempt<=maxAttempts;attempt++){
     try{
       const healthResponse=await fetch(origin+'/api/health',{
         cache:'no-store',headers:{'Cache-Control':'no-store'},signal:AbortSignal.timeout(15000)
@@ -126,22 +128,23 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
       throw failure
     }catch(error){
       last=String(error?.message||'연결 오류').slice(0,220)
-      console.warn('○ '+label+' 재확인 '+attempt+'/5 · '+last)
+      const attemptLimit=checkAccount&&error?.gatewayIssue?maxAttempts:5
+      console.warn('○ '+label+' 재확인 '+attempt+'/'+attemptLimit+' · '+last)
       // A rejected OAuth credential is a definitive failure: never hammer
       // the token issuer or deploy an unverified version.
       if(error?.authIssue==='auth_rejected')
         throw Error(label+' 검증 실패 · KB 인증 거부 · 계좌 검증 미통과 · 운영 전환 없음')
-      // Three provider-gateway failures are enough evidence for this rollout.
-      // Longer spacing avoids hammering an unreachable KB origin.
-      if(error?.gatewayIssue&&attempt>=3)break
-      if(attempt<5){
+      // Keep the same candidate and wait for a transient KB outage to clear.
+      // Both live reads still have to succeed before traffic can switch.
+      if(attempt<attemptLimit){
         const interval=error?.authIssue==='auth_rate_limited'?30_000*attempt:
           String(error?.authIssue||'').startsWith('auth_')?12_000*attempt:
-          error?.gatewayIssue?8000*attempt:
+          error?.gatewayIssue?gatewayBackoff[attempt-1]:
           1500*attempt
-        if(interval>=12000)console.warn('○ KB 인증 재요청 간격 조정 · 인증 서버 부하 방지')
+        if(error?.gatewayIssue)console.warn('○ KB 연결 회복 대기 '+interval/1000+'초 · 같은 신규 버전 재검증')
+        else if(interval>=12000)console.warn('○ KB 인증 재요청 간격 조정 · 인증 서버 부하 방지')
         await delay(interval)
-      }
+      }else break
     }
   }
   throw Error(label+' 검증 실패 · '+last+(checkAccount?' · 운영 전환 전 검사 실패':' · 운영 전환 후 서비스 구조 검사 실패'))
