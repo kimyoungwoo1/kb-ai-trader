@@ -288,6 +288,20 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
     let payload:any
     try{payload=await response.json()}
     catch{throw Error('KB_ORDER_NON_JSON')}
+    // The production SSQM2341 response for an empty day uses a business
+    // status. Accept only the observed first-page empty shape in history views
+    // and pre-arming checks. Exact order and cancel verification stay strict.
+    const header=payload?.dataHeader
+    const recordsOnPage=payload?.dataBody?.Record1
+    const nextPage=payload?.dataBody?.nxt_key
+    if(page===0&&response.status===200&&String(header?.resultCode)==='200'&&
+       String(header?.processCode)==='1861'&&String(header?.processFlag)==='B'&&
+       /^조회할 자료가 없습니다\.?$/.test(String(header?.processMessage??'').trim())&&
+       (recordsOnPage==null||(Array.isArray(recordsOnPage)&&recordsOnPage.length===0))&&
+       (nextPage==null||(typeof nextPage==='string'&&!nextPage.trim()))){
+      dayComplete=true
+      break
+    }
     if(String(payload?.dataHeader?.resultCode)!=='200'||
        String(payload?.dataHeader?.processFlag)!=='A'){
       failedBusinessCodes[day]={

@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs'
 import {build} from 'esbuild'
 
 const output=await build({entryPoints:['worker/src/kbOrderContract.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {recentKbTradingDates,listKbRecentOrders,listKbRecentOrdersForView}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
+const {recentKbTradingDates,listKbRecentOrders,listKbRecentOrdersForView,lookupKbOrder}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
 const saturday=new Date('2026-11-07T00:30:00Z')
 const env={KB_APP_KEY:'recent-orders-autodiscovery-test-key',KB_APP_SECRET:'mock-only'}
 const entry=(orderNo,code='A005930')=>({ordr_no:orderNo,stnd_is_no:code,
@@ -203,4 +203,29 @@ test('concurrent matching UI queries share an in-flight read, with no cached res
   await listKbRecentOrdersForView(viewEnv,1,saturday)
   assert.equal(calls,3)
  }finally{globalThis.fetch=before}
+})
+
+test('observed 1861 empty history completes one day but cannot confirm an exact order',async()=>{
+ const oldFetch=globalThis.fetch
+ const noData={dataHeader:{resultCode:'200',processCode:'1861',processFlag:'B',
+  processMessage:'조회할 자료가 없습니다.'},dataBody:{}}
+ let payload=noData,status=200
+ globalThis.fetch=async url=>String(url).endsWith('/oauth2/token')
+  ? Response.json({dataBody:{access_token:'mock',expires_in:3600}})
+  : Response.json(payload,{status})
+ const sample={...env,KB_APP_KEY:'empty-history-exact-kb'}
+ try{
+  const result=await listKbRecentOrders(sample,1,saturday)
+  assert.equal(result.partial,false)
+  assert.deepEqual(result.checkedDates,['20261106'])
+  assert.deepEqual(result.orders,[])
+  await assert.rejects(lookupKbOrder(sample,'20261106','123','005930','BUY'))
+  for(const dataBody of [{nxt_key:'NEXT'},{Record1:[entry('123')]}]){
+   payload={...noData,dataBody}
+   assert.equal((await listKbRecentOrders(sample,1,saturday)).partial,true)
+  }
+  payload=noData
+  status=503
+  assert.equal((await listKbRecentOrders(sample,1,saturday)).partial,true)
+ }finally{globalThis.fetch=oldFetch}
 })
