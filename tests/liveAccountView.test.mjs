@@ -46,7 +46,7 @@ test('live trial passes existing account state without rewriting authenticated K
  assert.match(trial,/<LiveAccountHoldings /)
  assert.match(card,/주문 가능 현금/)
  assert.match(card,/보유종목별 수량 · 평가금액/)
- assert.match(card,/실계좌 시험매매 한도/)
+ assert.match(card,/실계좌 공통 매수 한도/)
  assert.match(card,/조회되지 않음/)
  assert.match(risk,/findAccountHolding\(holdings,code\)/)
  assert.match(risk,/기존 보유종목은 실주문 시 별도 확인/)

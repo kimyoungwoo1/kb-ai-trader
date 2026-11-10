@@ -38,11 +38,11 @@ export default function LiveAccountHoldings({
   </div>
   <div className="live-pilot-budget">
    <ShieldCheck size={17}/>
-   <span>실계좌 자동매매 한도 <strong>10,000원</strong></span>
+   <span>실계좌 공통 매수 한도 <strong>10,000원</strong></span>
    <span>실주문 원장 예약금 <strong>{fmt(reserved)}</strong></span>
    <span>한도 잔여(예약금 기준) <strong>{fmt(trialLeft)}</strong></span>
   </div>
-  <p className="notification-hint">주문 가능 현금은 실제 계좌 잔고이고, 1만 원은 자동 시험매매에서 별도로 적용하는 상한이야. 시험 예약금은 증권사 체결금액이나 실제 인출액을 뜻하지 않아.</p>
+  <p className="notification-hint">주문 가능 현금은 실제 계좌 잔고이고, 1만 원은 자동매매와 지정가 주문이 공유하는 상한입니다. 시험 예약금은 증권사 체결금액이나 실제 인출액을 뜻하지 않아.</p>
   {!haveAccountData&&<p role="status" className="live-trial-inline-error">아직 이 화면에 계좌 데이터가 없어. ‘실계좌 새로고침’을 눌러 보유종목과 현금을 조회해 줘. 조회되지 않은 값을 0원으로 표시하지 않아.</p>}
   {accountMessage.includes('실패')&&<p className="live-trial-inline-error" role="status">일부 계좌 데이터 확인 필요 · {accountMessage.slice(0,200)}</p>}
   {deposit===null&&haveAccountData&&<p className="notification-hint">주문 가능 현금: {depositMessage}</p>}
