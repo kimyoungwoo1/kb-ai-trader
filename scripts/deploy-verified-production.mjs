@@ -12,13 +12,13 @@ const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
-const livePilot10000 = process.argv.includes('--live-pilot-10000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-10000','--quote-compare'].includes(arg))||
-  (privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot10000&&(tlsProofOnly||privateEgress)))
+const livePilot50000 = process.argv.includes('--live-pilot-50000')
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare'].includes(arg))||
+  (privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
-if(livePilot10000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 1만원 시험배포 승인')
-  throw Error('1만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
-const livePilotFlag = 'ALLOW_REAL_10000_TRIAL_2026'
+if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
+  throw Error('5만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
+const livePilotFlag = 'ALLOW_REAL_50000_TRIAL_2026'
 const name = 'kb-ai-trader'
 const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
@@ -272,12 +272,13 @@ async function main(){
   if(liveD1 && !paperDbId)throw Error('현재 D1 바인딩이 있는데 해당 ID를 확인할 수 없습니다. 중단합니다.')
   const activePilotBinding=oldBindings.get('LIVE_TRADING_HARD_ENABLE')
   const activePaperDbId=liveD1?.database_id||liveD1?.id
-  if(livePilot10000)ensure(!!activePaperDbId&&paperDbId===activePaperDbId,
-    '1만원 실주문 시험은 현재 운영과 같은 D1 주문 원장을 사용해야 합니다. 배포 중단')
-  const preserveLiveApproval=livePilot10000&&
+  if(livePilot50000)ensure(!!activePaperDbId&&paperDbId===activePaperDbId,
+    '5만원 실주문 시험은 현재 운영과 같은 D1 주문 원장을 사용해야 합니다. 배포 중단')
+  const preserveLiveApproval=livePilot50000&&
     activePilotBinding?.type==='plain_text'&&activePilotBinding.text===livePilotFlag
-  if(livePilot10000&&activePilotBinding)
-    ensure(preserveLiveApproval,'현재 운영 실주문 플래그 값을 확인할 수 없어 승인 상태 보존 배포를 중단합니다.')
+  const upgradingLegacyPilot=activePilotBinding?.type==='plain_text'&&activePilotBinding.text==='ALLOW_REAL_10000_TRIAL_2026'
+  if(livePilot50000&&activePilotBinding)
+    ensure(preserveLiveApproval||upgradingLegacyPilot,'현재 운영 실주문 플래그 값을 확인할 수 없어 승인 상태 보존 배포를 중단합니다.')
   if(paperDbId&&!tlsProofOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
@@ -317,7 +318,7 @@ async function main(){
     console.log('○ D1 백업 미설정: 자동매매는 기존대로 작동하고, 백업 메뉴에는 설정 필요 표시')
   }
   console.log('2/7 테스트 및 프런트엔드 빌드')
-  exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs','tests/kbSharedToken.test.mjs','tests/kbAccountRead.test.mjs','tests/kbAccountBatch.test.mjs','tests/accountBatchRouting.test.mjs', 'tests/tradingAnalytics.test.mjs', 'tests/screeningHistory.test.mjs', 'tests/kbQuoteBatch.test.mjs', 'tests/paperCloudBackup.test.mjs', 'tests/paperTradeLease.test.mjs', 'tests/cloudAutoSync.test.mjs', 'tests/serverPaper.test.mjs','tests/serverPaperMonitor.test.mjs','tests/notifications.test.mjs','tests/notificationPreferences.test.mjs','tests/deploySmoke.test.mjs','tests/liveTrial.test.mjs','tests/deploymentStatus.test.mjs','tests/liveOrderJournal.test.mjs','tests/kbOrderContract.test.mjs','tests/kbOrderSubmit.test.mjs','tests/liveRiskPreflight.test.mjs','tests/liveTrialPreflight.test.mjs','tests/liveExecution.test.mjs','tests/livePilot10000.test.mjs','tests/liveCancel.test.mjs','tests/deployProbePolicy.test.mjs','tests/liveTrialUi.test.mjs','tests/kbRecentOrders.test.mjs','tests/liveHoldingsCrossCheck.test.mjs','tests/liveAccountView.test.mjs','tests/kbCancelProof.test.mjs','tests/liveReadiness.test.mjs','tests/deployOAuthDiagnostics.test.mjs','tests/kbSocketReadOnly.test.mjs','tests/kbTlsProofWorker.test.mjs','tests/kbPrivateEgress.test.mjs'])
+  exec('node',['--experimental-strip-types','--test','tests/tradeSignals.test.mjs','tests/autoStatus.test.mjs','tests/paperEngineCheck.test.mjs', 'tests/scanReview.test.mjs', 'tests/trialExit.test.mjs', 'tests/autoWatch.test.mjs', 'tests/maxPositions.test.mjs', 'tests/marketCatalysts.test.mjs', 'tests/kbOAuthReuse.test.mjs','tests/kbSharedToken.test.mjs','tests/kbAccountRead.test.mjs','tests/kbAccountBatch.test.mjs','tests/accountBatchRouting.test.mjs', 'tests/tradingAnalytics.test.mjs', 'tests/screeningHistory.test.mjs', 'tests/kbQuoteBatch.test.mjs', 'tests/paperCloudBackup.test.mjs', 'tests/paperTradeLease.test.mjs', 'tests/cloudAutoSync.test.mjs', 'tests/serverPaper.test.mjs','tests/serverPaperMonitor.test.mjs','tests/notifications.test.mjs','tests/notificationPreferences.test.mjs','tests/deploySmoke.test.mjs','tests/liveTrial.test.mjs','tests/deploymentStatus.test.mjs','tests/liveOrderJournal.test.mjs','tests/kbOrderContract.test.mjs','tests/kbOrderSubmit.test.mjs','tests/liveRiskPreflight.test.mjs','tests/liveTrialPreflight.test.mjs','tests/liveExecution.test.mjs','tests/livePilot50000.test.mjs','tests/liveCancel.test.mjs','tests/deployProbePolicy.test.mjs','tests/liveTrialUi.test.mjs','tests/kbRecentOrders.test.mjs','tests/liveHoldingsCrossCheck.test.mjs','tests/liveAccountView.test.mjs','tests/kbCancelProof.test.mjs','tests/liveReadiness.test.mjs','tests/deployOAuthDiagnostics.test.mjs','tests/kbSocketReadOnly.test.mjs','tests/kbTlsProofWorker.test.mjs','tests/kbPrivateEgress.test.mjs'])
   exec('npm',['run','build'])
   const dir=resolve(cwd,'dist')
   ensure(existsSync(join(dir,'index.html')),'index.html 빌드 누락')
@@ -370,7 +371,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot10000?'EXPLICIT LIVE 10000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
+      annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot50000?'EXPLICIT LIVE 50000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
         {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
@@ -379,7 +380,7 @@ async function main(){
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
-        ...(livePilot10000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
+        ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
@@ -410,7 +411,7 @@ async function main(){
   ensure(newVersion?.id===createdId,'신규 버전 조회 ID 불일치 · 배포 중단')
   verifyVersion(newVersion,'신규 버전',!!paperDbId)
   const newBindings=new Map(bindings(newVersion).map(x=>[x.name,x.type]))
-  ensure(livePilot10000 ? newBindings.get('LIVE_TRADING_HARD_ENABLE')==='plain_text' :
+  ensure(livePilot50000 ? newBindings.get('LIVE_TRADING_HARD_ENABLE')==='plain_text' :
     !newBindings.has('LIVE_TRADING_HARD_ENABLE'),
     '실주문 배포 플래그 일치 검증 실패 · 운영 전환 차단')
   ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
@@ -485,7 +486,7 @@ async function main(){
     '배포 중 다른 운영 버전이 반영됐습니다. 최신 버전과 Secret 상속을 다시 확인하기 위해 안전 중단합니다.')
   if(preserveLiveApproval){
     console.log('✓ 동일 운영 D1의 실주문 승인 상태 보존 · 게이트 변경 없음')
-  }else if(livePilot10000){
+  }else if(livePilot50000){
     // First opt-in must not revive an approval left by a previously disabled version.
     const reset=await api(root+'/d1/database/'+paperDbId+'/query',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -493,7 +494,7 @@ async function main(){
     })
     ensure((Array.isArray(reset)?reset:[reset]).every(x=>x?.success!==false),
       '실주문 D1 게이트 초기 잠금 실패 · 배포 중단')
-    console.log('✓ 1만원 시험배포 초기 실주문 게이트 OFF · 웹 승인 전 주문 불가')
+    console.log('✓ 5만원 시험배포 초기 실주문 게이트 OFF · 웹 승인 전 주문 불가')
   }
   // A failed/ambiguous deployment API response might already have changed
   // traffic. Mark the attempt before sending it and reconcile via Wrangler.

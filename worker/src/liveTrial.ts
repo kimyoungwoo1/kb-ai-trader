@@ -1,3 +1,4 @@
+import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,liveBuyRequiredCash} from '../../src/livePilotLimits'
 import { getLiveGate, disarmLiveTrading, armLiveTrading, submitManualLimitBuy, diagnoseAutoBuy, type LiveEnv } from './liveExecution'
 import { evaluateBuyPreview, readKbBuyingPower } from './liveRiskPreflight'
 import { lookupKbOrder, listKbRecentOrders, listKbRecentOrdersForView } from './kbOrderContract'
@@ -9,7 +10,7 @@ import {diagnoseLiveReadiness} from './liveReadiness'
  * Real execution requires an independently verified KB order/contract
  * implementation (including ack, fill, cancel and unknown-status reconciliation).
  */
-export const LIVE_TRIAL_BUDGET=10_000
+export const LIVE_TRIAL_BUDGET=LIVE_BUY_LIMIT_WON
 export const LIVE_TRIAL_DAILY_BUYS=1
 export const LIVE_TRIAL_MAX_SYMBOLS=1
 type Db=any
@@ -28,9 +29,9 @@ export function isRegularSession(at=new Date()):boolean{
 export function validateTrialCandidate(value:TrialCandidate,now=new Date()):string|null{
   if(!value||value.side!=='BUY')return '실매수 후보만 허용'
   if(!/^[0-9]{6}$/.test(value.code))return '유효하지 않은 종목코드'
-  if(!Number.isSafeInteger(value.quantity)||value.quantity<1)return '수량 오류'
+  if(value.quantity!==1)return '수량 오류'
   if(!Number.isSafeInteger(value.limitPrice)||value.limitPrice<1)return '지정가 오류'
-  if(value.limitPrice*value.quantity>LIVE_TRIAL_BUDGET)return '1만 원 한도 초과'
+  if(liveBuyRequiredCash(value.limitPrice)>LIVE_TRIAL_BUDGET)return '5만 원 한도 초과'
   if(!isRegularSession(now))return '정규장 외 주문 금지'
   if(!value.eventId||value.eventId.length>140)return '후보 ID 오류'
   const age=now.getTime()-Date.parse(value.createdAt)
@@ -78,10 +79,10 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       const code=String(body.code||''),quantity=Number(body.quantity),limitPrice=Number(body.limitPrice)
       if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
         return reply({success:false,message:'KB 실계좌 인증 설정이 없어 주문 안전성 점검을 중단합니다.'},503)
-      if(!/^[0-9]{6}$/.test(code)||!Number.isSafeInteger(quantity)||quantity<1||
+      if(!/^[0-9]{6}$/.test(code)||quantity!==1||
         !Number.isSafeInteger(limitPrice)||limitPrice<1||
-        quantity*limitPrice>LIVE_TRIAL_BUDGET)
-        return reply({success:false,locked:true,message:'종목코드·주문 수량·지정가·1만 원 한도를 확인해 주세요.'},400)
+        liveBuyRequiredCash(limitPrice)>LIVE_TRIAL_BUDGET)
+        return reply({success:false,locked:true,message:'종목코드·주문 수량·지정가·5만 원 한도를 확인해 주세요.'},400)
       const day=kstTradingDay()
       // Read authoritative order journal first. Never infer safety from a
       // browser-local balance or uncommitted simulated position.
@@ -113,7 +114,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
       })
       if(pendingWon+preview.requiredCash>LIVE_TRIAL_BUDGET){
         preview.permitted=false
-        preview.reasons.push('기존 시험 주문 예약금 포함 1만 원 한도 초과')
+        preview.reasons.push('기존 시험 주문 예약금 포함 5만 원 한도 초과')
       }
       return reply({success:true,locked:true,executionEnabled:false,mode:'READ_ONLY_PREFLIGHT',
         preview,message:preview.permitted?
@@ -153,8 +154,8 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
     if(action==='arm'){
       // Even with the explicit deployment flag, do not arm on a stale
       // or unreachable KB order-history service. This check does not submit.
-      if(String(body.confirmation||'')!=='실주문 시작')
-        return reply({success:false,enabled:false,message:'1만원 실거래 실행 확인 문구가 일치하지 않습니다.'},423)
+      if(String(body.confirmation||'')!==LIVE_BUY_CONFIRMATION)
+        return reply({success:false,enabled:false,message:'5만원 실거래 실행 확인 문구가 일치하지 않습니다.'},423)
       if(!env?.KB_APP_KEY||!env?.KB_APP_SECRET)
         return reply({success:false,enabled:false,message:'KB 주문조회 인증 정보가 없습니다.'},423)
       try {
@@ -194,7 +195,7 @@ export async function observePaperFill(db:Db|undefined,fill:any,now=new Date()):
   // We intentionally never call a broker order endpoint here.
   const candidate:TrialCandidate={
     eventId:String(fill.id||''),code:String(fill.code||''),name:String(fill.name||'').slice(0,80),
-    side:'BUY',quantity:Number(fill.quantity),limitPrice:Number(fill.price),
+    side:'BUY',quantity:1,limitPrice:Number(fill.price),
     reason:String(fill.reason||'').slice(0,200),createdAt:String(fill.at||'')
   }
   const problem=validateTrialCandidate(candidate,now)

@@ -31,8 +31,8 @@ function db(){
 }
 test('hard budget, single lot size and fresh KST market session',()=>{
  assert.equal(validateTrialCandidate(candidate(),now),null)
- assert.match(validateTrialCandidate(candidate({quantity:2}),now),/1만 원/)
- assert.match(validateTrialCandidate(candidate({limitPrice:10001}),now),/1만 원/)
+ assert.match(validateTrialCandidate(candidate({quantity:2}),now),/수량/)
+ assert.match(validateTrialCandidate(candidate({limitPrice:49505}),now),/5만 원/)
  assert.match(validateTrialCandidate(candidate({limitPrice:9000.5}),now),/지정가/)
  assert.match(validateTrialCandidate(candidate({side:'SELL'}),now),/실매수/)
  assert.match(validateTrialCandidate(candidate({code:'INVALID'}),now),/종목코드/)
@@ -49,7 +49,7 @@ test('user cannot arm, buy, sell, cancel or bypass locked real-trading mode',asy
  const status=await (await liveTrialApi(state,{action:'status'})).json()
  assert.equal(status.enabled,false)
  assert.equal(status.brokerOrdersVerified,false)
- assert.equal(status.limits.budget,10000)
+ assert.equal(status.limits.budget,50000)
  assert.equal(status.limits.maxDailyBuys,1)
 })
 test('audit only uses committed BUY fill, one unique candidate per day, never brokers',async()=>{
@@ -58,7 +58,7 @@ test('audit only uses committed BUY fill, one unique candidate per day, never br
  assert.equal(await observePaperFill(state,fill,now),true)
  assert.equal(await observePaperFill(state,fill,now),false)
  assert.equal(await observePaperFill(state,{...fill,id:'other',code:'000660'},now),false)
- assert.equal(await observePaperFill(state,{...fill,id:'over',price:20000},now),false)
+ assert.equal(await observePaperFill(state,{...fill,id:'over',price:50000},now),false)
  assert.equal(await observePaperFill(state,{...fill,side:'SELL'},now),false)
  assert.equal(state.entries.length,1)
  assert.equal(state.entries[0].notional,9000)

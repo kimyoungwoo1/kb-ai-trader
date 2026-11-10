@@ -177,7 +177,7 @@ export default function ManualLimitOrder({ token }: { token: string }) {
   const orders = status?.orders?.filter(order => order.id.startsWith('manual-buy-')) ?? []
   return <section className="notification-page">
     <div className="page-heading"><div><div className="eyebrow">MANUAL LIMIT ORDER</div><h1>지정가 주문</h1>
-      <p>정규장 국내주식 지정가 매수 · 수수료 여유금 포함 1만 원 · 자동매매와 당일 매수 1회 한도 공유</p>
+      <p>정규장 국내주식 지정가 매수 · 수수료 여유금 포함 5만 원 · 자동매매와 당일 매수 1회 한도 공유</p>
     </div><button className="outline-button" onClick={() => void refresh()}>새로고침</button></div>
     <div className="panel" style={{ padding: 20, display: 'grid', gap: 12 }}>
       <p className="notification-hint">{statusError || !status ? '서버 주문 상태 확인 필요' :

@@ -47,7 +47,7 @@ export default function LiveRiskPreview({token,holdings,holdingsLoaded}:{token:s
   }
   return <div className="panel" style={{padding:20,display:'grid',gap:12}}>
     <div className="panel-heading"><div><h3>실계좌 매수 안전성 검사</h3><span>READ ONLY · SSQM1802 · 실주문 차단</span></div></div>
-    <p className="notification-hint">1만 원 이하 지정가 매수 계획을 입력하면 KB증권의 해당 종목 주문가능금액과 D1 주문 상태를 읽어 검증해. 이 버튼은 주식을 매수하거나 주문을 예약하지 않아.</p>
+    <p className="notification-hint">5만 원 이하 지정가 매수 계획을 입력하면 KB증권의 해당 종목 주문가능금액과 D1 주문 상태를 읽어 검증해. 이 버튼은 주식을 매수하거나 주문을 예약하지 않아.</p>
     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
       <input className="live-trial-field" aria-label="시험 종목코드" placeholder="종목코드 6자리" maxLength={6}
         value={code} onChange={e=>{invalidate();setCode(e.target.value)}} style={{width:155}}/>

@@ -1,3 +1,4 @@
+import {LIVE_BUY_CONFIRMATION} from './livePilotLimits'
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Lock, RefreshCw } from 'lucide-react'
 import LiveOrderLookup from './LiveOrderLookup'
@@ -119,16 +120,16 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
       <div style={{display:'flex',gap:10,alignItems:'center'}}><Lock size={21}/><strong>{!status||statusError?'실주문 상태 확인 필요':armed?(status.enabled?'실계좌 자동매매 활성화':'실계좌 자동매매 · 정규장 대기'):'실주문 잠금 · 기본 비활성화'}</strong></div>
       <p className="notification-hint">{status?.message||'서버 설정과 실주문 승인 모두 확인되기 전에는 실주문이 발송되지 않습니다. 기존 계좌 조회와 가상매매는 독립적으로 동작합니다.'}</p>
       <div className="notification-meta">
-        <span>총 매수 한도: 10,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
+        <span>총 매수 한도: 50,000원</span><span>하루 매수: 최대 1회</span><span>동시 종목: 1개</span>
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
       </div>
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
-      {status?.hardEnabled&&!armed&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 원금 1만원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 직접 잠글 때까지 다음 정규장에도 자동 주문이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
+      {status?.hardEnabled&&!armed&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 1주, 수수료 여유금 포함 5만 원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 직접 잠글 때까지 다음 정규장에도 자동 주문이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
       {status?.hardEnabled&&!armed&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
-          placeholder="실주문 시작" value={confirmation}
+          placeholder={LIVE_BUY_CONFIRMATION} value={confirmation}
           onChange={e=>setConfirmation(e.target.value)}/>
-        <button className="outline-button" disabled={busy||confirmation!=='실주문 시작'}
+        <button className="outline-button" disabled={busy||confirmation!==LIVE_BUY_CONFIRMATION}
           onClick={()=>void arm()}>자동매매 켜기</button>
       </div>}
       {feedback&&<p role="status" aria-live="polite" className="live-trial-inline-success"><CheckCircle2 size={14}/>{feedback}</p>}

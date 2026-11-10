@@ -5,19 +5,19 @@ import {build} from 'esbuild'
 
 const compiled=await build({entryPoints:['src/liveBuyValidation.ts'],bundle:true,platform:'node',format:'esm',write:false})
 const {validateLiveBuyInput}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].contents).toString('base64'))
-test('1 share at 9000 is valid and 2 shares show an actionable 18000/10000 error',()=>{
+test('one share fits the fee-inclusive 50k ceiling, two shares are rejected',()=>{
  assert.equal(validateLiveBuyInput('263750','1','9000'),null)
  const error=validateLiveBuyInput('263750','2','9000')
- assert.match(error,/18,000원/)
- assert.match(error,/10,000원/)
- assert.match(error,/수량 또는 지정가/)
+ assert.match(error,/1주/)
+ assert.equal(validateLiveBuyInput('263750','1','49504'),null)
+ assert.match(validateLiveBuyInput('263750','1','49505'),/50,000원/)
 })
 test('client rejects bad stock, quantity and price values before contacting KB',()=>{
  assert.match(validateLiveBuyInput('26375','1','9000'),/6자리/)
  assert.match(validateLiveBuyInput('263750','0','9000'),/수량/)
  assert.match(validateLiveBuyInput('263750','1','0'),/지정가/)
  assert.match(validateLiveBuyInput('263750','1','9000.5'),/지정가/)
- assert.match(validateLiveBuyInput('263750','99999999999999','100000'),/금액을 정확히/)
+ assert.match(validateLiveBuyInput('263750','99999999999999','100000'),/수량/)
 })
 test('risk UI never silently disables an over-limit check or retains earlier results',()=>{
  const source=readFileSync('src/LiveRiskPreview.tsx','utf8')

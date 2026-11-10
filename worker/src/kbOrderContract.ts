@@ -1,3 +1,4 @@
+import {LIVE_BUY_LIMIT_WON,liveBuyRequiredCash} from '../../src/livePilotLimits'
 /**
  * KB securities V2 order contract. Source: user-provided all_kbstock_sample_V2.zip
  * (SSAM1801/1802/1806 and SSQM2341).
@@ -25,7 +26,8 @@ export function makeLimitOrder(side:'BUY'|'SELL',input:Input){
  if(side!=='BUY'&&side!=='SELL')throw Error('매매 구분 오류')
  if(!six(input.code)||!Number.isSafeInteger(input.quantity)||input.quantity<1||
    !Number.isSafeInteger(input.price)||input.price<1)throw Error('지정가 매매 요청값 오류')
- if(side==='BUY'&&input.quantity*input.price>10_000)throw Error('1만 원 매수 한도 초과')
+ if(side==='BUY'&&input.quantity!==1)throw Error('매수 수량은 1주로 제한됩니다.')
+ if(side==='BUY'&&liveBuyRequiredCash(input.price)>LIVE_BUY_LIMIT_WON)throw Error('수수료 여유금 포함 5만 원 매수 한도 초과')
  const path=side==='BUY'?'/api/v1/ssam1802':'/api/v1/ssam1801'
  return {path,body:{dataHeader:header(),dataBody:{
    ordr_uprc:String(input.price),ordr_ccd:'00',mkt_tm_clsf:'1',

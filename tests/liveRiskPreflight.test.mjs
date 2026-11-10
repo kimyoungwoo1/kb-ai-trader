@@ -15,13 +15,15 @@ test('KB SSQM1802 read-only response parses cash and buying power without guessi
  assert.throws(()=>parseBuyingPower({...response('10000'),dataBody:{ordr_psbl_csh:'10000'}}),/누락/)
  assert.throws(()=>parseBuyingPower(response('999999999999999999')),/누락/)
 })
-test('10k total including cash headroom, no extra buy, no unknown order',()=>{
+test('50k total including cash headroom, no extra buy, no unknown order',()=>{
  const good=evaluateBuyPreview('005930',9000,1,pass,options)
  assert.equal(good.permitted,true)
  assert.equal(good.notional,9000)
  assert.equal(good.feeBuffer,90)
  assert.equal(good.requiredCash,9090)
- assert.equal(evaluateBuyPreview('005930',10000,1,pass,options).permitted,false)
+ assert.equal(evaluateBuyPreview('005930',49504,1,pass,options).requiredCash,50000)
+ assert.equal(evaluateBuyPreview('005930',49504,1,pass,options).permitted,true)
+ assert.equal(evaluateBuyPreview('005930',49505,1,pass,options).permitted,false)
  assert.equal(evaluateBuyPreview('005930',9000,2,pass,options).permitted,false)
  assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,dailyBuys:1}).permitted,false)
  assert.equal(evaluateBuyPreview('005930',9000,1,pass,{...options,activeTrialOrders:1}).permitted,false)

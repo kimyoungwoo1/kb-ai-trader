@@ -13,13 +13,13 @@ const holdClock=(at=monday)=>{
   }
   return ()=>{globalThis.Date=REAL_DATE}
 }
-const HARD='ALLOW_REAL_10000_TRIAL_2026'
+const HARD='ALLOW_REAL_50000_TRIAL_2026'
 const env=(key)=>({KB_APP_KEY:key,KB_APP_SECRET:'mock-only',LIVE_TRADING_HARD_ENABLE:HARD})
 const stamp='2026-11-09T00:30:00.000Z'
 const fill={id:'2026-11-09T00:30:00.000Z-buy-005930',at:stamp,code:'005930',side:'BUY',price:9000,quantity:1}
 const activeStates=new Set(['RESERVED','SENDING','UNKNOWN','ACCEPTED','PARTIAL','CANCEL_REQUESTED'])
 class Db {
-  constructor(){this.gate={enabled:1,trading_day:'2026-11-09'};this.rows=[];this.actions=[]}
+  constructor(){this.gate={enabled:1,trading_day:'PERSISTENT_50000'};this.rows=[];this.actions=[]}
   prepare(sql){
     const self=this
     const operation={params:[],
@@ -45,8 +45,8 @@ class Db {
           return {meta:{changes:1}}
         }
         if(sql.startsWith('INSERT OR IGNORE INTO live_order_journal')){
-          const [id,day,code,quantity,price,reserved,created]=this.params
-          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&(self.gate.trading_day===day||sql.includes("trading_day='PERSISTENT'")&&self.gate.trading_day==='PERSISTENT')
+          const [id,day,code,quantity,price,reserved,created,,approval]=this.params
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&self.gate.trading_day===approval
           if(!gateOk||self.rows.length)return {meta:{changes:0}}
           self.rows.push({id,trading_day:day,code,side:'BUY',quantity,limit_price:price,reserved_won:reserved,
             state:'RESERVED',broker_order_id:null,filled_quantity:0,created_at:created,updated_at:created})
@@ -55,7 +55,7 @@ class Db {
         if(sql.includes("SET state='SENDING'")){
           const [,id,day]=this.params
           const row=self.rows.find(x=>x.id===id&&x.state==='RESERVED')
-          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&(day===self.gate.trading_day||sql.includes("trading_day='PERSISTENT'")&&self.gate.trading_day==='PERSISTENT')
+          const gateOk=sql.includes('enabled=0')?self.gate.enabled===0:self.gate.enabled===1&&day===self.gate.trading_day
           if(!row||!gateOk)return {meta:{changes:0}}
           row.state='SENDING';return {meta:{changes:1}}
         }
@@ -130,7 +130,7 @@ test('production remains HARD LOCKED when execution flag is absent',async()=>{
   const gate=await getLiveGate(db,{KB_APP_KEY:'mock'},monday)
   assert.equal(gate.enabled,false)
   assert.equal(await processLiveFill(db,{KB_APP_KEY:'mock'},fill,monday),'locked')
-  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'실주문 시작',monday),false)
+  assert.equal(await armLiveTrading(db,{KB_APP_KEY:'mock'},'5만원 실주문 시작',monday),false)
   assert.equal(network,0)
   assert.equal(db.rows.length,0)
  }finally{globalThis.fetch=orig}
@@ -167,20 +167,20 @@ test('missing broker response permanently blocks automatic retry',async()=>{
 test('wrong confirmation or market closure blocks arming',async()=>{
  const db=new Db()
  assert.equal(await armLiveTrading(db,env('arm-key'),'wrong',monday),false)
- assert.equal(await armLiveTrading(db,env('arm-key'),'실주문 시작',new REAL_DATE('2026-11-08T23:00:00Z')),false)
+ assert.equal(await armLiveTrading(db,env('arm-key'),'5만원 실주문 시작',new REAL_DATE('2026-11-08T23:00:00Z')),false)
  assert.equal(await disarmLiveTrading(db),true)
  assert.equal((await getLiveGate(db,env('arm-key'),monday)).enabled,false)
 })
 
 test('manual limit buys require auto OFF, share the daily claim and preserve confirmed quantity',async()=>{
  const revert=holdClock(),network=mockBroker(),db=new Db()
- const input={id:'4f835176-818a-4b7c-8f10-1b55beaa00ab',code:'005930',quantity:2,price:4500}
+ const input={id:'4f835176-818a-4b7c-8f10-1b55beaa00ab',code:'005930',quantity:1,price:45000}
  const config=env('mock-manual-limit')
  try{
   assert.equal(await submitManualLimitBuy(db,config,input,monday),'manual_locked')
   assert.equal(network.seen.length,0)
   await disarmLiveTrading(db)
-  assert.equal(await submitManualLimitBuy(db,config,{...input,price:9000},monday),'budget_exceeded')
+  assert.equal(await submitManualLimitBuy(db,config,{...input,price:49505},monday),'budget_exceeded')
   assert.equal(network.seen.length,0)
   const results=await Promise.all([
     submitManualLimitBuy(db,config,input,monday),
@@ -188,7 +188,7 @@ test('manual limit buys require auto OFF, share the daily claim and preserve con
   ])
   assert.equal(results.filter(value=>value==='accepted_not_filled').length,1)
   assert.equal(network.seen.filter(url=>url.endsWith('/api/v1/ssam1802')).length,1)
-  assert.equal(db.rows[0].quantity,2)
+  assert.equal(db.rows[0].quantity,1)
   assert.equal(db.rows[0].id,'manual-buy-'+input.id)
   assert.equal(db.gate.enabled,0)
  }finally{network.restore();revert()}
@@ -200,14 +200,21 @@ test('persistent approval waits outside regular hours and places an eligible nex
  const config=env('mock-persistent-approval')
  const closed=new REAL_DATE('2026-11-09T08:00:00.000Z')
  try{
-  assert.equal((await getLiveGate(db,config,tomorrow)).armed,false,'legacy day-only approvals expire')
-  assert.equal(await armLiveTrading(db,config,'실주문 시작',monday),true)
-  assert.equal(db.gate.trading_day,'PERSISTENT')
+  assert.equal((await getLiveGate(db,{...config,LIVE_TRADING_HARD_ENABLE:'ALLOW_REAL_10000_TRIAL_2026'},tomorrow)).armed,false)
+  db.gate.trading_day='PERSISTENT'
+  assert.equal((await getLiveGate(db,config,tomorrow)).armed,false,'legacy persistent approvals cannot enable 50k')
+  db.gate.trading_day='2026-11-10'
+  assert.equal((await getLiveGate(db,config,tomorrow)).armed,false,'legacy day approvals cannot enable 50k')
+  assert.equal(await armLiveTrading(db,config,'실주문 시작',monday),false)
+  assert.equal(await armLiveTrading(db,config,'5만원 실주문 시작',monday),true)
+  assert.equal(db.gate.trading_day,'PERSISTENT_50000')
   assert.equal((await getLiveGate(db,config,closed)).armed,true)
   assert.equal((await getLiveGate(db,config,closed)).enabled,false)
   assert.equal((await getLiveGate(db,config,tomorrow)).enabled,true)
-  assert.equal(await processLiveFill(db,config,{...fill,at:tomorrow.toISOString()},tomorrow),'accepted_not_filled')
+  assert.equal(await processLiveFill(db,config,{...fill,price:49504,quantity:9,at:tomorrow.toISOString()},tomorrow),'accepted_not_filled')
   assert.equal(db.rows[0].trading_day,'2026-11-10')
+  assert.equal(db.rows[0].quantity,1)
+  assert.equal(db.rows[0].reserved_won,50000)
   assert.equal(network.seen.filter(url=>url.endsWith('/api/v1/ssqm2341')).length,1)
   assert.equal(await disarmLiveTrading(db),true)
   assert.equal((await getLiveGate(db,config,tomorrow)).armed,false)
