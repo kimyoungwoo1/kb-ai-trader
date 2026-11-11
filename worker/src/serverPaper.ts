@@ -123,7 +123,11 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const watched = [...snapshot.account.positions,...snapshot.account.pending]
       .filter(x => /^\d{6}$/.test(x.code)).filter((x,i,a)=>a.findIndex(t=>t.code===x.code)===i)
       .slice(0,5).map(x=>({code:x.code,name:x.name}));
-    const doScan = slot % 5 === 0;
+    const scanOffset = slot % 5;
+    // Resume the missed scan on the first minute after the KB cooldown.
+    const resumeScan = row.last_error?.startsWith(kbFailurePrefix) &&
+      slot - row.cycle_slot === 2 && (scanOffset === 1 || scanOffset === 2);
+    const doScan = scanOffset === 0 || resumeScan;
     const symbols = doScan ? await (async()=>{
       const discover = await post('/api/market/discover',{});
       if (!discover.success || !Array.isArray(discover.candidates)) throw Error('시장 후보 발견 실패');
