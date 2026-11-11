@@ -153,12 +153,16 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       };
       // Check the first batch before requesting additional symbols, news or disclosures.
       const first = await readFlow(chunks[0]);
-      const [remaining,disclosures,news] = await Promise.all([
-        Promise.all(chunks.slice(1).map(readFlow)),
-        post('/api/market/disclosures',{complete:true}),
-        post('/api/market/research',{skip_ai:true}),
+      const [remaining,disclosuresResult,newsResult] = await Promise.all([
+        Promise.allSettled(chunks.slice(1).map(readFlow)),
+        Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
+        Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
       ]);
-      const quotes = [first,...remaining].flat();
+      const disclosures = disclosuresResult || {};
+      const news = newsResult || {};
+      const quotes = [first,...remaining.flatMap(result=>result.status==='fulfilled'?[result.value]:[])].flat();
+      const incompleteScan = remaining.some(result=>result.status==='rejected') ||
+        !disclosuresResult || !newsResult;
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
@@ -169,11 +173,21 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         disclosures: Array.isArray(disclosures.disclosures)?disclosures.disclosures:[],
         newsSources, dartReported:Number(disclosures.total_count)||0, message:'서버 뉴스·공시 확인',
       };
-      const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
       snapshot.catalyst = catalyst;
-      snapshot.screening = { checkedAt, signals };
-      nextAccount = runAutoCycle(snapshot.account,signals,quotes,checkedAt,now,store);
-      message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
+      if(incompleteScan){
+        // Keep watching existing positions from this scan's usable quotes.
+        // A partial scan must not open or replace pending entry orders.
+        nextAccount = runAutoWatchCycle({...snapshot.account,pending:[]},
+          quotes.filter(item=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
+          checkedAt,now,store,symbols.length);
+        nextAccount.pending = snapshot.account.pending;
+        message = '정밀검사 일부 실패 · 보유 종목 감시 계속 · 신규 매수 보류';
+      }else{
+        const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
+        snapshot.screening = { checkedAt, signals };
+        nextAccount = runAutoCycle(snapshot.account,signals,quotes,checkedAt,now,store);
+        message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
+      }
     } else {
       // On non-scan minutes, only watch held/pending symbols; old candidate data
       // never justifies a new BUY unless the queued trigger was created by a valid scan.
