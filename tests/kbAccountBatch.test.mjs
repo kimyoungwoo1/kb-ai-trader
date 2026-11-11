@@ -4,7 +4,7 @@ import {build} from 'esbuild'
 const output=await build({entryPoints:['worker/src/kbAccountBatch.ts'],bundle:true,platform:'node',format:'esm',write:false})
 const {runAccountBatch}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
 
-test('account UI starts each read independently',async()=>{
+test('account UI checks holdings before starting valuation and deposit together',async()=>{
  let active=0,maxActive=0
  const routes=[]
  const result=await runAccountBatch('serial-test',async route=>{
@@ -14,7 +14,7 @@ test('account UI starts each read independently',async()=>{
   return {success:true,status:200,data:{dataBody:{Record1:[]}}}
  })
  assert.equal(result.success,true)
- assert.equal(maxActive,3)
+ assert.equal(maxActive,2)
  assert.deepEqual(routes,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
 })
 
@@ -40,12 +40,12 @@ test('a sustained 522 gets one extra probe and then the cached failure',async()=
   return {success:false,status:502,http_status:522,error_type:'NON_JSON'}
  })
  const first=await request()
- assert.equal(calls,4)
+ assert.equal(calls,2)
  assert.equal(first.results.holdings.http_status,522)
- assert.equal(first.results.valuation.http_status,522)
- assert.equal(first.results.deposit.http_status,522)
+ assert.equal(first.results.valuation.stage,'account_upstream_unavailable')
+ assert.equal(first.results.deposit.stage,'account_upstream_unavailable')
  const again=await request()
- assert.equal(calls,4)
+ assert.equal(calls,2)
  assert.equal(again.results.holdings.http_status,522)
 })
 
@@ -78,7 +78,7 @@ test('batch deadline preserves cash and holdings when valuation hangs',async()=>
  assert.equal(result.results.deposit.success,true)
 })
 
-test('valuation and cash can recover after a holdings 522',async()=>{
+test('valuation and cash are deferred after a repeated holdings 522',async()=>{
  const calls=[]
  const batch=await runAccountBatch('valuation-fallback-522',async route=>{
   calls.push(route)
@@ -87,9 +87,9 @@ test('valuation and cash can recover after a holdings 522',async()=>{
    : {success:true,status:200}
  })
  assert.equal(batch.results.holdings.http_status,522)
- assert.equal(batch.results.valuation.success,true)
- assert.equal(batch.results.deposit.success,true)
- assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit','/api/kb/holdings'])
+ assert.equal(batch.results.valuation.success,false)
+ assert.equal(batch.results.deposit.success,false)
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/holdings'])
 })
 
 
