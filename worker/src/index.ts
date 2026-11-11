@@ -7,7 +7,7 @@ import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
-import {readKbAccountJson} from './kbAccountRead'
+import {readKbAccountJson,fetchKbObserved} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
 
 export interface Env {
@@ -253,7 +253,7 @@ const service = {
 
       let response: Response;
       try {
-        response = await fetch(`${baseUrl}/oauth2/token`, {
+        response = await fetchKbObserved(`${baseUrl}/oauth2/token`, {
           method: "POST",
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(15000),
@@ -414,7 +414,7 @@ const service = {
 
       for (const endpoint of urls) {
         try {
-          const response = await fetch(endpoint, {
+          const response = await fetchKbObserved(endpoint, {
             headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0", Referer: "https://m.stock.naver.com/" },
             signal: AbortSignal.timeout(12000),
           });
@@ -489,7 +489,7 @@ const service = {
       const baseUrl = kbBaseUrl(env);
       const readQuote = async (stock: (typeof stocks)[number], timeoutMs = 20_000) => {
         try {
-          const response = await fetch(baseUrl + "/api/v1/ivu10140", {
+          const response = await fetchKbObserved(baseUrl + "/api/v1/ivu10140", {
             method: "POST",
             headers: { Authorization: "bearer " + accessToken,
               appKey: env.KB_APP_KEY!, "Content-Type": "application/json" },
@@ -581,7 +581,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       let quoteResponse: Response;
       try {
-        quoteResponse = await fetch(`${baseUrl}/api/v1/ivu10140`, {
+        quoteResponse = await fetchKbObserved(`${baseUrl}/api/v1/ivu10140`, {
           method: "POST",
           headers: { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: exchange, shrt_cd: code } }),
@@ -623,7 +623,7 @@ const service = {
       const endpoint = "https://raw.githubusercontent.com/james-brand/korea-market-data/main/data/foreign-flows-aggregates.csv";
       const diagnostics: string[] = [];
       try {
-        const response = await fetch(endpoint, {
+        const response = await fetchKbObserved(endpoint, {
           headers: { Accept: "text/csv", "User-Agent": "kb-ai-trader/0.1" },
           signal: AbortSignal.timeout(15000),
           cf: { cacheTtl: 300, cacheEverything: true },
@@ -736,7 +736,7 @@ const service = {
         let quoteError = "";
         let investorError = "";
         try {
-          const response = await fetch(`${baseUrl}/api/v1/ivu10140`, {
+          const response = await fetchKbObserved(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
             signal: AbortSignal.timeout(15000),
@@ -760,7 +760,7 @@ const service = {
           const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
           const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
           const startDate = start.toISOString().slice(0, 10).replace(/-/g, "");
-          const response = await fetch(`${baseUrl}/api/v1/ivu10430`, {
+          const response = await fetchKbObserved(`${baseUrl}/api/v1/ivu10430`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
             signal: AbortSignal.timeout(15000),
@@ -845,7 +845,7 @@ const service = {
       try {
         const probeHost = async (target: string) => {
           try {
-            const probe = await fetch(target, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8000) });
+            const probe = await fetchKbObserved(target, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8000) });
             return { ok: true, status: probe.status, type: probe.headers.get("content-type") || "" };
           } catch (probeError) {
             const name = probeError instanceof Error ? probeError.name : "UnknownError";
@@ -875,7 +875,7 @@ const service = {
             return json({ success: false, stage: "redirect_loop", redirect_status: response?.status || null, redirect_host: currentUrl.hostname, redirect_path: currentUrl.pathname, redirect_count: visitedUrls.size, message: "OpenDART API가 동일 주소로 반복 이동시켜 요청을 중단했습니다. 직전 HTTP 상태와 이동 경로를 확인해야 합니다." }, 502);
           }
           visitedUrls.add(safeCurrentUrl + currentUrl.search.replace(/crtfc_key=[^&]+/, "crtfc_key=[hidden]"));
-          response = await fetch(requestUrl, {
+          response = await fetchKbObserved(requestUrl, {
             headers: {
               "Accept": "application/json",
               "User-Agent": "curl/8.5.0",
@@ -943,7 +943,7 @@ const service = {
             try {
               const nextParams = new URLSearchParams(params);
               nextParams.set("page_no", String(page));
-              const pageResponse = await fetch("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
+              const pageResponse = await fetchKbObserved("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
                 redirect: "manual",
                 headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
                 signal: AbortSignal.timeout(12000),
@@ -1054,7 +1054,7 @@ const service = {
       const todayStartUtc = Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000;
       const feedResults = await Promise.all(feeds.map(async feed => {
         try {
-          const response = await fetch(feed.url, {
+          const response = await fetchKbObserved(feed.url, {
             headers: { "User-Agent": "Mozilla/5.0 (compatible; KB-AI-Trader/1.0)", "Accept": "application/rss+xml, application/xml, text/xml" },
             signal: AbortSignal.timeout(15000),
             cf: { cacheTtl: 180, cacheEverything: true },
@@ -1224,7 +1224,7 @@ const service = {
           let response: Response | null = null;
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) await new Promise(resolve => setTimeout(resolve, attempt * 1200));
-            response = await fetch(endpoint, {
+            response = await fetchKbObserved(endpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body,
