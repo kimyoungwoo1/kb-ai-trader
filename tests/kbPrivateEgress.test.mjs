@@ -37,7 +37,7 @@ test('private egress only exposes internal RPC and bundles with Cloudflare runti
 test('private mode stays off unless expressly selected and never changes production deployment path',()=>{
  assert.match(deploy,/privateEgress&&!tlsProofOnly/)
  assert.match(deploy,/\.\.\.\(privateEgress\?\[\{name:'KB_EGRESS',type:'service'/)
- assert.match(deploy,/if\(tlsProofOnly\)\{[\s\S]*?return\n  \}/)
+ assert.match(deploy,/if\(tlsProofOnly\)\{[\s\S]*?return\r?\n  \}/)
  const switchAt=deploy.indexOf('switched=true')
  const proofAt=deploy.indexOf("const previewOrigin=versionOrigin(createdId)\n  if(tlsProofOnly)")
  assert.ok(proofAt>=0&&proofAt<switchAt)
