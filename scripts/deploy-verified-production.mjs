@@ -12,9 +12,10 @@ const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
+const kbPlacement = process.argv.includes('--kb-placement')
 const livePilot50000 = process.argv.includes('--live-pilot-50000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare'].includes(arg))||
-  (privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--kb-placement'].includes(arg))||
+  (kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
   throw Error('5만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -108,6 +109,11 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
         method:'POST',cache:'no-store',headers:{'X-Deploy-Probe':secret},
         signal:AbortSignal.timeout(65000)
       })
+      if(kbPlacement){
+        const placement=reply.headers.get('cf-placement')||''
+        ensure(/^remote-[A-Z]{3}$/.test(placement),'KB 지정 위치가 적용된 응답을 확인하지 못했습니다.')
+        console.log('✓ KB 직접 연결 Worker 위치: '+placement)
+      }
       let body
       try {body=await reply.json()}catch {throw Error('계좌 검사 응답 JSON 오류 (HTTP '+reply.status+')')}
       if(reply.ok && body?.success===true &&
@@ -371,6 +377,7 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
+      ...(kbPlacement?{placement:{host:'developer.kbsec.com:32484'}}:{}),
       annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot50000?'EXPLICIT LIVE 50000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
