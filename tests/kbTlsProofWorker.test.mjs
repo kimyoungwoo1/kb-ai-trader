@@ -133,7 +133,8 @@ test('isolated diagnostic endpoint requires unguessable probe header',async()=>{
 })
 test('proof-only deployment cannot promote production, touch D1 SQL or use production main',()=>{
  assert.match(deployment,/tlsProofOnly = process\.argv\.includes\('--tls-proof-only'\)/)
- assert.match(deployment,/if\(paperDbId&&!tlsProofOnly\)/)
+ assert.match(deployment,/if\(paperDbId&&!tlsProofOnly&&!placementPreviewOnly\)/)
+ assert.match(deployment,/if\(placementPreviewOnly\)\{[\s\S]*?verify-placed-quote[\s\S]*?return\s*\}\s*await probeVersion\(previewOrigin/)
  assert.match(deployment,/tlsProofOnly\?'worker\/src\/kbTlsProofWorker\.ts':'worker\/src\/index\.ts'/)
  const proof=deployment.indexOf("if(tlsProofOnly){\n    console.log('○ 운영 전환 없는 격리 TLS 진단")
  const change=deployment.indexOf('switched=true')
