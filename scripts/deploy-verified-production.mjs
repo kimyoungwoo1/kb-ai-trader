@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
-import { join, relative, resolve, extname, sep } from 'node:path'
+import { join, relative, resolve, extname, sep, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parseActiveVersion } from './parse-deployment-status.mjs'
 
@@ -25,7 +25,15 @@ const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
 const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
 let token = '', accountId = '', switched = false, rollbackVersion = '', paperDbId = ''
-const exec = (program,args,dir=cwd) => execFileSync(program,args,{cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']})
+const exec = (program,args,dir=cwd) => {
+  const options={cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']}
+  if(process.platform==='win32'&&(program==='npm'||program==='npx')){
+    const cli=join(dirname(process.execPath),'node_modules','npm','bin',program+'-cli.js')
+    ensure(existsSync(cli),'Windows Node.js 설치의 '+program+' CLI를 찾지 못했습니다.')
+    return execFileSync(process.execPath,[cli,...args],options)
+  }
+  return execFileSync(program,args,options)
+}
 const ensure = (ok,msg) => { if(!ok) throw Error(msg) }
 const parseJson = (value, label='CLI') => {
   const raw=String(value||'')
