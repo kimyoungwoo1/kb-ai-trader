@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 
 const built = await build({ entryPoints:['worker/src/serverPaper.ts'], bundle:true, platform:'node', format:'esm',write:false })
-const { serverPaperApi, serverPaperTick } = await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].contents).toString('base64'))
+const { serverPaperApi, serverPaperTick, KbWatchUnavailable } = await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].contents).toString('base64'))
 const original = {
   format:1,savedAt:'2026-11-06T01:00:00.000Z',
   account:{enabled:true,cash:1000000,positions:[],pending:[],fills:[],runs:[],equityHistory:[],lastCycle:'',lastMessage:''},
@@ -42,6 +42,12 @@ const makeDb=()=>{
                 if(!server||server.mode!=='running'||server.revision!==rev||server.cycle_slot>=before||server.busy_until>=now) return {success:true,meta:{changes:0}}
                 server={...server,revision:rev+1,cycle_slot:slot,busy_until:busy}
                 updates++
+                return {success:true,meta:{changes:1}}
+              }
+              if(sql.startsWith('UPDATE server_paper_state SET snapshot_json=?')){
+                const [snapshot,at,error,rev,slot]=params
+                if(!server||server.revision!==rev||server.cycle_slot!==slot)return {success:true,meta:{changes:0}}
+                server={...server,snapshot_json:snapshot,updated_at:at,revision:rev+1,last_error:error,busy_until:0}
                 return {success:true,meta:{changes:1}}
               }
               if(sql.includes('last_error=?, busy_until=0')){
@@ -146,4 +152,36 @@ test('failed KB scan stops additional lookups and backs off across scheduled min
   const secondCooldown=await serverPaperTick(db,post,new Date('2026-11-06T01:23:00Z'))
   assert.equal(secondCooldown.result,'kb_cooldown')
   assert.equal(calls.length,4)
+})
+
+test('a scan resumes after repeated KB 522 failures and a partial response',async()=>{
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  let reads=0
+  const stock={code:'100000',name:'Test',price:5000}
+  const post=async path=>{
+    if(path==='/api/market/discover')return {success:true,candidates:[stock]}
+    if(path==='/api/market/investor-flow'){
+      reads++
+      if(reads<=2)throw new KbWatchUnavailable('KB 시세·수급 HTTP 522')
+      if(reads===3)return {success:true,partial:true,results:[stock],message:'KB 시세·수급 HTTP 522'}
+      return {success:true,results:[stock]}
+    }
+    if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
+    if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
+    throw Error('unexpected provider call '+path)
+  }
+  const tick=minute=>serverPaperTick(db,post,new Date('2026-11-06T01:'+minute+':00Z'))
+  assert.equal((await tick(20)).result,'error')
+  assert.equal((await tick(22)).result,'error')
+  const partial=await tick(24)
+  assert.match(partial.message,/신규 매수 보류/)
+  assert.equal(partial.filled,0)
+  assert.equal(JSON.parse(db.server.snapshot_json).screening,null)
+  assert.equal((await tick(25)).result,'kb_cooldown')
+  assert.equal((await tick(26)).result,'scanned')
+  assert.equal(reads,4)
+  assert.equal(db.server.last_error,null)
+  assert.ok(JSON.parse(db.server.snapshot_json).screening.checkedAt)
 })
