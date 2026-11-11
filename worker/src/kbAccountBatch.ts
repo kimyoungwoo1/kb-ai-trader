@@ -1,7 +1,7 @@
 /**
  * UI-only KB account batch coordinator.
- * Coalesces refreshes within one Worker isolate. A slow KB endpoint does not
- * delay the start of the others. Used only for dashboard reads.
+ * Coalesces refreshes within one Worker isolate. Holdings confirms KB is
+ * reachable before launching valuation and deposit together.
  */
 export type AccountBatchEntry={success:boolean;status:number;http_status?:number;error_type?:string;[key:string]:unknown}
 export type AccountBatchResult={success:true;results:Record<string,AccountBatchEntry>;checked_at:string;cache_age_ms?:number}
@@ -40,11 +40,26 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
   const authOrLimit=(entry:AccountBatchEntry)=>entry.stage==='authentication'||
     [401,403,429].some(status=>status===entry.status||status===entry.http_status)
   try{
-   await Promise.all(routes.map(async ([name,path])=>{
-    results[name]=(await read(path))??{success:false,status:504,stage:'account_batch_deadline',
-      error_type:'TIMEOUT',message:'KB 응답이 계좌 조회 시간 한도를 초과했습니다.'}
-   }))
-   const candidates=routes.filter(([name])=>!results[name].success&&results[name].http_status===522)
+   const readEntry=async(path:string):Promise<AccountBatchEntry>=>(await read(path))??{
+    success:false,status:504,stage:'account_batch_deadline',error_type:'TIMEOUT',
+    message:'KB 응답이 계좌 조회 시간 한도를 초과했습니다.'
+   }
+   const [[holdingName,holdingPath],...otherRoutes]=routes
+   const holdings=await readEntry(holdingPath)
+   results[holdingName]=holdings
+   if(!holdings.success&&holdings.http_status===522){
+    const retry=canRetry()?await read(holdingPath):null
+    if(retry&&(retry.success||authOrLimit(retry)))results[holdingName]=retry
+   }
+   if(results[holdingName].http_status===522||controller.signal.aborted){
+    for(const [name] of otherRoutes)results[name]={
+     success:false,status:503,stage:'account_upstream_unavailable',
+     message:'KB 연결 지연으로 조회가 보류되었습니다.'
+    }
+   }else{
+    await Promise.all(otherRoutes.map(async ([name,path])=>{results[name]=await readEntry(path)}))
+   }
+   const candidates=otherRoutes.filter(([name])=>!results[name].success&&results[name].http_status===522)
    if(candidates.length&&canRetry()&&!Object.values(results).some(authOrLimit)){
     // A single sequential probe avoids sending a second burst when KB is down.
     const [[name,path],...remaining]=candidates
