@@ -725,10 +725,14 @@ const service = {
         http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
-      const results = [];
-      const unavailable = (message: string) => json({
-        success: false, stage: "kb_upstream", message,
-      }, 502);
+      const results: Array<{price:number|null; [key:string]:unknown}> = [];
+      const unavailable = (message: string, status?: number) => {
+        if (![401, 403, 429].includes(status ?? 0) &&
+            results.some(item => item.price !== null && Number.isFinite(item.price) && item.price > 0)) {
+          return json({ success: true, partial: true, results, message });
+        }
+        return json({ success: false, stage: "kb_upstream", message }, 502);
+      };
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
@@ -743,7 +747,7 @@ const service = {
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
-            return unavailable("KB 시세·수급 HTTP " + response.status);
+            return unavailable("KB 시세·수급 HTTP " + response.status, response.status);
           }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
@@ -767,7 +771,7 @@ const service = {
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
-            return unavailable("KB 시세·수급 HTTP " + response.status);
+            return unavailable("KB 시세·수급 HTTP " + response.status, response.status);
           }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
