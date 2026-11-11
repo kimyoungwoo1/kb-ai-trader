@@ -138,7 +138,7 @@ test('proof-only deployment cannot promote production, touch D1 SQL or use produ
  const proof=deployment.indexOf("if(tlsProofOnly){\n    console.log('○ 운영 전환 없는 격리 TLS 진단")
  const change=deployment.indexOf('switched=true')
  assert.ok(proof>0&&proof<change)
- assert.match(deployment.slice(proof,change),/return\n  }/)
+ assert.match(deployment.slice(proof,change),/return\r?\n  }/)
  assert.match(source,/realOrderSent:false/)
  assert.doesNotMatch(source,/ssam180|submitKb|processLiveFill|PAPER_DB/)
  assert.ok(!main.includes('kbTlsProofWorker'))
