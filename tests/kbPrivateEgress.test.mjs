@@ -6,7 +6,7 @@ import {build} from 'esbuild'
 const code=readFileSync('worker/egress/kb-egress.ts','utf8')
 const config=JSON.parse(readFileSync('worker/egress/wrangler.jsonc','utf8'))
 const prod=JSON.parse(readFileSync('worker/wrangler.jsonc','utf8'))
-const deploy=readFileSync('scripts/deploy-verified-production.mjs','utf8')
+const deploy=readFileSync('scripts/deploy-verified-production.mjs','utf8').replace(/\r\n/g,'\n')
 
 test('KB private egress has no public route, version URL, tokens, database or output handler',()=>{
  assert.equal(config.name,'kb-ai-trader-egress')
