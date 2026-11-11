@@ -1,3 +1,4 @@
+import {fetchKbObserved} from './kbAccountRead'
 /**
  * KB OAuth token cache: a token is reused for up to eight hours or its shorter reported lifetime by requests
  * routed to the same Cloudflare Worker isolate. It is NEVER returned to browsers,
@@ -82,12 +83,13 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
   const load = async (): Promise<string> => {
     const shared=await loadSharedToken(env,key)
     if(shared)return shared
+    const requestId=crypto.randomUUID()
     let response: Response | undefined
     // Retry an explicit gateway 522 or transport failure once. The whole
     // attempt sequence is shared by concurrent callers.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        response = await fetch(kbBaseUrl(env) + '/oauth2/token', {
+        response = await fetchKbObserved(kbBaseUrl(env) + '/oauth2/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -95,7 +97,7 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
             dataBody: { appKey: env.KB_APP_KEY, appSecret: env.KB_APP_SECRET, grantType: 'client_credentials' },
           }),
           signal: AbortSignal.timeout(12_000),
-        })
+        },{requestId,attempt:attempt+1})
         if (response.status === 522 && attempt === 0) {
           await response.body?.cancel().catch(() => {})
           await new Promise(resolve => setTimeout(resolve, 400))
