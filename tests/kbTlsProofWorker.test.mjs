@@ -5,7 +5,7 @@ import {build} from 'esbuild'
 
 const entry='worker/src/kbTlsProofWorker.ts'
 const source=readFileSync(entry,'utf8')
-const deployment=readFileSync('scripts/deploy-verified-production.mjs','utf8')
+const deployment=readFileSync('scripts/deploy-verified-production.mjs','utf8').replace(/\r\n/g,'\n')
 const main=readFileSync('worker/src/index.ts','utf8')
 const fakeSocket={
  name:'test-cloudflare-socket',
