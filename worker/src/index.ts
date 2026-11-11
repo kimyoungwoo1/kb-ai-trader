@@ -14,6 +14,7 @@ export interface Env {
   KB_APP_KEY?: string;
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
+  KB_PLACED_CRON_READS?: string;
   DASHBOARD_API_KEY?: string;
   GEMINI_API_KEY?: string;
   DART_API_KEY?: string;
@@ -95,6 +96,24 @@ const service = {
     // deployment, never printed or exposed through the dashboard/login API.
     // Reuse existing authenticated read-only routes to verify the same KB
     // holdings/valuation path the account dashboard actually uses.
+    if (url.pathname === "/api/deploy/verify-placed-quote" && request.method === "POST") {
+      if (env.KB_PLACED_CRON_READS !== "1" || !env.DEPLOY_PROBE_TOKEN || !env.DASHBOARD_API_KEY ||
+          request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN ||
+          !/^[0-9a-f]{8}-kb-ai-trader\.ksmsy1\.workers\.dev$/.test(url.host))
+        return json({success:false},404);
+      try {
+        const reply = await fetch(url.origin + "/api/kb/quotes", {
+          method: "POST", redirect: "error",
+          headers: {"Content-Type":"application/json",Authorization:"Bearer "+env.DASHBOARD_API_KEY},
+          body: JSON.stringify({stocks:[{code:"005930",name:"삼성전자"}]})
+        });
+        const place = reply.headers.get("cf-placement") || "";
+        const data = await reply.json().catch(() => null) as any;
+        return json({success:reply.ok && data?.received===1,http_status:reply.status,
+          upstream_status:Number(data?.results?.[0]?.upstream_status||data?.http_status)||null,
+          placement:/^(local|remote)-[A-Z]{3}$/.test(place)?place:null});
+      }catch{return json({success:false,stage:"self_fetch"},502);}
+    }
     if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
@@ -1272,10 +1291,16 @@ const service = {
     if(phase==='off')return;
     const post = async (path: string, body: unknown): Promise<any> => {
       if (!env.DASHBOARD_API_KEY) throw Error('서버 API 인증 설정 없음');
-      const response = await service.fetch(new Request('https://localhost'+path,{
-        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
-        body:JSON.stringify(body),
-      }),env);
+      const usePlacedFetch = env.KB_PLACED_CRON_READS === "1" &&
+        ["/api/kb/quotes", "/api/market/discover", "/api/market/investor-flow"].includes(path);
+      const origin = usePlacedFetch ? "https://kb-ai-trader.ksmsy1.workers.dev" : "https://localhost";
+      const request = new Request(origin + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.DASHBOARD_API_KEY },
+        body: JSON.stringify(body),
+        redirect: "error",
+      });
+      const response = usePlacedFetch ? await fetch(request) : await service.fetch(request, env);
       const result = await response.json() as any;
       if (!response.ok || result?.success !== true) {
         const message=String(result?.message||'내부 조회 실패').slice(0,150);
@@ -1367,3 +1392,4 @@ const service = {
   },
 };
 export default service;
+
