@@ -149,19 +149,21 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
         if (!reply.results.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
           throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
-        return reply.results;
+        return {quotes:reply.results,partial:reply.partial===true};
       };
       // Check the first batch before requesting additional symbols, news or disclosures.
       const first = await readFlow(chunks[0]);
-      const [remaining,disclosuresResult,newsResult] = await Promise.all([
+      const [remaining,disclosuresResult,newsResult] = first.partial ? [[],null,null] as const : await Promise.all([
         Promise.allSettled(chunks.slice(1).map(readFlow)),
         Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
         Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
       ]);
       const disclosures = disclosuresResult || {};
       const news = newsResult || {};
-      const quotes = [first,...remaining.flatMap(result=>result.status==='fulfilled'?[result.value]:[])].flat();
-      const incompleteScan = remaining.some(result=>result.status==='rejected') ||
+      const completed = remaining.flatMap(result=>result.status==='fulfilled'?[result.value]:[]);
+      const quotes = [first,...completed].flatMap(result=>result.quotes);
+      const incompleteScan = first.partial || completed.some(result=>result.partial) ||
+        remaining.some(result=>result.status==='rejected') ||
         !disclosuresResult || !newsResult;
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
