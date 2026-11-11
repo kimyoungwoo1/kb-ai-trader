@@ -3,13 +3,14 @@ export type SafeAccountResult =
  {success:true;status:number;data:unknown} |
  {success:false;status:number;issue:'NETWORK'|'TIMEOUT'|'NON_JSON'|'HTTP_ERROR';contentType:string;retried:boolean}
 export async function readKbAccountJson(url:string,headers:Record<string,string>,body:unknown,signal?:AbortSignal, retryTransient=true):Promise<SafeAccountResult>{
+ const requestId=crypto.randomUUID()
  let retried=false
  for(let attempt=0;attempt<2;attempt++){
   let response:Response
   try{
    signal?.throwIfAborted()
    const timeout=AbortSignal.timeout(20000)
-   response=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal:signal?AbortSignal.any([signal,timeout]):timeout})
+   response=await fetchKbObserved(url,{method:'POST',headers,body:JSON.stringify(body),signal:signal?AbortSignal.any([signal,timeout]):timeout},{requestId,attempt:attempt+1})
   }catch(error){
    const transient=error instanceof Error&&(error.name==='TimeoutError'||error.name==='AbortError'||error instanceof TypeError)
    if(attempt===0&&retryTransient&&transient&&!signal?.aborted){retried=true;continue}
@@ -30,4 +31,31 @@ export async function readKbAccountJson(url:string,headers:Record<string,string>
   return {success:true,status:response.status,data}
  }
  return {success:false,status:0,issue:'NETWORK',contentType:'',retried}
+}
+
+/** Log only fixed KB transport metadata. Never log headers, bodies or error messages. */
+export async function fetchKbObserved(
+ url:string, init:RequestInit, trace={requestId:crypto.randomUUID(),attempt:1}
+):Promise<Response>{
+ const parsed=new URL(url)
+ if(parsed.hostname!=='developer.kbsec.com')return fetch(url,init)
+ const path=/^\/oauth2\/token$|^\/api\/v1\/[a-z0-9]+$/.test(parsed.pathname)?parsed.pathname:'other'
+ const start=Date.now()
+ const base={event:'kb_upstream',request_id:trace.requestId,attempt:trace.attempt,
+  started_at:new Date(start).toISOString(),path}
+ const emit=(fields:Record<string,unknown>)=>{
+  try{console.log(JSON.stringify({...base,...fields,duration_ms:Date.now()-start}))}catch{}
+ }
+ try{
+  const response=await fetch(url,init)
+  const ray=response.headers.get('cf-ray')||''
+  emit({upstream_status:response.status,
+   upstream_cf_ray:/^[a-fA-F0-9]{16,32}-[A-Z]{3}$/.test(ray)?ray:null,error:null})
+  return response
+ }catch(error){
+  const name=error instanceof Error?error.name:''
+  emit({upstream_status:null,upstream_cf_ray:null,
+   error:['TimeoutError','AbortError','TypeError'].includes(name)?name:'TransportError'})
+  throw error
+ }
 }
