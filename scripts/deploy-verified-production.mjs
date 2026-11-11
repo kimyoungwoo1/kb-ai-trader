@@ -12,10 +12,11 @@ const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
-const kbPlacement = process.argv.includes('--kb-placement')
+const placementPreviewOnly = process.argv.includes('--kb-placement-preview-only')
+const kbPlacement = placementPreviewOnly || process.argv.includes('--kb-placement')
 const livePilot50000 = process.argv.includes('--live-pilot-50000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--kb-placement'].includes(arg))||
-  (kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--kb-placement','--kb-placement-preview-only'].includes(arg))||
+  (placementPreviewOnly&&livePilot50000)||(kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
   throw Error('5만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -285,7 +286,7 @@ async function main(){
   const upgradingLegacyPilot=activePilotBinding?.type==='plain_text'&&activePilotBinding.text==='ALLOW_REAL_10000_TRIAL_2026'
   if(livePilot50000&&activePilotBinding)
     ensure(preserveLiveApproval||upgradingLegacyPilot,'현재 운영 실주문 플래그 값을 확인할 수 없어 승인 상태 보존 배포를 중단합니다.')
-  if(paperDbId&&!tlsProofOnly){
+  if(paperDbId&&!tlsProofOnly&&!placementPreviewOnly){
     ensure(/^[0-9a-f]{32}$|^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(paperDbId),
       'D1 데이터베이스 ID 형식이 올바르지 않습니다.')
     await api(root+'/d1/database/'+paperDbId)
@@ -377,7 +378,10 @@ async function main(){
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      ...(kbPlacement?{placement:{host:'developer.kbsec.com:32484'}}:{}),
+      ...(kbPlacement?{
+        placement:{mode:'targeted',host:'developer.kbsec.com:32484'},
+        compatibility_flags:[...new Set([...(config.compatibility_flags||[]),'global_fetch_strictly_public'])]
+      }:{}),
       annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot50000?'EXPLICIT LIVE 50000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
@@ -388,6 +392,7 @@ async function main(){
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...pushBindings,
         ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
+        ...(kbPlacement?[{name:'KB_PLACED_CRON_READS',type:'plain_text',text:'1'}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
@@ -483,6 +488,17 @@ async function main(){
     console.log('✅ TLS 읽기 전용 실제 KB 인증·계좌·주문조회 검증 통과 · 운영 전환 없음')
     return
   }
+  if(placementPreviewOnly){
+    const reply=await fetch(previewOrigin+'/api/deploy/verify-placed-quote',{
+      method:'POST',headers:{'X-Deploy-Probe':probeKey},signal:AbortSignal.timeout(75_000)
+    })
+    const proof=await reply.json()
+    console.log('KB_PLACED_QUOTE_PROOF '+JSON.stringify(proof))
+    ensure(reply.ok&&proof.success===true&&/^remote-[A-Z]{3}$/.test(proof.placement||''),
+      '프리뷰 현재가 조회 또는 원격 배치 검증 실패')
+    console.log('✓ 프리뷰 KB 현재가 실조회 및 원격 배치 확인')
+    return
+  }
   await probeVersion(previewOrigin,probeKey,'신규 버전 사전 검사')
   console.log('✓ 신규 버전 운영 반영 허용 · 사전 실조회 성공')
   // Guard against another deployment switching the live Worker while we build.
@@ -575,3 +591,4 @@ try {await main()} catch(e){
   }
   process.exitCode=1
 }
+
