@@ -10,13 +10,14 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
+const marketEgress = process.argv.includes('--market-egress')
 const httpQuoteCompare = process.argv.includes('--http-quote-compare')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
 const kbPlacement = process.argv.includes('--kb-placement')
 const livePilot50000 = process.argv.includes('--live-pilot-50000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--http-quote-compare','--kb-placement'].includes(arg))||
-  (httpQuoteCompare&&(!tlsProofOnly||privateEgress||quoteCompare))||(kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--http-quote-compare','--kb-placement','--market-egress'].includes(arg))||
+  (marketEgress&&tlsProofOnly)||(httpQuoteCompare&&(!tlsProofOnly||privateEgress||quoteCompare))||(kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
   throw Error('5만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -399,6 +400,7 @@ async function main(){
         ...(paperDbId&&!httpQuoteCompare?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
         ...(httpQuoteCompare?['KB_APP_KEY','KB_APP_SECRET']:required).map(name=>({name,type:'inherit',version_id:rollbackVersion})),
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
+        ...(marketEgress?[{name:'KB_MARKET_EGRESS',type:'service',service:'kb-ai-trader-market-egress'}]:[]),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...(httpQuoteCompare?[]:pushBindings),
         ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
@@ -444,6 +446,8 @@ async function main(){
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
+  if(marketEgress)ensure(newBindings.get('KB_MARKET_EGRESS')==='service',
+    'Cron 시세 조회 Worker 바인딩 누락 · 운영 전환 차단')
   if(privateEgress)ensure(newBindings.get('KB_EGRESS')==='service',
     '격리 진단 Private Egress Service Binding 확인 실패 · 운영 전환 없음')
   console.log(httpQuoteCompare?'✓ 격리 HTTP 진단 KB 바인딩 확인':'✓ 신규 버전 푸시 암호화 키 바인딩 확인'+
