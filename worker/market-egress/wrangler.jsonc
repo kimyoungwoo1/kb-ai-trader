@@ -1,0 +1,8 @@
+{
+  "name": "kb-ai-trader-market-egress",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "placement": { "host": "developer.kbsec.com:32484" }
+}
