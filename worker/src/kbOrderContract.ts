@@ -7,6 +7,7 @@ import {LIVE_BUY_LIMIT_WON,isLiveOrderTick,liveBuyRequiredCash} from '../../src/
  * Read-only order lookup is supported and never retries a write.
  */
 import {getKbAccessToken,kbBaseUrl,KbAuthError,type KbCredentials} from './kbToken'
+import {fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure} from './kbAccountRead'
 
 type Input = {code:string;quantity:number;price:number}
 export type OrderLine = {
@@ -270,21 +271,21 @@ export async function listKbRecentOrders(env:KbCredentials,days:1|3|5=3,now=new 
   try{
    for(let page=0;page<3;page++){
     const {path,body}=makeOrderInquiry(day,nextKey)
-    // SSQM2341 is strictly read-only: retry one transport timeout only.
-    // Never retry vendor rejection, 429, malformed data, or an order write.
+    // Retry a read-only history page once on transport or gateway failure.
+    const requestId=crypto.randomUUID()
     let response:Response|undefined
-    for(let attempt=0;attempt<2;attempt++){
+    for(let attempt=1;attempt<=2;attempt++){
      try{
-      response=await fetch(kbBaseUrl(env)+path,{
+      response=await fetchKbObserved(kbBaseUrl(env)+path,{
        method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-       body:JSON.stringify(body),signal:AbortSignal.timeout(15000)
-      })
-      break
+       body:JSON.stringify(body),signal:AbortSignal.timeout(attempt===1?20000:10000)
+      },{requestId,attempt})
      }catch(error){
-      const transient=error instanceof Error&&
-       (error.name==='TimeoutError'||error.name==='AbortError'||error instanceof TypeError)
-      if(attempt===1||!transient)throw error
+      if(attempt===2||!isKbReadTransportFailure(error))throw error
+      continue
      }
+     if(attempt===2||!isKbGatewayFailure(response.status))break
+     await response.body?.cancel().catch(()=>{})
     }
     if(!response)throw Error('KB_ORDER_NO_RESPONSE')
     if(!response.ok)throw Error('KB_ORDER_HTTP_'+response.status)
