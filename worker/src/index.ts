@@ -476,7 +476,6 @@ const service = {
       if (stocks.some(stock => !/^\d{6}$/.test(stock.code)) ||
           new Set(stocks.map(stock => stock.code)).size !== stocks.length)
         return json({ success: false, message: "종목코드 오류 또는 중복 입력입니다." }, 400);
-      const retryDeadline = Date.now() + 40_000;
       let accessToken: string;
       try { accessToken = await getKbAccessToken(env); }
       catch (error) {
@@ -487,7 +486,10 @@ const service = {
           limited ? 429 : 502);
       }
       const baseUrl = kbBaseUrl(env);
-      const readQuote = async (stock: (typeof stocks)[number], timeoutMs = 20_000) => {
+      const retryDeadline = Date.now() + 40_000;
+      const requestIds = stocks.map(() => crypto.randomUUID());
+      const readQuote = async (index: number, attempt = 1, timeoutMs = 20_000) => {
+        const stock = stocks[index];
         try {
           const response = await fetchKbObserved(baseUrl + "/api/v1/ivu10140", {
             method: "POST",
@@ -498,7 +500,7 @@ const service = {
               dataBody: { excg_clsf: "1", shrt_cd: stock.code },
             }),
             signal: AbortSignal.timeout(timeoutMs),
-          });
+          }, {requestId:requestIds[index],attempt});
           let data: any;
           try { data = await response.json(); }
           catch { return { code: stock.code, name: stock.name,
@@ -539,7 +541,7 @@ const service = {
           };
         }
       };
-      const results = await Promise.all(stocks.map(stock => readQuote(stock)));
+      const results = await Promise.all(stocks.map((_, index) => readQuote(index)));
       const failed = results.flatMap((item,index) => isKbGatewayFailure(item.upstream_status) || item.transport_error ? [index] : []);
       if (failed.length && !results.some(item => item.rate_limited || item.token_expired)) {
         // Retry a single failed symbol first, to avoid a second burst during an outage.
@@ -548,7 +550,7 @@ const service = {
         const retry = (index: number) => {
           const timeLeft = retryDeadline - Date.now();
           if (timeLeft < 2_000) return Promise.resolve(results[index]);
-          return readQuote(stocks[index], Math.min(timeLeft, 20_000));
+          return readQuote(index, 2, Math.min(timeLeft, 20_000));
         };
         results[probe] = await retry(probe);
         if (results[probe].price !== null) {
