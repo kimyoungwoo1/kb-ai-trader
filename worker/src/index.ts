@@ -17,8 +17,13 @@ const marketRead = async (
 ) => {
   const signal = AbortSignal.timeout(timeoutMs)
   const url = new URL(endpoint)
-  if (!egress || url.origin !== 'https://developer.kbsec.com:32484')
+  if (!egress || trace.attempt === 2 || url.origin !== 'https://developer.kbsec.com:32484') {
+    if (egress) console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
+      attempt:trace.attempt,route:'direct',path:url.pathname}))
     return fetchKbObserved(endpoint, {...init,signal},trace)
+  }
+  console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
+    attempt:trace.attempt,route:'private-worker',path:url.pathname}))
   const headers = new Headers(init.headers)
   headers.set('X-KB-Request-ID',trace.requestId)
   headers.set('X-KB-Attempt',String(trace.attempt))
@@ -760,7 +765,7 @@ const service = {
       const readFlow = async (endpoint: string, init: RequestInit) => {
         const requestId = crypto.randomUUID();
         try {
-          const response = await marketRead(endpoint, init, {requestId,attempt:1}, 15_000, marketEgress);
+          const response = await marketRead(endpoint, init, {requestId,attempt:1}, marketEgress ? 20_000 : 15_000, marketEgress);
           if (!retryAvailable || !isKbGatewayFailure(response.status)) return response;
           await response.body?.cancel().catch(()=>{});
         } catch (error) {
