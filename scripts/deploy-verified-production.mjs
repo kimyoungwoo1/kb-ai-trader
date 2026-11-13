@@ -10,12 +10,13 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
+const httpQuoteCompare = process.argv.includes('--http-quote-compare')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
 const kbPlacement = process.argv.includes('--kb-placement')
 const livePilot50000 = process.argv.includes('--live-pilot-50000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--kb-placement'].includes(arg))||
-  (kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--http-quote-compare','--kb-placement'].includes(arg))||
+  (httpQuoteCompare&&(!tlsProofOnly||privateEgress||quoteCompare))||(kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
   throw Error('5만원 실주문 시험배포는 환경변수 KB_LIVE_PILOT_CONFIRM 승인 필요 · 실주문은 웹에서 별도로 활성화')
@@ -380,12 +381,12 @@ async function main(){
   }
   console.log('5/7 다섯 Secret을 정상 버전에서 상속한 새 버전 업로드')
   const config=JSON.parse(readFileSync(join(cwd,'worker/wrangler.jsonc'),'utf8'))
-  const created=await api(root+'/workers/workers/'+workerId+'/versions',{
+  const uploadVersion=async (placeNearKb)=>api(root+'/workers/workers/'+workerId+'/versions',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       main_module:'worker.mjs',
       compatibility_date:config.compatibility_date||'2026-11-04',
-      ...(kbPlacement?{placement:{host:'developer.kbsec.com:32484'}}:{}),
+      ...(placeNearKb?{placement:{host:'developer.kbsec.com:32484'}}:{}),
       annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot50000?'EXPLICIT LIVE 50000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
       assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
       bindings:[
@@ -401,6 +402,7 @@ async function main(){
       modules:[{name:'worker.mjs',content_type:'application/javascript+module',content_base64:source.toString('base64')}]
     })
   })
+  const created=await uploadVersion(kbPlacement)
   ensure(created.id,'새 버전 생성 응답에 ID가 없음')
   console.log('6/7 새 버전 Secret 바인딩 검증')
   // Cloudflare may return a new UUID before the version becomes readable
@@ -445,6 +447,29 @@ async function main(){
   if(tlsProofOnly){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
+    if(httpQuoteCompare){
+      const placed=await uploadVersion(true)
+      const routes=[['default',previewOrigin],['kb-placement',versionOrigin(placed.id)]]
+      for(let round=1;round<=3;round++){
+        for(const [label,origin] of round===2?[...routes].reverse():routes){
+          const response=await fetch(origin+'/api/deploy/tls-proof',{
+            method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Diagnostic':'http-quote'},
+            signal:AbortSignal.timeout(65_000)
+          })
+          ensure(response.ok,'격리 HTTP 현재가 진단 응답 실패 ('+label+' HTTP '+response.status+')')
+          const result=await response.json()
+          ensure(result.mode==='ISOLATED_KB_HTTP_QUOTE'&&result.realOrderSent===false,'격리 HTTP 진단 모드 오류')
+          const placement=response.headers.get('cf-placement')||''
+          console.log(JSON.stringify({round,route:label,placement:placement||'unverified',
+            oauth:result.oauth,quote:result.quote}))
+          if(label==='kb-placement'&&!/^remote-[A-Z]{3}$/.test(placement))
+            console.log('○ 위치 지정 적용 미확인 · 이 결과로 운영 경로를 결정할 수 없습니다.')
+          if(result.oauth?.httpStatus===429||result.quote?.httpStatus===429)return
+        }
+      }
+      console.log('✓ HTTP 현재가 비교 종료 · 운영 트래픽 변경 없음')
+      return
+    }
     const result=await fetch(previewOrigin+'/api/deploy/tls-proof',{
       method:'POST',headers:{'X-Deploy-Probe':probeKey,...(quoteCompare?{'X-KB-Diagnostic':'quote-compare'}:{})},
       signal:AbortSignal.timeout(95000)
