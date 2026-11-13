@@ -271,3 +271,28 @@ test('same quote and OAuth token are compared in both orders without exposing th
   assert.doesNotMatch(JSON.stringify(report),/SUPER_PRIVATE_ACCESS_TOKEN|gateway body|22222/)
  }finally{globalThis.fetch=original;socket.restore()}
 })
+
+test('isolated HTTP quote proof requires probe authorization and reports only safe status',async()=>{
+ const old=globalThis.fetch
+ const calls=[]
+ const env={...key,KB_APP_KEY:'http-proof-test',DEPLOY_PROBE_TOKEN:'probe-secret'}
+ globalThis.fetch=async(url,init)=>{
+  calls.push(new URL(url).pathname)
+  if(String(url).endsWith('/oauth2/token'))return Response.json(statuses.auth)
+  assert.equal(JSON.parse(init.body).dataBody.shrt_cd,'005930')
+  return new Response('private upstream body',{status:522})
+ }
+ const request=token=>new Request('https://preview.example/api/deploy/tls-proof',{
+  method:'POST',headers:{'X-Deploy-Probe':token,'X-KB-Diagnostic':'http-quote'}
+ })
+ try{
+  assert.equal((await imported.default.fetch(request('wrong'),env)).status,404)
+  assert.deepEqual(calls,[])
+  const result=await (await imported.default.fetch(request('probe-secret'),env)).json()
+  assert.deepEqual(calls,['/oauth2/token','/api/v1/ivu10140'])
+  assert.equal(result.mode,'ISOLATED_KB_HTTP_QUOTE')
+  assert.equal(result.realOrderSent,false)
+  assert.equal(result.quote.httpStatus,522)
+  assert.doesNotMatch(JSON.stringify(result),/private upstream body|SUPER_PRIVATE_ACCESS_TOKEN/)
+ }finally{globalThis.fetch=old}
+})
