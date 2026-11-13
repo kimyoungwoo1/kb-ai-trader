@@ -275,12 +275,14 @@ test('same quote and OAuth token are compared in both orders without exposing th
 test('isolated HTTP quote proof requires probe authorization and reports only safe status',async()=>{
  const old=globalThis.fetch
  const calls=[]
+ let status=522
  const env={...key,KB_APP_KEY:'http-proof-test',DEPLOY_PROBE_TOKEN:'probe-secret'}
  globalThis.fetch=async(url,init)=>{
   calls.push(new URL(url).pathname)
   if(String(url).endsWith('/oauth2/token'))return Response.json(statuses.auth)
   assert.equal(JSON.parse(init.body).dataBody.shrt_cd,'005930')
-  return new Response('private upstream body',{status:522})
+  assert.equal(init.redirect,'manual')
+  return new Response('private upstream body',{status,headers:{Location:'https://example.invalid/private'}})
  }
  const request=token=>new Request('https://preview.example/api/deploy/tls-proof',{
   method:'POST',headers:{'X-Deploy-Probe':token,'X-KB-Diagnostic':'http-quote'}
@@ -294,5 +296,10 @@ test('isolated HTTP quote proof requires probe authorization and reports only sa
   assert.equal(result.realOrderSent,false)
   assert.equal(result.quote.httpStatus,522)
   assert.doesNotMatch(JSON.stringify(result),/private upstream body|SUPER_PRIVATE_ACCESS_TOKEN/)
+  status=302
+  const redirected=await (await imported.default.fetch(request('probe-secret'),env)).json()
+  assert.equal(redirected.quote.detail,'KB_FETCH_REDIRECT')
+  assert.equal(redirected.quote.httpStatus,302)
+  assert.doesNotMatch(JSON.stringify(redirected),/example.invalid/)
  }finally{globalThis.fetch=old}
 })
