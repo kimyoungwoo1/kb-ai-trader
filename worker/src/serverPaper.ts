@@ -18,8 +18,10 @@ export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|
 // Reserve Free-plan subrequests for full DART pagination, news and retries.
 const scanSymbolLimit = 7;
 const kbFailurePrefix = 'KB 조회 실패 · ';
+const kbQuoteFailurePrefix = kbFailurePrefix + '현재가 감시 · ';
 const kbScanFailurePrefix = kbFailurePrefix + '정밀검사 재시도 · ';
 export class KbWatchUnavailable extends Error {}
+class KbQuoteUnavailable extends KbWatchUnavailable {}
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error FROM server_paper_state WHERE id=1').first<StateRow>();
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
@@ -102,8 +104,11 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
   if (!row || row.mode !== 'running') return {result:'stopped',message:'서버 자동매매 중지 상태',filled:0,scanned:0};
   const slot = Math.floor(date.getTime() / 60_000);
   if (row.cycle_slot >= slot) return {result:'duplicate',message:'이미 처리된 1분 구간',filled:0,scanned:0};
-  // Keep the failed slot across Worker instances. Allow a new probe after two minutes.
-  if (row.last_error?.startsWith(kbFailurePrefix) && slot-row.cycle_slot<2)
+  const scheduledScan = slot % 5 === 0;
+  const quoteFailed = row.last_error?.startsWith(kbQuoteFailurePrefix);
+  // A quote-watch failure does not consume the next scheduled scan.
+  // Scan and shared authentication/rate-limit failures still back off.
+  if (row.last_error?.startsWith(kbFailurePrefix) && slot-row.cycle_slot<2 && !(scheduledScan && quoteFailed))
     return {result:'kb_cooldown',message:'KB 재조회 대기 · '+row.last_error,filled:0,scanned:0};
   // A single conditional write reserves this minute across all Worker instances.
   const reserved = await db.prepare('UPDATE server_paper_state SET revision=revision+1, cycle_slot=?, busy_until=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot < ? AND busy_until < ?')
@@ -122,8 +127,8 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     return {result:'stopped',message:'서버 계좌가 비활성화됨',filled:0,scanned:0};
   }
   const retryScan = row.last_error?.startsWith(kbScanFailurePrefix) ||
-    (row.last_error?.startsWith(kbFailurePrefix) && row.cycle_slot % 5 === 0);
-  const doScan = slot % 5 === 0 || retryScan;
+    (!quoteFailed && row.last_error?.startsWith(kbFailurePrefix) && row.cycle_slot % 5 === 0);
+  const doScan = scheduledScan || retryScan;
   let message = '';
   let scanError: string | null = null;
   try {
@@ -199,7 +204,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       if (!validQuotes.length) {
         const status = reply.results.find((item:any)=>[502,503,504,522,524].includes(item.upstream_status))?.upstream_status;
         const transport = reply.results.find((item:any)=>item.transport_error)?.transport_error;
-        throw new KbWatchUnavailable(status?'현재가 HTTP '+status:transport==='timeout'?'현재가 타임아웃':
+        throw new KbQuoteUnavailable(status?'현재가 HTTP '+status:transport==='timeout'?'현재가 타임아웃':
           transport==='network'?'현재가 연결 실패':'유효한 최신 현재가 없음');
       }
       // Fast path: sell-side risk checks remain active, new entries are gated to
@@ -225,7 +230,9 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length,fills:newFills};
   } catch (error) {
     const detail = error instanceof Error ? error.message : '서버 감시 실패';
-    const diagnostic = ((error instanceof KbWatchUnavailable ? (doScan ? kbScanFailurePrefix : kbFailurePrefix) : '')+detail).slice(0,180);
+    const prefix = error instanceof KbQuoteUnavailable ? kbQuoteFailurePrefix :
+      error instanceof KbWatchUnavailable ? (doScan ? kbScanFailurePrefix : kbFailurePrefix) : '';
+    const diagnostic = (prefix+detail).slice(0,180);
     await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
     return {result:'error',message:diagnostic,filled:0,scanned:0};
