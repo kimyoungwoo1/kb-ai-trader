@@ -14,7 +14,7 @@ import { canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState, startCloudAu
 import { getAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 import { writeScreeningSnapshot } from './screeningHistory'
-import { isServerPaperMode, serverPaperAction, setServerPaperMode, setServerPaperError } from './serverPaperClient'
+import { isServerPaperMode, serverPaperAction, setServerPaperMode, setServerPaperError, getServerPaperStatus, SERVER_PAPER_EVENT } from './serverPaperClient'
 
 type Holding = { name: string; code: string; quantity: number; orderable: number; averagePrice?: number; currentPrice?: number; valuation?: number; profitLoss?: number; yieldRate?: number }
 type AccountSummary = { purchaseAmount: number; valuationAmount: number; profitLoss: number; yieldRate: number }
@@ -623,6 +623,15 @@ export default function App() {
   }
   fastWatchRunner.current = refreshTrackedPrices
 
+  const [serverCatalyst, setServerCatalyst] = useState(() => getServerPaperStatus()?.snapshot?.catalyst ?? null)
+  useEffect(() => {
+    const update = () => setServerCatalyst(getServerPaperStatus()?.snapshot?.catalyst ?? null)
+    window.addEventListener(SERVER_PAPER_EVENT, update)
+    update()
+    return () => window.removeEventListener(SERVER_PAPER_EVENT, update)
+  }, [token])
+  const displayedCatalysts = serverMode ? serverCatalyst : catalysts
+
   marketScanRunner.current = loadBroadMarketData
   useEffect(() => {
     if (!token) return
@@ -755,7 +764,7 @@ export default function App() {
     ? { ...baseHealth, tone: 'warning' as const, label: 'D1 실행권 오류 · 가상체결 차단',
       detail: cloudHealth.message }
     : readAutoAccount().enabled && isKrxSession(new Date(autoHeartbeat))
-      && baseHealth.tone !== 'warning' && !catalystReady(catalysts, new Date(autoHeartbeat))
+      && baseHealth.tone !== 'warning' && !catalystReady(displayedCatalysts, new Date(autoHeartbeat))
       ? { ...baseHealth, tone: 'warning' as const, label: '뉴스·공시 신규 매수 보류',
         detail: '뉴스·공시 수집이 미완료입니다. 기존 보유 종목의 가상매도 감시는 지속합니다.' }
       : baseHealth
@@ -773,14 +782,14 @@ export default function App() {
       {activePage === 'manual' ? <ManualLimitOrder token={token} /> : activePage === 'live' ? <LiveTrial token={token} holdings={holdings} accountSummary={accountSummary} deposit={deposit} depositMessage={depositMessage} accountMessage={message} accountLoading={loading} onRefreshAccount={refresh} /> : activePage === 'notifications' ? <NotificationCenter token={token} /> : activePage === 'paper' ? (serverMode ? <section className="panel auto-main-panel"><h2>서버 가상매매 원장</h2><p>서버 실행 모드입니다. 기존 브라우저 수동 매매는 데이터 충돌 방지를 위해 비활성화했습니다. 자동 가상매매 및 매매 분석 메뉴에서 서버 보유종목과 거래 기록을 확인하세요.</p></section> : <PaperTrading token={token} />) : activePage === 'analytics'
         ? <TradingAnalytics
             signals={autoSignals.length ? autoSignals : generateTradeSignals(marketStocks, SIGNAL_MAX_POSITION_WON)}
-            catalysts={catalysts}
+            catalysts={displayedCatalysts}
             marketCoverage={marketDiscoveryInfo}
             liveCheckedAt={marketCheckedAt}
             token={token}
             onGoAuto={() => setActivePage('auto')}
           /> : activePage === 'auto'
         ? <AutoPaperLab
-            catalysts={catalysts}
+            catalysts={displayedCatalysts}
             catalystSummary={catalystSummary}
             checkedAt={marketCheckedAt}
             token={token}
