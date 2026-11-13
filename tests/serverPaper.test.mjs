@@ -163,13 +163,15 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   await serverPaperApi(db,'start')
   let reads=0
   const stock={code:'100000',name:'Test',price:5000}
-  const post=async path=>{
-    if(path==='/api/market/discover')return {success:true,candidates:[stock]}
+  const missing={code:'100001',name:'Missing',price:5100}
+  const post=async (path, body)=>{
+    if(path==='/api/market/discover')return {success:true,candidates:[stock,missing]}
     if(path==='/api/market/investor-flow'){
       reads++
       if(reads<=2)throw new KbWatchUnavailable('KB 시세·수급 HTTP 522')
       if(reads===3)return {success:true,partial:true,results:[stock],message:'KB 시세·수급 HTTP 522'}
-      return {success:true,results:[stock]}
+      assert.deepEqual(body.stocks.map(item=>item.code),[missing.code])
+      return {success:true,results:[missing]}
     }
     if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
     if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
@@ -185,6 +187,8 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   assert.equal((await tick(25)).result,'kb_cooldown')
   assert.equal((await tick(26)).result,'scanned')
   assert.equal(reads,4)
+  assert.equal(JSON.parse(db.server.snapshot_json).screening.signals.length,2)
+  assert.equal(JSON.parse(db.server.snapshot_json).scanProgress,undefined)
   assert.equal(db.server.last_error,null)
   assert.ok(JSON.parse(db.server.snapshot_json).screening.checkedAt)
 })
