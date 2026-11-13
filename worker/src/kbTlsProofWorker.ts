@@ -197,6 +197,30 @@ function quoteResult(status:number,json:unknown):SafeResult{
  return {status:valid?'PASS':'BLOCKED',httpStatus:status,
   detail:valid?'KB_QUOTE_PRICE_VALID':status===200?'KB_QUOTE_INVALID':'KB_QUOTE_HTTP_ERROR'}
 }
+export async function runKbHttpQuoteProof(env:Env){
+ let token:string
+ try{
+  token=await getKbAccessToken({KB_APP_KEY:env.KB_APP_KEY,KB_APP_SECRET:env.KB_APP_SECRET})
+ }catch(error){
+  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?error.httpStatus:undefined},
+   quote:{status:'SKIPPED'}}
+ }
+ const start=Date.now()
+ let quote:SafeResult
+ try{
+  const response=await fetch('https://developer.kbsec.com:32484'+quotePath,{
+   method:'POST',headers:{Authorization:'bearer '+token,appKey:env.KB_APP_KEY!,'Content-Type':'application/json'},
+   body:JSON.stringify(quoteBody()),signal:AbortSignal.timeout(22_000),redirect:'error'
+  })
+  const data=response.ok?await response.json().catch(()=>null):null
+  if(!response.ok)await response.body?.cancel().catch(()=>{})
+  quote=quoteResult(response.status,data)
+ }catch(error){
+  quote={status:'BLOCKED',detail:error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)
+   ?'KB_FETCH_TIMEOUT':'KB_FETCH_CONNECTION_ERROR'}
+ }
+ return {oauth:{status:'PASS'},quote:{...quote,durationMs:Date.now()-start}}
+}
 export async function compareKbQuoteTransports(env:Env){
  const attempts: Array<SafeResult&{transport:'fetch'|'tls';durationMs:number}>=[]
  let token:string
@@ -236,6 +260,10 @@ export default{
   if(request.method!=='POST'||new URL(request.url).pathname!=='/api/deploy/tls-proof'||
     !env.DEPLOY_PROBE_TOKEN||request.headers.get('X-Deploy-Probe')!==env.DEPLOY_PROBE_TOKEN){
    return Response.json({success:false},{status:404})
+  }
+  if(request.headers.get('X-KB-Diagnostic')==='http-quote'){
+   return Response.json({mode:'ISOLATED_KB_HTTP_QUOTE',realOrderSent:false,
+    ...await runKbHttpQuoteProof(env)},{headers:{'Cache-Control':'no-store'}})
   }
   if(request.headers.get('X-KB-Diagnostic')==='quote-compare'){
    return Response.json({success:true,mode:'ISOLATED_KB_QUOTE_COMPARE',realOrderSent:false,
