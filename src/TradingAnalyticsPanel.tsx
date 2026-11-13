@@ -337,9 +337,9 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
       </div>
       <div className="analysis-mini-stats">
         <div><span>검사 시각</span><b>{formatTime(catalysts?.checkedAt)}</b></div>
-        <div><span>언론 뉴스</span><b>{catalysts?.newsOk ? catalysts.articles.length + '건' : '조회 실패'}</b></div>
+        <div><span>언론 뉴스</span><b>{catalysts?.newsOk ? catalysts.articles.length + '건' : catalysts ? '조회 실패' : '검사 기록 없음'}</b></div>
         <div><span>DART 공시</span><b>{catalysts?.dartOk
-          ? catalysts.disclosures.length + '/' + catalysts.dartReported + '건' : '조회 실패'}</b></div>
+          ? catalysts.disclosures.length + '/' + catalysts.dartReported + '건' : catalysts ? '조회 실패' : '검사 기록 없음'}</b></div>
         <div><span>공시 완전성</span><b>{catalysts?.dartComplete ? '검증' : '미확인'}</b></div>
       </div>
       <p className="analysis-footnote">일부 뉴스·공시 위험 신호는 종목 판단 사유에 기록돼 있지만, 과거 체결별 정확한 원문·발행 시각까지 보존된 데이터는 아직 부족해. 뉴스 유무별 승률이나 수익 기여도는 왜곡을 피하려고 계산하지 않았어.</p>
