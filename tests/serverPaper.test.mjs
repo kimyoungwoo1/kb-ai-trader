@@ -133,10 +133,13 @@ test('failed KB scan stops additional lookups and backs off across scheduled min
   await serverPaperApi(db,'migrate','0::0:')
   await serverPaperApi(db,'start')
   const calls=[]
-  const post=async path=>{
+  const post=async (path, body)=>{
     calls.push(path)
     if(path==='/api/market/discover')return {success:true,candidates:Array.from({length:25},(_,i)=>({code:String(100000+i),name:'Test'}))}
-    if(path==='/api/market/investor-flow')return {success:true,results:[{price:null}]}
+    if(path==='/api/market/investor-flow'){
+      assert.equal(body.stocks.length,7)
+      return {success:true,results:[{price:null}]}
+    }
     throw Error('unexpected provider call')
   }
   const fail=await serverPaperTick(db,post,new Date('2026-11-06T01:20:00Z'))
