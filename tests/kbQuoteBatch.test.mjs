@@ -95,14 +95,14 @@ test('authentication is required, and invalid/too many codes are rejected before
     assert.equal(count, 0)
   } finally { globalThis.fetch = oldFetch }
 })
-test('HTML gateway 522 is preserved and server scan stops before the next KB request', async () => {
+test('persistent HTML 522 allows one scan retry and stops before the next symbol or investor-flow read', async () => {
   const oldFetch = globalThis.fetch
-  let requests = 0
-  globalThis.fetch = async target => {
+  const requestedCodes = []
+  globalThis.fetch = async (target, options) => {
     if (String(target).endsWith('/oauth2/token'))
       return Response.json({ dataBody: { access_token: 'mock-token', expires_in: 86400 } })
-    requests++
     assert.ok(String(target).endsWith('/ivu10140'))
+    requestedCodes.push(JSON.parse(options.body).dataBody.shrt_cd)
     return new Response('<html>Gateway timeout</html>', { status: 522 })
   }
   try {
@@ -110,6 +110,7 @@ test('HTML gateway 522 is preserved and server scan stops before the next KB req
     const batch = await (await worker.fetch(req([stocks[0]]), env)).json()
     assert.equal(batch.results[0].upstream_status, 522)
     assert.match(batch.results[0].error, /HTTP 522/)
+    assert.deepEqual(requestedCodes.splice(0), [stocks[0].code, stocks[0].code])
     const scan = await worker.fetch(new Request(base.replace('/kb/quotes', '/market/investor-flow'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer dashboard-pass' },
@@ -119,7 +120,7 @@ test('HTML gateway 522 is preserved and server scan stops before the next KB req
     const failure = await scan.json()
     assert.equal(failure.stage, 'kb_upstream')
     assert.match(failure.message, /HTTP 522/)
-    assert.equal(requests, 3)
+    assert.deepEqual(requestedCodes, [stocks[0].code, stocks[0].code])
   } finally { globalThis.fetch = oldFetch }
 })
 
