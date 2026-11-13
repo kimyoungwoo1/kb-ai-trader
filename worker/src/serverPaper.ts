@@ -11,7 +11,9 @@ import type { AutoAccount, AutoFill } from '../../src/autoPaper';
 import type { PaperLedger } from '../../src/paperLedger';
 
 type Db = any;
-type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot };
+type ScanSymbol = {code:string;name:string};
+type ScanProgress = {startedAt:number;symbols:ScanSymbol[];quotes:any[]};
+type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[] };
@@ -135,7 +137,11 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const watched = [...snapshot.account.positions,...snapshot.account.pending]
       .filter(x => /^\d{6}$/.test(x.code)).filter((x,i,a)=>a.findIndex(t=>t.code===x.code)===i)
       .slice(0,5).map(x=>({code:x.code,name:x.name}));
-    const symbols = doScan ? await (async()=>{
+    const previousProgress = snapshot.scanProgress;
+    const progress = retryScan && previousProgress &&
+      date.getTime() >= previousProgress.startedAt && date.getTime()-previousProgress.startedAt < 180_000
+      ? previousProgress : undefined;
+    const symbols = doScan ? progress?.symbols ?? await (async()=>{
       const discover = await post('/api/market/discover',{});
       if (!discover.success || !Array.isArray(discover.candidates)) throw Error('시장 후보 발견 실패');
       const pool = discover.candidates.filter((x:any)=>/^\d{6}$/.test(String(x.code)) && !/ETF|ETN|레버리지|인버스/.test(String(x.name)));
@@ -148,22 +154,34 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         .bind(writeRevision,slot).run();
       return {result:'no_symbols',message:'빠른 감시 대상 없음 · 다음 전체시장 검사 대기',filled:0,scanned:0};
     }
-    const now = new Date();
-    const checkedAt = now.toISOString();
+    let now = new Date();
+    let checkedAt = now.toISOString();
     let nextAccount: AutoAccount;
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
-      const reply = await post('/api/market/investor-flow',{stocks:symbols,stopOnUpstream:true});
+      const remaining = symbols.filter(symbol=>!progress?.quotes.some(quote=>quote.code===symbol.code));
+      const reply = await post('/api/market/investor-flow',{stocks:remaining,stopOnUpstream:true});
       if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
-      const quotes = reply.results;
+      const freshQuotes = reply.results;
+      const quotes = [...(progress?.quotes ?? []),...freshQuotes];
       if (!quotes.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
         throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
       const partial = reply.partial === true;
+      if (partial) {
+        const completed = freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
+          Number.isFinite(quote.price)&&quote.price>0&&remaining.some(symbol=>symbol.code===quote.code));
+        snapshot.scanProgress = {startedAt:progress?.startedAt ?? date.getTime(),symbols,
+          quotes:[...(progress?.quotes ?? []),...completed]};
+      } else {
+        delete snapshot.scanProgress;
+      }
       const [disclosuresResult,newsResult] = partial ? [null,null] : await Promise.all([
         Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
         Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
       ]);
+      now = new Date();
+      checkedAt = now.toISOString();
       const disclosures = disclosuresResult || {};
       const news = newsResult || {};
       if (partial) scanError = (kbScanFailurePrefix + (reply.message || '정밀 시세 일부 실패')).slice(0,180);
@@ -183,14 +201,14 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         // Keep watching existing positions from this scan's usable quotes.
         // A partial scan must not open or replace pending entry orders.
         nextAccount = runAutoWatchCycle({...snapshot.account,pending:[]},
-          quotes.filter(item=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
+          freshQuotes.filter((item:any)=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
           checkedAt,now,store,symbols.length);
         nextAccount.pending = snapshot.account.pending;
         message = '정밀검사 일부 실패 · 보유 종목 감시 계속 · 신규 매수 보류';
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
         snapshot.screening = { checkedAt, signals };
-        nextAccount = runAutoCycle(snapshot.account,signals,quotes,checkedAt,now,store);
+        nextAccount = runAutoCycle(snapshot.account,signals,freshQuotes,checkedAt,now,store);
         message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
       }
     } else {
