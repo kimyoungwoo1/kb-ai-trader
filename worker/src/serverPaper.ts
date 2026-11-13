@@ -15,6 +15,8 @@ type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger:
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[] };
+// Reserve Free-plan subrequests for full DART pagination, news and retries.
+const scanSymbolLimit = 7;
 const kbFailurePrefix = 'KB 조회 실패 · ';
 const kbScanFailurePrefix = kbFailurePrefix + '정밀검사 재시도 · ';
 export class KbWatchUnavailable extends Error {}
@@ -132,9 +134,9 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const discover = await post('/api/market/discover',{});
       if (!discover.success || !Array.isArray(discover.candidates)) throw Error('시장 후보 발견 실패');
       const pool = discover.candidates.filter((x:any)=>/^\d{6}$/.test(String(x.code)) && !/ETF|ETN|레버리지|인버스/.test(String(x.name)));
-      const rotated = pool.slice(((Math.floor(slot/5)*15)%Math.max(pool.length,1)));
+      const rotated = pool.slice(((Math.floor(slot/5)*scanSymbolLimit)%Math.max(pool.length,1)));
       const selected = [...watched,...rotated,...pool].filter((x:any,i:number,a:any[])=>a.findIndex(y=>y.code===x.code)===i);
-      return selected.slice(0,25);
+      return selected.slice(0,scanSymbolLimit);
     })() : watched;
     if (!symbols.length) {
       await db.prepare('UPDATE server_paper_state SET busy_until=0, last_error=NULL WHERE id=1 AND revision=? AND cycle_slot=?')
@@ -147,34 +149,20 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
-      const chunks = Array.from({length:Math.ceil(symbols.length/10)},(_,i)=>symbols.slice(i*10,i*10+10));
-      const readFlow = async (stocks: typeof symbols) => {
-        const reply = await post('/api/market/investor-flow',{stocks,stopOnUpstream:true});
-        if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
-        if (!reply.results.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
-          throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
-        return {quotes:reply.results,partial:reply.partial===true, message:reply.message};
-      };
-      // Check the first batch before requesting additional symbols, news or disclosures.
-      const first = await readFlow(chunks[0]);
-      const [remaining,disclosuresResult,newsResult] = first.partial ? [[],null,null] as const : await Promise.all([
-        Promise.allSettled(chunks.slice(1).map(readFlow)),
+      const reply = await post('/api/market/investor-flow',{stocks:symbols,stopOnUpstream:true});
+      if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
+      const quotes = reply.results;
+      if (!quotes.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
+        throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
+      const partial = reply.partial === true;
+      const [disclosuresResult,newsResult] = partial ? [null,null] : await Promise.all([
         Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
         Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
       ]);
       const disclosures = disclosuresResult || {};
       const news = newsResult || {};
-      const completed = remaining.flatMap(result=>result.status==='fulfilled'?[result.value]:[]);
-      const quotes = [first,...completed].flatMap(result=>result.quotes);
-      const partial = [first,...completed].find(result=>result.partial);
-      const rejectedKb = remaining.find(result=>result.status==='rejected' && result.reason instanceof KbWatchUnavailable);
-      if (partial || rejectedKb) {
-        const detail = partial?.message || (rejectedKb?.status==='rejected' ? rejectedKb.reason.message : '정밀 시세 일부 실패');
-        scanError = (kbScanFailurePrefix + detail).slice(0,180);
-      }
-      const incompleteScan = !!partial ||
-        remaining.some(result=>result.status==='rejected') ||
-        !disclosuresResult || !newsResult;
+      if (partial) scanError = (kbScanFailurePrefix + (reply.message || '정밀 시세 일부 실패')).slice(0,180);
+      const incompleteScan = partial || !disclosuresResult || !newsResult;
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
