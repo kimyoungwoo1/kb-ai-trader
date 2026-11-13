@@ -7,10 +7,10 @@ import {kbQuotePrice} from './kbQuotePrice'
  */
 import {kbReadOnlyTlsRequest} from './kbSocketReadOnly'
 import {connect} from 'cloudflare:sockets'
-import {getKbAccessToken,KbAuthError} from './kbToken'
+import {getKbAccessToken,KbAuthError,kbBaseUrl} from './kbToken'
 
 type Env={
- DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string;
+ DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string;KB_BASE_URL?:string;
  KB_EGRESS?:{
   readOnly(input:Parameters<typeof kbReadOnlyTlsRequest>[0]):ReturnType<typeof kbReadOnlyTlsRequest>;
   rootProbe():Promise<SafeResult>;
@@ -200,24 +200,26 @@ function quoteResult(status:number,json:unknown):SafeResult{
 export async function runKbHttpQuoteProof(env:Env){
  let token:string
  try{
-  token=await getKbAccessToken({KB_APP_KEY:env.KB_APP_KEY,KB_APP_SECRET:env.KB_APP_SECRET})
+  token=await getKbAccessToken(env)
  }catch(error){
-  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?error.httpStatus:undefined},
+  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?(error.upstreamStatus??error.httpStatus):undefined},
    quote:{status:'SKIPPED'}}
  }
  const start=Date.now()
  let quote:SafeResult
  try{
-  const response=await fetch('https://developer.kbsec.com:32484'+quotePath,{
+  const response=await fetch(kbBaseUrl(env)+quotePath,{
    method:'POST',headers:{Authorization:'bearer '+token,appKey:env.KB_APP_KEY!,'Content-Type':'application/json'},
-   body:JSON.stringify(quoteBody()),signal:AbortSignal.timeout(22_000),redirect:'error'
+   body:JSON.stringify(quoteBody()),signal:AbortSignal.timeout(22_000),redirect:'manual'
   })
   const data=response.ok?await response.json().catch(()=>null):null
   if(!response.ok)await response.body?.cancel().catch(()=>{})
-  quote=quoteResult(response.status,data)
+  quote=response.status>=300&&response.status<400
+   ?{status:'BLOCKED',httpStatus:response.status,detail:'KB_FETCH_REDIRECT'}
+   :quoteResult(response.status,data)
  }catch(error){
   quote={status:'BLOCKED',detail:error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)
-   ?'KB_FETCH_TIMEOUT':'KB_FETCH_CONNECTION_ERROR'}
+   ?'KB_FETCH_TIMEOUT':error instanceof TypeError?'KB_FETCH_TYPE_ERROR':'KB_FETCH_CONNECTION_ERROR'}
  }
  return {oauth:{status:'PASS'},quote:{...quote,durationMs:Date.now()-start}}
 }
