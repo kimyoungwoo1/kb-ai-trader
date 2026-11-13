@@ -10,7 +10,28 @@ import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './
 import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
 
+type MarketEgress = { fetch(request: Request): Promise<Response> }
+type QuoteTrace = { requestId: string; attempt: number }
+const marketRead = async (
+  endpoint: string, init: RequestInit, trace: QuoteTrace, timeoutMs: number, egress?: MarketEgress
+) => {
+  const signal = AbortSignal.timeout(timeoutMs)
+  const url = new URL(endpoint)
+  if (!egress || url.origin !== 'https://developer.kbsec.com:32484')
+    return fetchKbObserved(endpoint, {...init,signal},trace)
+  const headers = new Headers(init.headers)
+  headers.set('X-KB-Request-ID',trace.requestId)
+  headers.set('X-KB-Attempt',String(trace.attempt))
+  headers.set('X-KB-Timeout',String(timeoutMs))
+  try {
+    return await egress.fetch(new Request('https://market-egress.internal'+url.pathname,{...init,headers,signal}))
+  } catch {
+    return new Response(null,{status:502})
+  }
+}
+
 export interface Env {
+  KB_MARKET_EGRESS?: MarketEgress;
   KB_APP_KEY?: string;
   KB_APP_SECRET?: string;
   KB_BASE_URL?: string;
@@ -75,7 +96,7 @@ function readXmlLink(xml: string): string {
 
 const accountBatchRequests = new WeakSet<Request>();
 const service = {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, marketEgress?: MarketEgress): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -491,7 +512,7 @@ const service = {
       const readQuote = async (index: number, attempt = 1, timeoutMs = 20_000) => {
         const stock = stocks[index];
         try {
-          const response = await fetchKbObserved(baseUrl + "/api/v1/ivu10140", {
+          const response = await marketRead(baseUrl + "/api/v1/ivu10140", {
             method: "POST",
             headers: { Authorization: "bearer " + accessToken,
               appKey: env.KB_APP_KEY!, "Content-Type": "application/json" },
@@ -499,8 +520,7 @@ const service = {
               dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
               dataBody: { excg_clsf: "1", shrt_cd: stock.code },
             }),
-            signal: AbortSignal.timeout(timeoutMs),
-          }, {requestId:requestIds[index],attempt});
+          }, {requestId:requestIds[index],attempt}, timeoutMs, marketEgress);
           let data: any;
           try { data = await response.json(); }
           catch { return { code: stock.code, name: stock.name,
@@ -740,18 +760,14 @@ const service = {
       const readFlow = async (endpoint: string, init: RequestInit) => {
         const requestId = crypto.randomUUID();
         try {
-          const response = await fetchKbObserved(endpoint, {
-            ...init, signal: AbortSignal.timeout(15_000),
-          }, {requestId,attempt:1});
+          const response = await marketRead(endpoint, init, {requestId,attempt:1}, 15_000, marketEgress);
           if (!retryAvailable || !isKbGatewayFailure(response.status)) return response;
           await response.body?.cancel().catch(()=>{});
         } catch (error) {
           if (!retryAvailable || !isKbReadTransportFailure(error)) throw error;
         }
         retryAvailable = false;
-        return fetchKbObserved(endpoint, {
-          ...init, signal: AbortSignal.timeout(8_000),
-        }, {requestId,attempt:2});
+        return marketRead(endpoint, init, {requestId,attempt:2}, 8_000, marketEgress);
       };
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
@@ -1297,7 +1313,7 @@ const service = {
       const response = await service.fetch(new Request('https://localhost'+path,{
         method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
         body:JSON.stringify(body),
-      }),env);
+      }),env,env.KB_MARKET_EGRESS);
       const result = await response.json() as any;
       if (!response.ok || result?.success !== true) {
         const message=String(result?.message||'내부 조회 실패').slice(0,150);
@@ -1388,4 +1404,4 @@ const service = {
     })());
   },
 };
-export default service;
+export default { fetch: (request: Request, env: Env) => service.fetch(request, env), scheduled: service.scheduled };
