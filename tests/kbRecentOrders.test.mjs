@@ -229,3 +229,20 @@ test('observed 1861 empty history completes one day but cannot confirm an exact 
   assert.equal((await listKbRecentOrders(sample,1,saturday)).partial,true)
  }finally{globalThis.fetch=oldFetch}
 })
+
+test('a transient HTTP 522 is retried and history must still be fully verified',async()=>{
+ const before=globalThis.fetch
+ let calls=0
+ globalThis.fetch=async url=>{
+  if(String(url).endsWith('/oauth2/token'))
+   return Response.json({dataBody:{access_token:'mock-token',expires_in:3600}})
+  if(++calls===1)return new Response('gateway timeout',{status:522})
+  return Response.json({dataHeader:{resultCode:'200',processFlag:'A'},dataBody:{Record1:[]}})
+ }
+ try{
+  const found=await listKbRecentOrders({...env,KB_APP_KEY:'recent-orders-transient-522'},1,saturday)
+  assert.equal(calls,2)
+  assert.equal(found.partial,false)
+  assert.deepEqual(found.checkedDates,['20261106'])
+ }finally{globalThis.fetch=before}
+})
