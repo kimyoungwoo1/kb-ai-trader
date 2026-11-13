@@ -7,7 +7,7 @@ import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
-import {readKbAccountJson,fetchKbObserved} from './kbAccountRead'
+import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
 
 export interface Env {
@@ -540,7 +540,7 @@ const service = {
         }
       };
       const results = await Promise.all(stocks.map(stock => readQuote(stock)));
-      const failed = results.flatMap((item,index) => item.upstream_status === 522 ? [index] : []);
+      const failed = results.flatMap((item,index) => isKbGatewayFailure(item.upstream_status) || item.transport_error ? [index] : []);
       if (failed.length && !results.some(item => item.rate_limited || item.token_expired)) {
         // Retry a single failed symbol first, to avoid a second burst during an outage.
         // Do not use stale quotes or re-request any successful symbol.
@@ -733,6 +733,24 @@ const service = {
         }
         return json({ success: false, stage: "kb_upstream", message }, 502);
       };
+      // One recovery attempt per read batch. A persistent outage still stops the scan.
+      let retryAvailable = input.stopOnUpstream === true;
+      const readFlow = async (endpoint: string, init: RequestInit) => {
+        const requestId = crypto.randomUUID();
+        try {
+          const response = await fetchKbObserved(endpoint, {
+            ...init, signal: AbortSignal.timeout(15_000),
+          }, {requestId,attempt:1});
+          if (!retryAvailable || !isKbGatewayFailure(response.status)) return response;
+          await response.body?.cancel().catch(()=>{});
+        } catch (error) {
+          if (!retryAvailable || !isKbReadTransportFailure(error)) throw error;
+        }
+        retryAvailable = false;
+        return fetchKbObserved(endpoint, {
+          ...init, signal: AbortSignal.timeout(8_000),
+        }, {requestId,attempt:2});
+      };
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
@@ -740,10 +758,9 @@ const service = {
         let quoteError = "";
         let investorError = "";
         try {
-          const response = await fetchKbObserved(`${baseUrl}/api/v1/ivu10140`, {
+          const response = await readFlow(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
-            signal: AbortSignal.timeout(15000),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
@@ -764,10 +781,9 @@ const service = {
           const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
           const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
           const startDate = start.toISOString().slice(0, 10).replace(/-/g, "");
-          const response = await fetchKbObserved(`${baseUrl}/api/v1/ivu10430`, {
+          const response = await readFlow(`${baseUrl}/api/v1/ivu10430`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
-            signal: AbortSignal.timeout(15000),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
