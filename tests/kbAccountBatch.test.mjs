@@ -105,3 +105,16 @@ test('a recovered 522 probe allows retrying other failed reads without repeating
  assert.ok(Object.values(batch.results).every(result=>result.success))
  assert.deepEqual([...calls.values()],[2,2,1])
 })
+
+test('account batch recovers a holdings 502 and a valuation timeout without repeating cash',async()=>{
+ const calls=new Map()
+ const batch=await runAccountBatch('recovered-account-502-timeout',async route=>{
+  const count=(calls.get(route)??0)+1
+  calls.set(route,count)
+  if(count===1&&route.endsWith('/holdings'))return {success:false,status:502,http_status:502}
+  if(count===1&&route.endsWith('/valuation'))return {success:false,status:502,error_type:'TIMEOUT'}
+  return {success:true,status:200}
+ })
+ assert.ok(Object.values(batch.results).every(result=>result.success))
+ assert.deepEqual([...calls.values()],[2,2,1])
+})
