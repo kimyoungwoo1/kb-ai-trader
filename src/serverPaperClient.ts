@@ -1,3 +1,4 @@
+import type { CatalystSnapshot } from './marketCatalysts'
 import { AUTO_EVENT, AUTO_STORAGE_KEY, type AutoAccount } from './autoPaper'
 import { PAPER_EVENT, PAPER_KEY, readPaperLedger, type PaperLedger } from './paperLedger'
 import { readAutoAccount } from './autoPaper'
@@ -24,7 +25,7 @@ export type ServerPaperStatus = {
   updated_at?: string; last_error?: string | null; message?: string;
   cron_monitor_available?: boolean; cron?: ServerCronMonitor;
   unchanged?: boolean; heartbeat?: boolean;
-  snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot }
+  snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot; catalyst?: CatalystSnapshot }
 }
 export function isServerPaperMode() { return active }
 export function getServerPaperStatus() { return latest }
