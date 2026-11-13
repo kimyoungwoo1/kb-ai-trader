@@ -772,7 +772,7 @@ const service = {
           if (!retryAvailable || !isKbReadTransportFailure(error)) throw error;
         }
         retryAvailable = false;
-        return marketRead(endpoint, init, {requestId,attempt:2}, 8_000, marketEgress);
+        return marketRead(endpoint, init, {requestId,attempt:2}, marketEgress ? 20_000 : 8_000, marketEgress);
       };
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
