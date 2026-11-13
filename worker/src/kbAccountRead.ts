@@ -60,7 +60,8 @@ export async function fetchKbObserved(
  }catch(error){
   const name=error instanceof Error?error.name:''
   emit({upstream_status:null,upstream_cf_ray:null,
-   error:['TimeoutError','AbortError','TypeError'].includes(name)?name:'TransportError'})
+   error:error instanceof Error && /too many subrequests|subrequest limit/i.test(error.message)
+     ? 'SubrequestLimit' : ['TimeoutError','AbortError','TypeError'].includes(name)?name:'TransportError'})
   throw error
  }
 }
