@@ -1,3 +1,4 @@
+import {isKbGatewayFailure} from './kbAccountRead'
 /**
  * UI-only KB account batch coordinator.
  * Coalesces refreshes within one Worker isolate. Holdings confirms KB is
@@ -38,7 +39,9 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
      error_type:'NETWORK',message:'계좌 조회 중 연결 오류'}}
   }
   const canRetry=()=>!controller.signal.aborted&&deadlineAt-Date.now()>=5_000
-  const authOrLimit=(entry:AccountBatchEntry)=>entry.stage==='authentication'||
+  const transient=(entry:AccountBatchEntry)=>!entry.success&&(isKbGatewayFailure(entry.http_status)||
+   entry.error_type==='NETWORK'||entry.error_type==='TIMEOUT')
+ const authOrLimit=(entry:AccountBatchEntry)=>entry.stage==='authentication'||
     [401,403,429].some(status=>status===entry.status||status===entry.http_status)
   try{
    const readEntry=async(path:string):Promise<AccountBatchEntry>=>(await read(path))??{
@@ -48,11 +51,11 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
    const [[holdingName,holdingPath],...otherRoutes]=routes
    const holdings=await readEntry(holdingPath)
    results[holdingName]=holdings
-   if(!holdings.success&&holdings.http_status===522){
+   if(transient(holdings)&&!authOrLimit(holdings)){
     const retry=canRetry()?await read(holdingPath):null
     if(retry&&(retry.success||authOrLimit(retry)))results[holdingName]=retry
    }
-   if(results[holdingName].http_status===522||controller.signal.aborted){
+   if(transient(results[holdingName])||controller.signal.aborted){
     for(const [name] of otherRoutes)results[name]={
      success:false,status:503,stage:'account_upstream_unavailable',
      message:'KB 연결 지연으로 조회가 보류되었습니다.'
@@ -60,7 +63,7 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
    }else{
     await Promise.all(otherRoutes.map(async ([name,path])=>{results[name]=await readEntry(path)}))
    }
-   const candidates=otherRoutes.filter(([name])=>!results[name].success&&results[name].http_status===522)
+   const candidates=otherRoutes.filter(([name])=>transient(results[name]))
    if(candidates.length&&canRetry()&&!Object.values(results).some(authOrLimit)){
     // A single sequential probe avoids sending a second burst when KB is down.
     const [[name,path],...remaining]=candidates
