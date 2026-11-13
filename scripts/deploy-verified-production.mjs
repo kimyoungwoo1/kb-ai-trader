@@ -361,23 +361,28 @@ async function main(){
   } finally {rmSync(temp,{force:true,recursive:true})}
   if(!tlsProofOnly)ensure(source.includes(Buffer.from('/api/auth/login')),'Worker 로그인 코드 누락')
   else ensure(source.includes(Buffer.from('/api/deploy/tls-proof')),'격리 TLS 진단 코드 누락')
-  console.log('4/7 정적 파일 업로드 (운영 트래픽 변경 없음)')
-  const session=await api(root+'/workers/scripts/'+name+'/assets-upload-session',{
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manifest})
-  })
-  ensure(session.jwt&&Array.isArray(session.buckets),'Assets 세션 생성 실패')
-  let jwt=session.jwt
-  for(const bucket of session.buckets){
-    const form=new FormData()
-    for(const hash of bucket){
-      const f=assets.get(hash)
-      ensure(f,'업로드 파일을 찾을 수 없음: '+hash)
-      form.append(hash,new Blob([f.data.toString('base64')],{type:f.type}))
-    }
-    const result=await api(root+'/workers/assets/upload?base64=true',{
-      method:'POST',body:form,authToken:session.jwt
+  let jwt
+  if(httpQuoteCompare){
+    console.log('4/7 격리 HTTP 진단 · 정적 파일 업로드 생략')
+  }else{
+    console.log('4/7 정적 파일 업로드 (운영 트래픽 변경 없음)')
+    const session=await api(root+'/workers/scripts/'+name+'/assets-upload-session',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manifest})
     })
-    if(result.jwt)jwt=result.jwt
+    ensure(session.jwt&&Array.isArray(session.buckets),'Assets 세션 생성 실패')
+    jwt=session.jwt
+    for(const bucket of session.buckets){
+      const form=new FormData()
+      for(const hash of bucket){
+        const f=assets.get(hash)
+        ensure(f,'업로드 파일을 찾을 수 없음: '+hash)
+        form.append(hash,new Blob([f.data.toString('base64')],{type:f.type}))
+      }
+      const result=await api(root+'/workers/assets/upload?base64=true',{
+        method:'POST',body:form,authToken:session.jwt
+      })
+      if(result.jwt)jwt=result.jwt
+    }
   }
   console.log('5/7 다섯 Secret을 정상 버전에서 상속한 새 버전 업로드')
   const config=JSON.parse(readFileSync(join(cwd,'worker/wrangler.jsonc'),'utf8'))
@@ -388,14 +393,14 @@ async function main(){
       compatibility_date:config.compatibility_date||'2026-11-04',
       ...(placeNearKb?{placement:{host:'developer.kbsec.com:32484'}}:{}),
       annotations:{'workers/message':tlsProofOnly?'ISOLATED TLS READ-ONLY PROOF; DO NOT DEPLOY':(livePilot50000?'EXPLICIT LIVE 50000 PILOT · EXISTING APPROVAL POLICY':'paper watch + D1 backup + current live secrets + push notifications')},
-      assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}},
+      ...(httpQuoteCompare?{}:{assets:{jwt,config:{not_found_handling:'single-page-application',run_worker_first:['/api/*']}}}),
       bindings:[
-        {name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'},
-        ...(paperDbId?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
-        ...required.map(name=>({name,type:'inherit',version_id:rollbackVersion})),
+        ...(httpQuoteCompare?[]:[{name:'AI',type:'ai'}, {name:'ASSETS',type:'assets'}]),
+        ...(paperDbId&&!httpQuoteCompare?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
+        ...(httpQuoteCompare?['KB_APP_KEY','KB_APP_SECRET']:required).map(name=>({name,type:'inherit',version_id:rollbackVersion})),
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
-        ...pushBindings,
+        ...(httpQuoteCompare?[]:pushBindings),
         ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
         {name:'DEPLOY_PROBE_TOKEN',type:'secret_text',text:probeKey}
       ],
@@ -426,19 +431,22 @@ async function main(){
     }
   }
   ensure(newVersion?.id===createdId,'신규 버전 조회 ID 불일치 · 배포 중단')
-  verifyVersion(newVersion,'신규 버전',!!paperDbId)
+  if(!httpQuoteCompare)verifyVersion(newVersion,'신규 버전',!!paperDbId)
   const newBindings=new Map(bindings(newVersion).map(x=>[x.name,x.type]))
   ensure(livePilot50000 ? newBindings.get('LIVE_TRADING_HARD_ENABLE')==='plain_text' :
     !newBindings.has('LIVE_TRADING_HARD_ENABLE'),
     '실주문 배포 플래그 일치 검증 실패 · 운영 전환 차단')
-  ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
+  if(httpQuoteCompare){
+    for(const key of ['KB_APP_KEY','KB_APP_SECRET'])
+      ensure(newBindings.get(key)==='secret_text','격리 HTTP 진단 KB 바인딩 누락: '+key)
+  }else ensure(newBindings.get('VAPID_PRIVATE_KEY')==='secret_text'
     &&newBindings.has('VAPID_PUBLIC_KEY')&&newBindings.has('VAPID_SUBJECT'),
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
   if(privateEgress)ensure(newBindings.get('KB_EGRESS')==='service',
     '격리 진단 Private Egress Service Binding 확인 실패 · 운영 전환 없음')
-  console.log('✓ 신규 버전 푸시 암호화 키 바인딩 확인'+
+  console.log(httpQuoteCompare?'✓ 격리 HTTP 진단 KB 바인딩 확인':'✓ 신규 버전 푸시 암호화 키 바인딩 확인'+
     (privateEgress?' · 비공개 KB 조회 전용 RPC 연결 확인':''))
   // Mandatory smoke testing on the exact NEW version URL. Never change
   // production traffic when Version URLs are disabled or not yet propagated.
