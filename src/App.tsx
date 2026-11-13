@@ -629,42 +629,38 @@ export default function App() {
     let cancelled = false
     let cleanupLegacy: (()=>void) | undefined
     let interval: number | undefined
-    void (async () => {
+    let polls = 0
+    let polling = false
+    let serverReady = false
+    const poll = async () => {
+      if (cancelled || polling) return
+      polling = true
       try {
-        const status = await serverPaperAction(token,'status')
+        const action = !serverReady ? 'status' : ++polls % 4 === 0 ? 'status' : 'heartbeat'
+        const status = await serverPaperAction(token,action)
         if (cancelled) return
         if (status.migrated) {
-          setMarketCheckedAt(status.snapshot?.account.lastCycle || '')
+          serverReady = true
+          if (action === 'status') setMarketCheckedAt(status.snapshot?.account.lastCycle || '')
           setServerMode(true)
-          // The previous 15-second poll repeatedly requested the 665KiB+
-          // canonical D1 ledger whenever Cron advanced its revision.
-          // Keep the Cron monitor responsive with lightweight heartbeats,
-          // and refresh the full immutable snapshot once every two minutes.
-          let polls = 0
-          let polling = false
-          interval = window.setInterval(() => {
-            if (cancelled || polling) return
-            polling = true
-            const action = ++polls % 4 === 0 ? 'status' : 'heartbeat'
-            void serverPaperAction(token,action)
-              .then(data => { if (!cancelled && action === 'status') setMarketCheckedAt(data.snapshot?.account.lastCycle || '') })
-              .catch(error => { if (!cancelled) setServerPaperError(error instanceof Error ? error.message : '서버 상태 조회 실패') })
-              .finally(() => { polling = false })
-          }, 30_000)
         } else {
+          if (interval !== undefined) window.clearInterval(interval)
           setServerPaperMode(false)
           setServerMode(false)
           cleanupLegacy = startCloudAutoSync(token)
         }
       } catch (error) {
-        // Fail closed: never start the legacy browser engine when the server
-        // account status is unknown. Show an explicit retry instead of hiding it.
         if (cancelled) return
+        serverReady = false
         setServerPaperMode(true)
         setServerMode(true)
         setServerPaperError(error instanceof Error ? error.message : '서버 상태 조회 실패')
+      } finally {
+        polling = false
       }
-    })()
+    }
+    interval = window.setInterval(() => { void poll() }, 30_000)
+    void poll()
     return () => {
       cancelled = true
       cleanupLegacy?.()
