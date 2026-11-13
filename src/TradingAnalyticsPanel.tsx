@@ -6,6 +6,7 @@ import { readScreeningSnapshot, selectScreeningView } from './screeningHistory'
 import { summarizeTradingAnalytics, journalTrades, type AnalyticsPeriod, type JournalGroup } from './tradingAnalytics'
 import { catalystReady, type CatalystSnapshot } from './marketCatalysts'
 import CloudBackupPanel from './CloudBackupPanel'
+import { getServerPaperError, getServerPaperStatus, isServerPaperMode, SERVER_PAPER_EVENT } from './serverPaperClient'
 
 const money = (value: number) => Math.round(value).toLocaleString('ko-KR') + '원'
 const signedMoney = (value: number) => (value > 0 ? '+' : '') + money(value)
@@ -96,6 +97,9 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
   const [account, setAccount] = useState(readAutoAccount)
   const [ledger, setLedger] = useState(readPaperLedger)
   const [screeningSnapshot, setScreeningSnapshot] = useState(readScreeningSnapshot)
+  const [server, setServer] = useState(getServerPaperStatus)
+  const [serverError, setServerError] = useState(getServerPaperError)
+  const [serverMode, setServerMode] = useState(isServerPaperMode)
   const [period, setPeriod] = useState<AnalyticsPeriod>('30')
   const [group, setGroup] = useState<JournalGroup>('all')
   const [runIndex, setRunIndex] = useState(0)
@@ -109,11 +113,18 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
       setLedger(readPaperLedger())
       setScreeningSnapshot(readScreeningSnapshot())
     }
+    const updateServer = () => {
+      setServer(getServerPaperStatus())
+      setServerError(getServerPaperError())
+      setServerMode(isServerPaperMode())
+    }
+    window.addEventListener(SERVER_PAPER_EVENT, updateServer)
     window.addEventListener(AUTO_EVENT, update)
     window.addEventListener(PAPER_EVENT, update)
     window.addEventListener('storage', update)
     const timer = window.setInterval(() => setTime(Date.now()), 30_000)
     return () => {
+      window.removeEventListener(SERVER_PAPER_EVENT, updateServer)
       window.removeEventListener(AUTO_EVENT, update)
       window.removeEventListener(PAPER_EVENT, update)
       window.removeEventListener('storage', update)
@@ -130,6 +141,8 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
   const visibleTrades = useMemo(() => journalTrades(ledger, period, group, now),
     [ledger, period, group, now])
   const runs = report.recentRuns
+  const recentTick = server?.cron?.last_tick
+  const lastServerScan = server?.snapshot?.screening?.checkedAt
   const selectedRun: AutoRun | undefined = runs[runIndex] || runs[0]
   const decisions = selectedRun?.decisions || []
   const closed = report.strategy.closed
@@ -257,6 +270,12 @@ export default function TradingAnalytics({ signals, catalysts, marketCoverage, l
       <div className="panel-heading"><div><h3>매매 판단 이력</h3><span>RECENT MARKET SCANS &amp; REASONS</span></div>
         <span className="analysis-muted">저장된 검사 {runs.length}회</span>
       </div>
+      {serverMode && <div className="analysis-run-summary">
+        <span><small>최근 서버 감시</small><b>{formatTime(recentTick?.finished_at)}</b></span>
+        <span><small>마지막 서버 정밀검사 저장</small><b>{formatTime(lastServerScan)}</b></span>
+        <span><small>서버 상태</small><b>{serverError || (server?.mode === 'stopped' ? '서버 자동매매 중지'
+          : recentTick?.message || '서버 감시 기록 확인 전')}</b></span>
+      </div>}
       {runs.length ? <>
         <div className="analysis-run-pills">{runs.slice(0, 10).map((run, index) =>
           <button type="button" key={run.checkedAt + index}
