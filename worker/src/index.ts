@@ -760,20 +760,29 @@ const service = {
         }
         return json({ success: false, stage: "kb_upstream", message }, 502);
       };
+      const scanDeadline = Date.now() + 45_000;
       // One recovery attempt per read batch. A persistent outage still stops the scan.
       let retryAvailable = input.stopOnUpstream === true;
       const readFlow = async (endpoint: string, init: RequestInit) => {
         const requestId = crypto.randomUUID();
+        const timeout = (limit: number) => {
+          if (!marketEgress) return limit;
+          const remaining = scanDeadline - Date.now();
+          if (remaining <= 0) throw new DOMException("KB scan deadline", "TimeoutError");
+          return Math.min(limit, remaining);
+        };
         try {
-          const response = await marketRead(endpoint, init, {requestId,attempt:1}, marketEgress ? 20_000 : 15_000, marketEgress);
+          const response = await marketRead(endpoint, init, {requestId,attempt:1}, timeout(marketEgress ? 20_000 : 15_000), marketEgress);
           if (!retryAvailable || !isKbGatewayFailure(response.status)) return response;
           await response.body?.cancel().catch(()=>{});
         } catch (error) {
           if (!retryAvailable || !isKbReadTransportFailure(error)) throw error;
         }
         retryAvailable = false;
-        return marketRead(endpoint, init, {requestId,attempt:2}, marketEgress ? 20_000 : 8_000, marketEgress);
+        return marketRead(endpoint, init, {requestId,attempt:2}, timeout(marketEgress ? 20_000 : 8_000), marketEgress);
       };
+      let skippedMessage = "";
+      const canSkip = () => !!marketEgress && !skippedMessage && Date.now() < scanDeadline;
       for (const stock of stocks) {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
@@ -787,15 +796,27 @@ const service = {
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
-            return unavailable("KB 시세·수급 HTTP " + response.status, response.status);
+            const message = "KB 시세·수급 HTTP " + response.status;
+            await response.body?.cancel().catch(()=>{});
+            if (isKbGatewayFailure(response.status) && canSkip()) {
+              skippedMessage = message;
+              continue;
+            }
+            return unavailable(message, response.status);
           }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
           else quoteError = getKbErrorMessage(data);
         } catch (error) {
-          if (input.stopOnUpstream === true)
-            return unavailable(error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
-              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류");
+          if (input.stopOnUpstream === true) {
+            const message = error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
+              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류";
+            if (isKbReadTransportFailure(error) && canSkip()) {
+              skippedMessage = message;
+              continue;
+            }
+            return unavailable(message);
+          }
           quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패";
         }
 
@@ -810,15 +831,27 @@ const service = {
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
-            return unavailable("KB 시세·수급 HTTP " + response.status, response.status);
+            const message = "KB 시세·수급 HTTP " + response.status;
+            await response.body?.cancel().catch(()=>{});
+            if (isKbGatewayFailure(response.status) && canSkip()) {
+              skippedMessage = message;
+              continue;
+            }
+            return unavailable(message, response.status);
           }
           const data = await response.json() as any;
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
           else investorError = getKbErrorMessage(data);
         } catch (error) {
-          if (input.stopOnUpstream === true)
-            return unavailable(error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
-              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류");
+          if (input.stopOnUpstream === true) {
+            const message = error instanceof Error && /abort|timeout/i.test(error.name + " " + error.message)
+              ? "KB 시세·수급 타임아웃" : "KB 시세·수급 연결 또는 응답 오류";
+            if (isKbReadTransportFailure(error) && canSkip()) {
+              skippedMessage = message;
+              continue;
+            }
+            return unavailable(message);
+          }
           investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패";
         }
 
@@ -860,6 +893,7 @@ const service = {
           investorError,
         });
       }
+      if (skippedMessage) return unavailable(skippedMessage);
       return json({ success: true, api: ["IVU10140", "IVU10430"], requested: stocks.length, results, checked_at: new Date().toISOString(), period: "최근 7일" });
     }
 
