@@ -188,3 +188,30 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   assert.equal(db.server.last_error,null)
   assert.ok(JSON.parse(db.server.snapshot_json).screening.checkedAt)
 })
+
+test('a quote watch 522 does not delay the next scheduled full scan',async()=>{
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const stock={code:'100000',name:'Test',price:5000}
+  const snapshot=JSON.parse(db.server.snapshot_json)
+  snapshot.account.pending=[stock]
+  db.server.snapshot_json=JSON.stringify(snapshot)
+  const calls=[]
+  const post=async path=>{
+    calls.push(path)
+    if(path==='/api/kb/quotes')return {success:true,results:[{price:null,upstream_status:522}]}
+    if(path==='/api/market/discover')return {success:true,candidates:[stock]}
+    if(path==='/api/market/investor-flow')return {success:true,results:[stock]}
+    if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
+    if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
+    throw Error('unexpected provider call '+path)
+  }
+  const tick=minute=>serverPaperTick(db,post,new Date('2026-11-06T01:'+minute+':00Z'))
+  assert.match((await tick(22)).message,/현재가 HTTP 522/)
+  assert.equal((await tick(23)).result,'kb_cooldown')
+  assert.match((await tick(24)).message,/현재가 HTTP 522/)
+  assert.equal((await tick(25)).result,'scanned')
+  assert.deepEqual(calls.slice(0,4),['/api/kb/quotes','/api/kb/quotes','/api/market/discover','/api/market/investor-flow'])
+  assert.equal(db.server.last_error,null)
+})
