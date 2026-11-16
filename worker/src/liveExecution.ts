@@ -5,7 +5,7 @@ import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,isLiveOrderTick,liveBuyRequired
  * LIVE_TRADING_HARD_ENABLE binding; D1 live_execution_gate defaults to OFF.
  * Automatic trades require committed paper fills. Manual buys use a separate gate.
  */
-import {fetchKbObserved} from './kbAccountRead'
+import {accountRead,fetchKbObserved,type KbAccountEgress} from './kbAccountRead'
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
 import {lookupKbOrder,lookupKbCancelEvidence,listKbRecentOrders} from './kbOrderContract'
 import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
@@ -13,7 +13,7 @@ import {getKbAccessToken,kbBaseUrl,type KbCredentials} from './kbToken'
 import {readLiveBuyJournalSummary,transitionOrder,type OrderRecord} from './liveOrderJournal'
 
 type Db=any
-export type LiveEnv=KbCredentials&{LIVE_TRADING_HARD_ENABLE?:string}
+export type LiveEnv=KbCredentials&KbAccountEgress&{LIVE_TRADING_HARD_ENABLE?:string}
 export type LiveFill={id:string;at:string;code:string;side:'BUY'|'SELL';price:number;quantity:number;test?:boolean}
 export const MAX_PILOT_WON=LIVE_BUY_LIMIT_WON
 const hardSwitch=(env:LiveEnv)=>env.LIVE_TRADING_HARD_ENABLE==='ALLOW_REAL_50000_TRIAL_2026'
@@ -101,14 +101,15 @@ function stockQuantity(row:any,codeField:'is_cd'|'is_no',quantityField:'hld_q'|'
  // A missing security code means this row cannot prove that target is absent.
  throw Error('KB 보유종목코드 필드 누락 · 실주문 차단')
 }
-export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<number>{
+export async function readKbHeldQuantity(env:KbCredentials&KbAccountEgress,code:string):Promise<number>{
  if(!/^[0-9]{6}$/.test(code))throw Error('종목코드 오류')
  const token=await getKbAccessToken(env)
  const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
  const body=(dataBody:unknown)=>JSON.stringify({
   dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},dataBody
  })
- const valuationResponse=await fetchKbObserved(kbBaseUrl(env)+'/api/v1/ssqm2952',{
+ const fetchRead=accountRead(env.KB_MARKET_EGRESS)??fetchKbObserved
+ const valuationResponse=await fetchRead(kbBaseUrl(env)+'/api/v1/ssqm2952',{
   method:'POST',headers,body:body({excg_mktpr_ccd:'A'}),
   signal:AbortSignal.timeout(15000)
  })
@@ -131,7 +132,7 @@ export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<
  let availableShares=0,nextKey=''
  const seen=new Set<string>()
  for(let page=0;page<10;page++){
-  const response=await fetchKbObserved(kbBaseUrl(env)+'/api/v1/ssqm1801',{
+  const response=await fetchRead(kbBaseUrl(env)+'/api/v1/ssqm1801',{
    method:'POST',headers,body:body({mkt_tm_ccd:'1',nxt_key:nextKey,inq_clsf:'0',is_no:''}),
    signal:AbortSignal.timeout(15000)
   })
