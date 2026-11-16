@@ -16,7 +16,7 @@ type ScanProgress = {startedAt:number;symbols:ScanSymbol[];quotes:any[]};
 type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress };
 type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
-export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[] };
+export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[]; partial?: boolean };
 // Reserve Free-plan subrequests for full DART pagination, news and retries.
 const scanSymbolLimit = 7;
 const kbFailurePrefix = 'KB 조회 실패 · ';
@@ -157,6 +157,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     let now = new Date();
     let checkedAt = now.toISOString();
     let nextAccount: AutoAccount;
+    let partialRun = false;
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
@@ -198,6 +199,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       };
       snapshot.catalyst = catalyst;
       if(incompleteScan){
+        partialRun = true;
         // Keep watching existing positions from this scan's usable quotes.
         // A partial scan must not open or replace pending entry orders.
         nextAccount = runAutoWatchCycle({...snapshot.account,pending:[]},
@@ -225,6 +227,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         throw new KbQuoteUnavailable(status?'현재가 HTTP '+status:transport==='timeout'?'현재가 타임아웃':
           transport==='network'?'현재가 연결 실패':'유효한 최신 현재가 없음');
       }
+      partialRun = validQuotes.length !== symbols.length;
       // Fast path: sell-side risk checks remain active, new entries are gated to
       // the next comprehensive market/news scan.
       const allowed = snapshot.account.pending.filter(item =>
@@ -245,7 +248,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
       .bind(JSON.stringify(snapshot),new Date().toISOString(),scanError,writeRevision,slot).run();
     if ((res.meta?.changes ?? 0)!==1) return {result:'busy',message:'원장 변경 경합 · 거래 결과 반영 안 함',filled:0,scanned:0};
-    return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length,fills:newFills};
+    return {result:doScan ? 'scanned' : 'watched',message,filled:executedFills,scanned:symbols.length,fills:newFills,partial:partialRun};
   } catch (error) {
     const detail = error instanceof Error ? error.message : '서버 감시 실패';
     const prefix = error instanceof KbQuoteUnavailable ? kbQuoteFailurePrefix :
