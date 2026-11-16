@@ -28,11 +28,18 @@ const marketRead = async (
   headers.set('X-KB-Request-ID',trace.requestId)
   headers.set('X-KB-Attempt',String(trace.attempt))
   headers.set('X-KB-Timeout',String(timeoutMs))
+  let response: Response
   try {
-    return await egress.fetch(new Request('https://market-egress.internal'+url.pathname,{...init,headers,signal}))
+    response = await egress.fetch(new Request('https://market-egress.internal'+url.pathname,{...init,headers,signal}))
   } catch {
-    return new Response(null,{status:502})
+    throw new TypeError('KB market egress binding failed')
   }
+  const failure = response.headers.get('X-KB-Egress-Error')
+  if (response.status === 502 && failure === 'timeout')
+    throw new DOMException('KB market egress timeout','TimeoutError')
+  if (response.status === 502 && failure === 'transport')
+    throw new TypeError('KB market egress transport failed')
+  return response
 }
 
 export interface Env {
@@ -1408,7 +1415,8 @@ const service = {
                 title:'KB AI TRADER · 서버/API 연속 오류',
                 body:'최근 3회 서버 실행 실패 · '+current.message.slice(0,160)+' · 가상매수 보호 상태를 확인하세요.'});
             }
-            if((outcome?.result==='scanned'||outcome?.result==='watched')&&current?.result===outcome.result&&recent[1]?.result==='error'){
+            if((outcome?.result==='scanned'||outcome?.result==='watched')&&!outcome.partial&&
+              current?.result===outcome.result&&recent[1]?.result==='error'){
               await publishNotification(env,{eventKey:'recovery:'+current.slot,kind:'recovery',
                 title:'KB AI TRADER · 서버 검사 복구',
                 body:'KB증권 시세/전략 서버 검사 재개 · '+current.message.slice(0,150)});
