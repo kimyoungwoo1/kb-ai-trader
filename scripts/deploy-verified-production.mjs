@@ -11,12 +11,13 @@ import { parseActiveVersion } from './parse-deployment-status.mjs'
 const cwd = process.cwd()
 const tlsProofOnly = process.argv.includes('--tls-proof-only')
 const marketEgress = process.argv.includes('--market-egress')
-const httpQuoteCompare = process.argv.includes('--http-quote-compare')
+const httpFlowCompare = process.argv.includes('--http-flow-compare')
+const httpQuoteCompare = httpFlowCompare || process.argv.includes('--http-quote-compare')
 const quoteCompare = process.argv.includes('--quote-compare')
 const privateEgress = process.argv.includes('--private-egress')
 const kbPlacement = process.argv.includes('--kb-placement')
 const livePilot50000 = process.argv.includes('--live-pilot-50000')
-if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--http-quote-compare','--kb-placement','--market-egress'].includes(arg))||
+if(process.argv.slice(2).some(arg=>!['--tls-proof-only','--private-egress','--live-pilot-50000','--quote-compare','--http-quote-compare','--http-flow-compare','--kb-placement','--market-egress'].includes(arg))||
   (marketEgress&&tlsProofOnly)||(httpQuoteCompare&&(!tlsProofOnly||privateEgress||quoteCompare))||(kbPlacement&&tlsProofOnly)||(privateEgress&&!tlsProofOnly)||(quoteCompare&&!tlsProofOnly)||(livePilot50000&&(tlsProofOnly||privateEgress)))
   throw Error('지원하지 않는 배포 옵션 조합')
 if(livePilot50000 && process.env.KB_LIVE_PILOT_CONFIRM!=='실계좌 5만원 시험배포 승인')
@@ -400,7 +401,7 @@ async function main(){
         ...(paperDbId&&!httpQuoteCompare?[{name:'PAPER_DB',type:'d1',database_id:paperDbId}]:[]),
         ...(httpQuoteCompare?['KB_APP_KEY','KB_APP_SECRET']:required).map(name=>({name,type:'inherit',version_id:rollbackVersion})),
         ...(oldBindings.has('KB_BASE_URL') ? [{name:'KB_BASE_URL',type:'inherit',version_id:rollbackVersion}] : []),
-        ...(marketEgress?[{name:'KB_MARKET_EGRESS',type:'service',service:'kb-ai-trader-market-egress'}]:[]),
+        ...((marketEgress||httpFlowCompare)?[{name:'KB_MARKET_EGRESS',type:'service',service:'kb-ai-trader-market-egress'}]:[]),
         ...(privateEgress?[{name:'KB_EGRESS',type:'service',service:'kb-ai-trader-egress'}]:[]),
         ...(httpQuoteCompare?[]:pushBindings),
         ...(livePilot50000?[{name:'LIVE_TRADING_HARD_ENABLE',type:'plain_text',text:livePilotFlag}]:[]),
@@ -446,7 +447,7 @@ async function main(){
     '신규 버전 웹 푸시 VAPID 바인딩이 누락됐습니다.')
   ensure(newBindings.get('DEPLOY_PROBE_TOKEN')==='secret_text',
     '신규 버전 배포 검사용 인증키가 누락됐습니다.')
-  if(marketEgress)ensure(newBindings.get('KB_MARKET_EGRESS')==='service',
+  if(marketEgress||httpFlowCompare)ensure(newBindings.get('KB_MARKET_EGRESS')==='service',
     'Cron 시세 조회 Worker 바인딩 누락 · 운영 전환 차단')
   if(privateEgress)ensure(newBindings.get('KB_EGRESS')==='service',
     '격리 진단 Private Egress Service Binding 확인 실패 · 운영 전환 없음')
@@ -459,6 +460,27 @@ async function main(){
   if(tlsProofOnly){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
+    if(httpFlowCompare){
+      const routes=['private','direct']
+      for(let round=1;round<=3;round++){
+        for(const route of round===2?[...routes].reverse():routes){
+          const response=await fetch(previewOrigin+'/api/deploy/tls-proof',{
+            method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Diagnostic':'http-flow-'+route},
+            signal:AbortSignal.timeout(65_000)
+          })
+          ensure(response.ok,'격리 수급 진단 요청 실패 (HTTP '+response.status+')')
+          const result=await response.json()
+          ensure(result.mode==='ISOLATED_KB_HTTP_FLOW'&&result.realOrderSent===false,'격리 수급 진단 모드 오류')
+          console.log(JSON.stringify({round,route,oauth:result.oauth,flow:result.flow}))
+          if(result.oauth?.httpStatus===429||result.flow?.httpStatus===429){
+            console.log('○ KB 호출 제한으로 비교 종료 · 운영 트래픽 변경 없음')
+            return
+          }
+        }
+      }
+      console.log('✓ 수급 첫 요청 비교 종료 · 운영 트래픽 변경 없음')
+      return
+    }
     if(httpQuoteCompare){
       const placed=await uploadVersion(true)
       const routes=[['default',previewOrigin],['kb-placement',versionOrigin(placed.id)]]
