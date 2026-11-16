@@ -793,6 +793,7 @@ const service = {
         let investor: any = null;
         let quoteError = "";
         let investorError = "";
+        let stopAfterStock = false;
         try {
           const {response, data: parsed} = await readFlow(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
@@ -836,25 +837,23 @@ const service = {
             if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
             const message = "KB 수급 HTTP " + response.status;
             await response.body?.cancel().catch(()=>{});
-            if (isKbGatewayFailure(response.status) && canSkip()) {
-              skippedMessage = message;
-              continue;
-            }
-            return unavailable(message, response.status);
+            if (!isKbGatewayFailure(response.status)) return unavailable(message,response.status);
+            stopAfterStock = !canSkip();
+            investorError = message;
+            skippedMessage ||= message;
+          } else {
+            const data = parsed === undefined ? await response.json() as any : parsed;
+            if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
+            else investorError = getKbErrorMessage(data);
           }
-          const data = parsed === undefined ? await response.json() as any : parsed;
-          if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
-          else investorError = getKbErrorMessage(data);
         } catch (error) {
           if (input.stopOnUpstream === true) {
             const message = readFailureMessage(error, "KB 수급");
-            if (recoverableRead(error) && canSkip()) {
-              skippedMessage = message;
-              continue;
-            }
-            return unavailable(message);
-          }
-          investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패";
+            if (!recoverableRead(error)) return unavailable(message);
+            stopAfterStock = !canSkip();
+            investorError = message;
+            skippedMessage ||= message;
+          } else investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패";
         }
 
         const toNumber = (value: unknown): number | null => {
@@ -894,6 +893,7 @@ const service = {
           quoteError,
           investorError,
         });
+        if (stopAfterStock) break;
       }
       if (skippedMessage) return unavailable(skippedMessage);
       return json({ success: true, api: ["IVU10140", "IVU10430"], requested: stocks.length, results, checked_at: new Date().toISOString(), period: "최근 7일" });
