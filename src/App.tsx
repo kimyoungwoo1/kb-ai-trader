@@ -133,12 +133,28 @@ export default function App() {
     const accountBatch = fetch(API + '/api/kb/account-batch', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token },
-      signal: AbortSignal.timeout(50_000),
-    }).then(async response => {
-      if (response.status === 401) return { expired: true }
-      const payload = await response.json()
-      if (!response.ok || payload?.success !== true || !payload.results)
-        throw Error(String(payload?.message || '계좌 일괄 조회 실패'))
+      signal: AbortSignal.timeout(35_000),
+    }).catch(() => null).then(async response => {
+      if (response?.status === 401) return { expired: true }
+      if (!response || [502, 503, 504, 522, 524].includes(response.status)) {
+        batchFailure = response ? '계좌 일괄 조회 HTTP ' + response.status : '계좌 일괄 조회 연결 실패 또는 시간 초과'
+        await response?.body?.cancel().catch(() => {})
+        // A single read-only valuation also provides holdings when KB returns rows.
+        const valuation = await fetch(API + '/api/kb/valuation', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+          signal: AbortSignal.timeout(15_000),
+        })
+        if (valuation.status === 401) return { expired: true }
+        const data = await valuation.json().catch(() => null)
+        return { results: { valuation: { ...data,
+          success: valuation.ok && data?.success === true, status: valuation.status,
+        } } }
+      }
+      if (!response.ok) throw Error('계좌 일괄 조회 HTTP ' + response.status)
+      const payload = await response.json().catch(() => null)
+      if (payload?.success !== true || !payload.results)
+        throw Error('계좌 일괄 조회 응답 형식 오류')
       return payload
     })
     const requestAccount = async (endpoint: 'holdings' | 'valuation' | 'deposit', label: string): Promise<any | null> => {
@@ -151,7 +167,11 @@ export default function App() {
         }
         const result = batch.results?.[endpoint]
         if (!result || result.success !== true) {
-          const reason = String(result?.message || 'API 조회 실패').slice(0, 180)
+          const reason = String(result?.message || (batchFailure ? '개별 조회 미실행' : 'API 조회 실패')).slice(0, 180)
+          if (!result && batchFailure) {
+            failures.push(label + ': 개별 조회 미실행')
+            return null
+          }
           const status = Number(result?.status) || 502
           failures.push(label + ': ' + reason + ' (HTTP ' + status +
             (result?.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')')
@@ -161,7 +181,8 @@ export default function App() {
       } catch (error) {
         batchFailure = error instanceof Error && error.name === 'TimeoutError'
           ? '계좌 조회 서버 응답 시간 초과'
-          : '계좌 조회 요청 실패'
+          : error instanceof Error && error.message.startsWith('계좌 일괄 조회')
+            ? error.message : batchFailure || '계좌 조회 요청 실패'
         return null
       }
     }
@@ -226,7 +247,8 @@ export default function App() {
         setError('세션이 만료되었습니다. 다시 로그인해 주세요.')
         return
       }
-      setMessage(batchFailure || (failures.length ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR')))
+      setMessage(batchFailure ? [batchFailure, ...failures].join(' · ') : failures.length
+        ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR'))
     } finally {
       // A manual refresh within this window reuses the shared menu state,
       // rather than creating new provider sessions during an outage.
