@@ -133,6 +133,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
   const doScan = scheduledScan || retryScan;
   let message = '';
   let scanError: string | null = null;
+  let retryProgress: ScanProgress | undefined;
   try {
     const watched = [...snapshot.account.positions,...snapshot.account.pending]
       .filter(x => /^\d{6}$/.test(x.code)).filter((x,i,a)=>a.findIndex(t=>t.code===x.code)===i)
@@ -161,6 +162,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
+      retryProgress = progress ?? {startedAt:date.getTime(),symbols,quotes:[]};
       const remaining = symbols.filter(symbol=>!progress?.quotes.some(quote=>quote.code===symbol.code));
       const reply = await post('/api/market/investor-flow',{stocks:remaining,stopOnUpstream:true});
       if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
@@ -168,7 +170,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const quotes = [...(progress?.quotes ?? []),...freshQuotes];
       if (!quotes.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
         throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
-      const partial = reply.partial === true;
+      const partial = reply.partial === true || freshQuotes.some((quote:any)=>quote.quoteError || quote.investorError);
       if (partial) {
         const completed = freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
           Number.isFinite(quote.price)&&quote.price>0&&remaining.some(symbol=>symbol.code===quote.code));
@@ -254,8 +256,14 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const prefix = error instanceof KbQuoteUnavailable ? kbQuoteFailurePrefix :
       error instanceof KbWatchUnavailable ? (doScan ? kbScanFailurePrefix : kbFailurePrefix) : '';
     const diagnostic = (prefix+detail).slice(0,180);
-    await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
-      .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
+    if (retryProgress && error instanceof KbWatchUnavailable) {
+      const checkpoint = {...(JSON.parse(row.snapshot_json) as Snapshot),scanProgress:retryProgress};
+      await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+        .bind(JSON.stringify(checkpoint),new Date().toISOString(),diagnostic,writeRevision,slot).run().catch(()=>{});
+    } else {
+      await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+        .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
+    }
     return {result:'error',message:diagnostic,filled:0,scanned:0};
   }
 }
