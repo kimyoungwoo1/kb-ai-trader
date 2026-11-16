@@ -15,7 +15,8 @@ type QuoteTrace = { requestId: string; attempt: number }
 const marketRead = async (
   endpoint: string, init: RequestInit, trace: QuoteTrace, timeoutMs: number, egress?: MarketEgress
 ) => {
-  const signal = AbortSignal.timeout(timeoutMs)
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
   const url = new URL(endpoint)
   if (!egress || trace.attempt === 2 || url.origin !== 'https://developer.kbsec.com:32484') {
     if (egress) console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
@@ -40,6 +41,25 @@ const marketRead = async (
   if (response.status === 502 && failure === 'transport')
     throw new TypeError('KB market egress transport failed')
   return response
+}
+
+// The dashboard batch and its authenticated deployment probe share this transport.
+const dashboardAccountRead = (egress?: MarketEgress): typeof fetchKbObserved | undefined => {
+  if (!egress) return undefined
+  return async (endpoint, init, trace = {requestId:crypto.randomUUID(),attempt:1}) => {
+    if (new URL(endpoint).origin !== 'https://developer.kbsec.com:32484')
+      return fetchKbObserved(endpoint, init, trace)
+    try {
+      const response = await marketRead(endpoint, {...init, redirect:'manual'}, { ...trace, attempt:1 }, 6000, egress)
+      if (!isKbGatewayFailure(response.status) && response.status !== 404)
+        return response
+      await response.body?.cancel().catch(()=>{})
+    } catch (error) {
+      if (!isKbReadTransportFailure(error)) throw error
+    }
+    init.signal?.throwIfAborted()
+    return fetchKbObserved(endpoint, {...init,redirect:'manual'}, {...trace,attempt:2})
+  }
 }
 
 export interface Env {
@@ -141,10 +161,12 @@ const service = {
           continue;
         }
         try {
-          const reply=await service.fetch(new Request('https://localhost'+route,{
+          const subrequest=new Request('https://localhost'+route,{
             method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
             body:'{}',
-          }),env);
+          });
+          if (env.KB_MARKET_EGRESS) accountBatchRequests.add(subrequest);
+          const reply=await service.fetch(subrequest,env);
           const result=await reply.json() as Record<string,unknown>;
           // Categorize *only* authentication diagnostics. Never expose raw
           // brokerage errors, credentials, access tokens or account records.
@@ -354,7 +376,8 @@ const service = {
         http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch,
+        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -383,7 +406,8 @@ const service = {
         http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch,
+        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"deposit_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -404,7 +428,8 @@ const service = {
         http_status: error instanceof KbAuthError ? error.upstreamStatus : undefined,
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
-        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch);
+        {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch,
+        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"valuation_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
