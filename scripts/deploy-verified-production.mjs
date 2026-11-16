@@ -461,22 +461,19 @@ async function main(){
     console.log('○ 운영 전환 없는 격리 TLS 진단: 기존 KB Secret 상속 · '+
       (privateEgress?'Private Service Binding 조회 전용':'직접 TLS 조회 전용'))
     if(httpFlowCompare){
-      const routes=['private','direct']
-      for(let round=1;round<=3;round++){
-        for(const route of round===2?[...routes].reverse():routes){
-          const response=await fetch(previewOrigin+'/api/deploy/tls-proof',{
-            method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Diagnostic':'http-flow-'+route},
-            signal:AbortSignal.timeout(65_000)
-          })
-          ensure(response.ok,'격리 수급 진단 요청 실패 (HTTP '+response.status+')')
-          const result=await response.json()
-          ensure(result.mode==='ISOLATED_KB_HTTP_FLOW'&&result.realOrderSent===false,'격리 수급 진단 모드 오류')
-          console.log(JSON.stringify({round,route,oauth:result.oauth,flow:result.flow}))
-          if(result.oauth?.httpStatus===429||result.flow?.httpStatus===429){
-            console.log('○ KB 호출 제한으로 비교 종료 · 운영 트래픽 변경 없음')
-            return
-          }
-        }
+      const response=await fetch(previewOrigin+'/api/deploy/tls-proof',{
+        method:'POST',headers:{'X-Deploy-Probe':probeKey,'X-KB-Diagnostic':'http-flow-compare'},
+        signal:AbortSignal.timeout(180_000)
+      })
+      ensure(response.ok,'격리 수급 진단 요청 실패 (HTTP '+response.status+')')
+      const result=await response.json()
+      ensure(result.mode==='ISOLATED_KB_HTTP_FLOW'&&result.realOrderSent===false&&Array.isArray(result.attempts),'격리 수급 진단 모드 오류')
+      if(!result.attempts.length)console.log(JSON.stringify({oauth:result.oauth,flow:{status:'SKIPPED'}}))
+      for(const {round,route,flow} of result.attempts)
+        console.log(JSON.stringify({round,route,oauth:result.oauth,flow}))
+      if(result.oauth?.httpStatus===429||result.attempts.some(attempt=>attempt.flow?.httpStatus===429)){
+        console.log('○ KB 호출 제한으로 비교 종료 · 운영 트래픽 변경 없음')
+        return
       }
       console.log('✓ 수급 첫 요청 비교 종료 · 운영 트래픽 변경 없음')
       return
