@@ -240,3 +240,30 @@ test('a lock after claiming an automatic buy closes the unsent row without calli
   assert.ok(broker.seen.every(url=>!url.includes('/ssam')))
  }finally{broker.restore();restoreClock()}
 })
+
+test('buy account read failures identify the failed prechecks without reserving or sending an order',async()=>{
+ const restoreClock=holdClock()
+ const broker=mockBroker()
+ const fallback=globalThis.fetch
+ const seen=[]
+ let blocked=[]
+ globalThis.fetch=async(url,options)=>{
+  const path=new URL(String(url)).pathname
+  seen.push(path)
+  if(blocked.some(api=>path.endsWith('/'+api)))return new Response(null,{status:522})
+  return fallback(url,options)
+ }
+ try{
+  for(const [apis,decision] of [
+   [['ssqm1802'],'buying_power_unverified'],
+   [['ssqm2952'],'buy_holdings_unverified'],
+   [['ssqm1802','ssqm1801'],'buy_account_checks_failed'],
+  ]){
+   blocked=apis
+   const db=new Db()
+   assert.equal(await processLiveFill(db,env('mock-precheck-'+decision),fill,monday),decision)
+   assert.deepEqual(db.actions,[])
+  }
+  assert.ok(seen.every(path=>!path.includes('/ssam')))
+ }finally{broker.restore();restoreClock()}
+})
