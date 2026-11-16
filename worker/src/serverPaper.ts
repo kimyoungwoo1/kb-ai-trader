@@ -13,8 +13,8 @@ import type { PaperLedger } from '../../src/paperLedger';
 type Db = any;
 type ScanSymbol = {code:string;name:string};
 type ScanProgress = {startedAt:number;symbols:ScanSymbol[];quotes:any[]};
-type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number };
-type StateRow = { revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
+type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number; scanLease?:{slot:number; expiresAt:number} };
+type StateRow = { busy_until:number; revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[]; partial?: boolean };
 // Reserve Free-plan subrequests for full DART pagination, news and retries.
@@ -26,7 +26,7 @@ const kbScanFailurePrefix = kbFailurePrefix + '정밀검사 재시도 · ';
 export class KbWatchUnavailable extends Error {}
 class KbQuoteUnavailable extends KbWatchUnavailable {}
 const ok = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
-const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error FROM server_paper_state WHERE id=1').first<StateRow>();
+const state = (db: Db) => db.prepare('SELECT revision, mode, cycle_slot, updated_at, snapshot_json, last_error, busy_until FROM server_paper_state WHERE id=1').first<StateRow>();
 const valid = (s: any): s is Snapshot => !!s && typeof s === 'object' && s.ledger &&
   Number.isFinite(s.ledger.cash) && Array.isArray(s.ledger.positions) && Array.isArray(s.ledger.trades) &&
   s.account && Array.isArray(s.account.fills) && Array.isArray(s.account.positions) && Array.isArray(s.account.pending);
@@ -89,6 +89,9 @@ export async function serverPaperApi(db: Db | undefined, action: string, expecte
       const snapshot = JSON.parse(row.snapshot_json) as Snapshot;
       if (!valid(snapshot)) return ok({ success:false, message:'서버 계좌 검증 실패' }, 409);
       snapshot.account.enabled = nextMode === 'running';
+      delete snapshot.scanLease;
+      delete snapshot.scanProgress;
+      delete snapshot.scanRetryAfterSlot;
       snapshot.account.lastMessage = nextMode === 'running' ? '서버 자동 가상매매 실행 중' : '서버 자동 가상매매 중지';
       const next = await db.prepare('UPDATE server_paper_state SET revision=revision+1, mode=?, updated_at=?, snapshot_json=?, last_error=NULL WHERE id=1 AND revision=?')
         .bind(nextMode,new Date().toISOString(),JSON.stringify(snapshot),row.revision).run();
@@ -111,12 +114,13 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
   const quoteFailed = row.last_error?.startsWith(kbQuoteFailurePrefix);
   const scanFailed = row.last_error?.startsWith(kbScanFailurePrefix) === true;
   let savedSnapshot:Snapshot|undefined;
-  if (scanFailed) {
-    try { savedSnapshot=JSON.parse(row.snapshot_json) as Snapshot; }
-    catch { /* Invalid snapshots are handled below. */ }
-  }
+  try { savedSnapshot=JSON.parse(row.snapshot_json) as Snapshot; }
+  catch { /* Invalid snapshots are handled below. */ }
+  const scanInProgress = (savedSnapshot?.scanLease?.expiresAt ?? 0)>date.getTime();
   const scanCoolingDown = scanFailed && slot < (savedSnapshot?.scanRetryAfterSlot ?? row.cycle_slot+2);
-  const watchDuringCooldown = scanCoolingDown && !!savedSnapshot?.account?.positions?.length;
+  const watchDuringCooldown = (scanCoolingDown || scanInProgress) && !!savedSnapshot?.account?.positions?.length;
+  if (scanInProgress && !watchDuringCooldown)
+    return {result:'no_symbols',message:'정밀검사 진행 중 · 보유 감시 대상 없음',filled:0,scanned:0};
   // A quote-watch failure does not consume the next scheduled scan.
   // Scan and shared authentication/rate-limit failures still back off.
   if (!watchDuringCooldown && (scanCoolingDown || (!scanFailed && row.last_error?.startsWith(kbFailurePrefix) && slot-row.cycle_slot<2 && !(scheduledScan && quoteFailed))))
@@ -139,14 +143,32 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
   }
   const retryScan = row.last_error?.startsWith(kbScanFailurePrefix) ||
     (!quoteFailed && row.last_error?.startsWith(kbFailurePrefix) && row.cycle_slot % 5 === 0);
-  const doScan = !scanCoolingDown && (scheduledScan || retryScan);
-  if (watchDuringCooldown) snapshot.scanRetryAfterSlot ??= row.cycle_slot+2;
+  const doScan = !scanInProgress && !scanCoolingDown && (scheduledScan || retryScan);
+  if (scanCoolingDown && watchDuringCooldown) snapshot.scanRetryAfterSlot ??= row.cycle_slot+2;
   let message = '';
   let scanError: string | null = watchDuringCooldown ? row.last_error : null;
   let watchFills:AutoFill[] = [];
   let watchCount = 0;
+  let watchIncomplete = false;
   let watchDetail = '';
   let retryProgress: ScanProgress | undefined;
+  let detachedScan = false;
+  let commitSlot = slot;
+  // Reload current holdings after the independent watcher has had a chance to commit.
+  const rebaseScan = async () => {
+    const current = await state(db);
+    if (!current || current.mode!=='running' || current.busy_until>0) return false;
+    const latest = JSON.parse(current.snapshot_json) as Snapshot;
+    if (!valid(latest) || !latest.account.enabled || latest.scanLease?.slot!==slot ||
+        latest.scanLease.expiresAt<=Date.now()) return false;
+    delete latest.scanLease;
+    snapshot=latest;
+    writeRevision=current.revision;
+    commitSlot=current.cycle_slot;
+    return true;
+  };
+  const scanConflict = ():TickOutcome => ({result:'busy',
+    message:'원장 변경 경합 · 정밀검사 반영 보류',filled:watchFills.length,scanned:watchCount,fills:watchFills});
   try {
     const watched = [...snapshot.account.positions,...snapshot.account.pending]
       .filter(x => /^\d{6}$/.test(x.code)).filter((x,i,a)=>a.findIndex(t=>t.code===x.code)===i)
@@ -174,6 +196,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         } catch {
           watchDetail='보유 감시 조회 실패';
         }
+        watchIncomplete=watchCount<held.length;
         if (watchedSnapshot) {
           const saved = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=? WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
             .bind(JSON.stringify(watchedSnapshot),watchedSnapshot.savedAt,row.last_error,writeRevision,slot).run();
@@ -184,6 +207,13 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
           writeRevision++;
         }
       }
+    }
+    if (doScan) {
+      snapshot.scanLease={slot,expiresAt:Date.now()+180_000};
+      const released=await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+        .bind(JSON.stringify(snapshot),new Date().toISOString(),row.last_error,writeRevision,slot).run();
+      if ((released.meta?.changes ?? 0)!==1) return scanConflict();
+      detachedScan=true;
     }
     const previousProgress = snapshot.scanProgress;
     const progress = retryScan && previousProgress &&
@@ -200,8 +230,17 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       return [...universe.slice(offset),...universe.slice(0,offset)].slice(0,scanSymbolLimit);
     })() : watchDuringCooldown ? watched.filter(symbol=>snapshot.account.positions.some(position=>position.code===symbol.code)) : watched;
     if (!symbols.length) {
-      await db.prepare('UPDATE server_paper_state SET busy_until=0, last_error=NULL WHERE id=1 AND revision=? AND cycle_slot=?')
-        .bind(writeRevision,slot).run();
+      if (detachedScan) {
+        if (!await rebaseScan()) return scanConflict();
+        delete snapshot.scanProgress;
+        delete snapshot.scanRetryAfterSlot;
+        const saved=await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
+          .bind(JSON.stringify(snapshot),new Date().toISOString(),null,writeRevision,commitSlot).run();
+        if ((saved.meta?.changes ?? 0)!==1) return scanConflict();
+      } else {
+        await db.prepare('UPDATE server_paper_state SET busy_until=0, last_error=NULL WHERE id=1 AND revision=? AND cycle_slot=?')
+          .bind(writeRevision,slot).run();
+      }
       return {result:watchCount?'watched':'no_symbols',message:watchDetail||'빠른 감시 대상 없음 · 다음 전체시장 검사 대기',filled:watchFills.length,scanned:watchCount,fills:watchFills};
     }
     let now = new Date();
@@ -219,19 +258,23 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const quotes = [...(progress?.quotes ?? []),...freshQuotes];
       if (!quotes.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
         throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
-      const partial = reply.partial === true || freshQuotes.some((quote:any)=>quote.quoteError || quote.investorError);
+      const completeCodes = new Set(freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
+        Number.isFinite(quote.price)&&quote.price>0).map((quote:any)=>quote.code));
+      const partial = reply.partial === true || remaining.some(symbol=>!completeCodes.has(symbol.code));
+      let nextProgress:ScanProgress|undefined;
       if (partial) {
         const completed = freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
           Number.isFinite(quote.price)&&quote.price>0&&remaining.some(symbol=>symbol.code===quote.code));
-        snapshot.scanProgress = {startedAt:progress?.startedAt ?? date.getTime(),symbols,
+        nextProgress = {startedAt:progress?.startedAt ?? date.getTime(),symbols,
           quotes:[...(progress?.quotes ?? []),...completed]};
-      } else {
-        delete snapshot.scanProgress;
       }
       const [disclosuresResult,newsResult] = partial ? [null,null] : await Promise.all([
         Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
         Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
       ]);
+      if (!await rebaseScan()) return scanConflict();
+      snapshot.scanProgress=nextProgress;
+      nextLedger=snapshot.ledger;
       now = new Date();
       checkedAt = now.toISOString();
       const disclosures = disclosuresResult || {};
@@ -240,7 +283,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         scanError = (kbScanFailurePrefix + (reply.message || '정밀 시세 일부 실패')).slice(0,180);
         snapshot.scanRetryAfterSlot = slot+2;
       } else delete snapshot.scanRetryAfterSlot;
-      const incompleteScan = partial || !disclosuresResult || !newsResult;
+      const incompleteScan = partial || disclosuresResult?.success!==true || disclosuresResult.complete!==true || newsResult?.success!==true;
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
@@ -301,18 +344,22 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const executedFills = newFills.length;
     snapshot = {...snapshot, account:nextAccount, ledger:nextLedger,savedAt:checkedAt};
     const res = await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
-      .bind(JSON.stringify(snapshot),new Date().toISOString(),scanError,writeRevision,slot).run();
+      .bind(JSON.stringify(snapshot),new Date().toISOString(),scanError,writeRevision,commitSlot).run();
     if ((res.meta?.changes ?? 0)!==1) return {result:'busy',message:'원장 변경 경합 · 추가 거래 결과 반영 안 함',filled:watchFills.length,scanned:watchCount,fills:watchFills};
-    return {result:doScan ? 'scanned' : 'watched',message:watchDetail ? watchDetail+' · '+message : message,filled:executedFills,scanned:symbols.length,fills:newFills,partial:partialRun};
+    return {result:doScan ? 'scanned' : 'watched',message:watchDetail ? watchDetail+' · '+message : message,filled:executedFills,scanned:symbols.length,fills:newFills,partial:partialRun||watchIncomplete};
   } catch (error) {
     const detail = error instanceof Error ? error.message : '서버 감시 실패';
     const prefix = error instanceof KbQuoteUnavailable ? kbQuoteFailurePrefix :
       error instanceof KbWatchUnavailable ? (doScan ? kbScanFailurePrefix : kbFailurePrefix) : '';
-    const diagnostic = watchDuringCooldown ? row.last_error! : (prefix+detail).slice(0,180);
-    if (retryProgress && error instanceof KbWatchUnavailable) {
-      const checkpoint = {...snapshot,scanProgress:retryProgress,scanRetryAfterSlot:slot+2};
+    const diagnostic = watchDuringCooldown && row.last_error ? row.last_error : (prefix+detail).slice(0,180);
+    if (detachedScan) {
+      if (!await rebaseScan()) return scanConflict();
+      if (retryProgress && error instanceof KbWatchUnavailable) {
+        snapshot.scanProgress=retryProgress;
+        snapshot.scanRetryAfterSlot=slot+2;
+      }
       await db.prepare('UPDATE server_paper_state SET snapshot_json=?, revision=revision+1, updated_at=?, last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
-        .bind(JSON.stringify(checkpoint),new Date().toISOString(),diagnostic,writeRevision,slot).run().catch(()=>{});
+        .bind(JSON.stringify(snapshot),new Date().toISOString(),diagnostic,writeRevision,commitSlot).run().catch(()=>{});
     } else {
       await db.prepare('UPDATE server_paper_state SET last_error=?, busy_until=0 WHERE id=1 AND revision=? AND mode=\'running\' AND cycle_slot=?')
         .bind(diagnostic,writeRevision,slot).run().catch(()=>{});
