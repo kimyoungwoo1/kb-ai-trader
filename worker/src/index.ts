@@ -7,77 +7,8 @@ import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
-import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure} from './kbAccountRead'
+import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure,accountRead,marketRead,type MarketEgress} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
-
-type MarketEgress = { fetch(request: Request): Promise<Response> }
-type QuoteTrace = { requestId: string; attempt: number }
-const marketRead = async (
-  endpoint: string, init: RequestInit, trace: QuoteTrace, timeoutMs: number, egress?: MarketEgress,
-  bindingGraceMs = 0
-) => {
-  const url = new URL(endpoint)
-  const usePrivate = !!egress && trace.attempt === 1 && url.origin === 'https://developer.kbsec.com:32484'
-  const timeout = AbortSignal.timeout(timeoutMs + (usePrivate ? bindingGraceMs : 0))
-  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
-  if (!usePrivate) {
-    if (egress) console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
-      attempt:trace.attempt,route:'direct',path:url.pathname}))
-    return fetchKbObserved(endpoint, {...init,signal},trace)
-  }
-  console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
-    attempt:trace.attempt,route:'private-worker',path:url.pathname}))
-  const headers = new Headers(init.headers)
-  headers.set('X-KB-Request-ID',trace.requestId)
-  headers.set('X-KB-Attempt',String(trace.attempt))
-  headers.set('X-KB-Timeout',String(timeoutMs))
-  const startedAt = Date.now()
-  const report = (stage: 'kb_upstream' | 'service_binding' | 'unclassified', outcome: string, status: number | null) => {
-    console.log(JSON.stringify({event:'kb_market_result',request_id:trace.requestId,
-      attempt:trace.attempt,route:'private-worker',path:url.pathname,stage,outcome,
-      http_status:status,duration_ms:Date.now()-startedAt}))
-  }
-  let response: Response
-  try {
-    response = await egress.fetch(new Request('https://market-egress.internal'+url.pathname,{...init,headers,signal}))
-  } catch (error) {
-    const timeoutError = timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')
-    report('service_binding', init.signal?.aborted ? 'cancelled' : timeoutError ? 'timeout' : 'error', null)
-    throw new TypeError('KB market egress binding failed')
-  }
-  const failure = response.headers.get('X-KB-Egress-Error')
-  if (response.status === 502 && failure === 'timeout') {
-    report('kb_upstream','timeout',null)
-    throw new DOMException('KB market egress timeout','TimeoutError')
-  }
-  if (response.status === 502 && failure === 'transport') {
-    report('kb_upstream','transport_error',null)
-    throw new TypeError('KB market egress transport failed')
-  }
-  // Either hop can produce these statuses without an origin marker.
-  report([400,404].includes(response.status) ? 'unclassified' : 'kb_upstream',
-    'http_response',response.status)
-  return response
-}
-
-// The dashboard batch and its authenticated deployment probe share this transport.
-const dashboardAccountRead = (egress?: MarketEgress): typeof fetchKbObserved | undefined => {
-  if (!egress) return undefined
-  return async (endpoint, init, trace = {requestId:crypto.randomUUID(),attempt:1}) => {
-    if (new URL(endpoint).origin !== 'https://developer.kbsec.com:32484')
-      return fetchKbObserved(endpoint, init, trace)
-    try {
-      const response = await marketRead(endpoint, {...init, redirect:'manual'}, { ...trace, attempt:1 }, 6000, egress)
-      if (!isKbGatewayFailure(response.status) && response.status !== 404)
-        return response
-      await response.body?.cancel().catch(()=>{})
-    } catch (error) {
-      if (!isKbReadTransportFailure(error)) throw error
-    }
-    init.signal?.throwIfAborted()
-    return fetchKbObserved(endpoint, {...init,redirect:'manual'}, {...trace,attempt:2})
-  }
-}
 
 export interface Env {
   KB_MARKET_EGRESS?: MarketEgress;
@@ -394,7 +325,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -424,7 +355,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"deposit_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -446,7 +377,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? dashboardAccountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
       if(!checked.success){
         return json({success:false,stage:"valuation_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
