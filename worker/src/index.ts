@@ -29,17 +29,32 @@ const marketRead = async (
   headers.set('X-KB-Request-ID',trace.requestId)
   headers.set('X-KB-Attempt',String(trace.attempt))
   headers.set('X-KB-Timeout',String(timeoutMs))
+  const startedAt = Date.now()
+  const report = (stage: 'kb_upstream' | 'service_binding' | 'unclassified', outcome: string, status: number | null) => {
+    console.log(JSON.stringify({event:'kb_market_result',request_id:trace.requestId,
+      attempt:trace.attempt,route:'private-worker',path:url.pathname,stage,outcome,
+      http_status:status,duration_ms:Date.now()-startedAt}))
+  }
   let response: Response
   try {
     response = await egress.fetch(new Request('https://market-egress.internal'+url.pathname,{...init,headers,signal}))
-  } catch {
+  } catch (error) {
+    const timeoutError = timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')
+    report('service_binding', init.signal?.aborted ? 'cancelled' : timeoutError ? 'timeout' : 'error', null)
     throw new TypeError('KB market egress binding failed')
   }
   const failure = response.headers.get('X-KB-Egress-Error')
-  if (response.status === 502 && failure === 'timeout')
+  if (response.status === 502 && failure === 'timeout') {
+    report('kb_upstream','timeout',null)
     throw new DOMException('KB market egress timeout','TimeoutError')
-  if (response.status === 502 && failure === 'transport')
+  }
+  if (response.status === 502 && failure === 'transport') {
+    report('kb_upstream','transport_error',null)
     throw new TypeError('KB market egress transport failed')
+  }
+  // Either hop can produce these statuses without an origin marker.
+  report([400,404].includes(response.status) ? 'unclassified' : 'kb_upstream',
+    'http_response',response.status)
   return response
 }
 
