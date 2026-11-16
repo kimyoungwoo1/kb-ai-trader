@@ -28,8 +28,9 @@ export default {
     status: response.status,
     headers: { 'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream' },
    })
-  } catch {
-   return new Response(null, {status:502})
+  } catch (error) {
+   const timedOut = error instanceof Error && ['TimeoutError','AbortError'].includes(error.name)
+   return new Response(null, {status:502, headers:{'X-KB-Egress-Error':timedOut?'timeout':'transport'}})
   }
  },
 }
