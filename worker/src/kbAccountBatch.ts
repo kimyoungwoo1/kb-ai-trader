@@ -1,8 +1,8 @@
 import {isKbGatewayFailure} from './kbAccountRead'
 /**
  * UI-only KB account batch coordinator.
- * Coalesces refreshes within one Worker isolate. Read valuation and deposit
- * before retrying holdings so a single endpoint cannot consume the deadline.
+ * Coalesces refreshes within one Worker isolate. Start the independent reads
+ * together so each can use the full batch deadline.
  */
 export type AccountBatchEntry={success:boolean;status:number;http_status?:number;error_type?:string;[key:string]:unknown}
 export type AccountBatchResult={success:true;results:Record<string,AccountBatchEntry>;checked_at:string;cache_age_ms?:number}
@@ -48,18 +48,9 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
     success:false,status:504,stage:'account_batch_deadline',error_type:'TIMEOUT',
     message:'KB 응답이 계좌 조회 시간 한도를 초과했습니다.'
    }
-   const [[holdingName,holdingPath],...otherRoutes]=routes
-   const holdings=await readEntry(holdingPath)
-   results[holdingName]=holdings
-   if(controller.signal.aborted || holdings.stage==='authentication' ||
-      holdings.status===429 || holdings.http_status===429){
-    for(const [name] of otherRoutes)results[name]={
-     success:false,status:503,stage:'account_upstream_unavailable',
-     message:'KB 연결 또는 인증 지연으로 조회가 보류되었습니다.'
-    }
-   }else{
-    await Promise.all(otherRoutes.map(async ([name,path])=>{results[name]=await readEntry(path)}))
-   }
+   await Promise.all(routes.map(async ([name,path])=>{
+    results[name]=await readEntry(path)
+   }))
    const candidates=routes.filter(([name])=>transient(results[name]))
    if(candidates.length&&canRetry()&&!Object.values(results).some(authOrLimit)){
     const [[name,path],...remaining]=candidates
