@@ -150,3 +150,27 @@ test('intermittent 522 retries only failed symbols and a sustained outage gets o
   assert.ok(second.results.every(item=>item.upstream_status===522))
  }finally{globalThis.fetch=saved}
 })
+
+test('scan retains a verified quote when investor flow times out on both attempts',async()=>{
+ const original=globalThis.fetch
+ const calls=[]
+ globalThis.fetch=async url=>{
+  const path=new URL(String(url)).pathname
+  if(path.endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'token',expires_in:3600}})
+  calls.push(path)
+  if(path.endsWith('/ivu10140'))return Response.json({dataBody:{now_prc:'12300'}})
+  throw new DOMException('upstream timed out','TimeoutError')
+ }
+ try{
+  const response=await worker.fetch(new Request(base.replace('/kb/quotes','/market/investor-flow'),{
+   method:'POST',headers:{Authorization:'Bearer dashboard-pass','Content-Type':'application/json'},
+   body:JSON.stringify({stocks:stocks.slice(0,2),stopOnUpstream:true}),
+  }),mkEnv('quote-preserve-on-flow-timeout'))
+  const result=await response.json()
+  assert.equal(result.partial,true)
+  assert.equal(result.results[0].price,12300)
+  assert.match(result.results[0].investorError,/수급 타임아웃/)
+  assert.equal(result.results.length,1)
+  assert.deepEqual(calls,['/api/v1/ivu10140','/api/v1/ivu10430','/api/v1/ivu10430'])
+ }finally{globalThis.fetch=original}
+})
