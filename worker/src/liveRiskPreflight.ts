@@ -1,4 +1,4 @@
-import {fetchKbObserved} from './kbAccountRead'
+import {accountRead,fetchKbObserved,type KbAccountEgress} from './kbAccountRead'
 import {isKrxRegularSession} from '../../src/marketSession'
 import {LIVE_BUY_LIMIT_WON,isLiveOrderTick,liveBuyRequiredCash} from '../../src/livePilotLimits'
 /**
@@ -70,10 +70,11 @@ export function evaluateBuyPreview(code:string,price:number,quantity:number,
     orderableCash:balances?.orderableCash??null,buyingPower:balances?.buyingPower??null,
     reasons,checkedAt:now.toISOString()}
 }
-export async function readKbBuyingPower(env:KbCredentials,code:string):Promise<{orderableCash:number;buyingPower:number}>{
+export async function readKbBuyingPower(env:KbCredentials&KbAccountEgress,code:string):Promise<{orderableCash:number;buyingPower:number}>{
   if(!/^[0-9]{6}$/.test(code))throw Error('종목코드 오류')
   const token=await getKbAccessToken(env)
-  const response=await fetchKbObserved(kbBaseUrl(env)+'/api/v1/ssqm1802',{
+  const fetchRead=accountRead(env.KB_MARKET_EGRESS)??fetchKbObserved
+  const response=await fetchRead(kbBaseUrl(env)+'/api/v1/ssqm1802',{
     method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
     body:JSON.stringify({dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},dataBody:{is_no:code}}),
     signal:AbortSignal.timeout(15000)
