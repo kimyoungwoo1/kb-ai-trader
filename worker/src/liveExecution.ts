@@ -5,6 +5,7 @@ import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,isLiveOrderTick,liveBuyRequired
  * LIVE_TRADING_HARD_ENABLE binding; D1 live_execution_gate defaults to OFF.
  * Automatic trades require committed paper fills. Manual buys use a separate gate.
  */
+import {fetchKbObserved} from './kbAccountRead'
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
 import {lookupKbOrder,lookupKbCancelEvidence,listKbRecentOrders} from './kbOrderContract'
 import {submitKbLimitOnce,submitKbCancelOnce} from './kbOrderSubmit'
@@ -107,7 +108,7 @@ export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<
  const body=(dataBody:unknown)=>JSON.stringify({
   dataHeader:{ipAddr:'127.0.0.1',macAddr:'00:00:00:00:00:00'},dataBody
  })
- const valuationResponse=await fetch(kbBaseUrl(env)+'/api/v1/ssqm2952',{
+ const valuationResponse=await fetchKbObserved(kbBaseUrl(env)+'/api/v1/ssqm2952',{
   method:'POST',headers,body:body({excg_mktpr_ccd:'A'}),
   signal:AbortSignal.timeout(15000)
  })
@@ -130,7 +131,7 @@ export async function readKbHeldQuantity(env:KbCredentials,code:string):Promise<
  let availableShares=0,nextKey=''
  const seen=new Set<string>()
  for(let page=0;page<10;page++){
-  const response=await fetch(kbBaseUrl(env)+'/api/v1/ssqm1801',{
+  const response=await fetchKbObserved(kbBaseUrl(env)+'/api/v1/ssqm1801',{
    method:'POST',headers,body:body({mkt_tm_ccd:'1',nxt_key:nextKey,inq_clsf:'0',is_no:''}),
    signal:AbortSignal.timeout(15000)
   })
@@ -210,9 +211,13 @@ export async function processLiveFill(db:Db|undefined,env:LiveEnv,fill:LiveFill,
 async function inspectLiveBuy(db:Db,env:LiveEnv,fill:Pick<LiveFill,'code'|'price'|'quantity'>,now:Date,manual:boolean,checkHistory:boolean){
  const quantity=manual?fill.quantity:1
  if(quantity!==1||liveBuyRequiredCash(fill.price)>MAX_PILOT_WON)return 'budget_exceeded'
- let balances,held:number
- try{[balances,held]=await Promise.all([readKbBuyingPower(env,fill.code),readKbHeldQuantity(env,fill.code)])}
- catch{return 'account_not_verified'}
+ const [buyingPower,holdings]=await Promise.allSettled([
+  readKbBuyingPower(env,fill.code),readKbHeldQuantity(env,fill.code),
+ ])
+ if(buyingPower.status==='rejected')
+  return holdings.status==='rejected'?'buy_account_checks_failed':'buying_power_unverified'
+ if(holdings.status==='rejected')return 'buy_holdings_unverified'
+ const balances=buyingPower.value,held=holdings.value
  if(held>0)return 'already_held_in_real_account'
  let summary
  try{summary=await readLiveBuyJournalSummary(db,tradingDay(now))}catch{return 'journal_unavailable'}
