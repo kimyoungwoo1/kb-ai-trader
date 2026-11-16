@@ -1,8 +1,8 @@
 import {isKbGatewayFailure} from './kbAccountRead'
 /**
  * UI-only KB account batch coordinator.
- * Coalesces refreshes within one Worker isolate. Holdings confirms KB is
- * reachable before launching valuation and deposit together.
+ * Coalesces refreshes within one Worker isolate. Read valuation and deposit
+ * before retrying holdings so a single endpoint cannot consume the deadline.
  */
 export type AccountBatchEntry={success:boolean;status:number;http_status?:number;error_type?:string;[key:string]:unknown}
 export type AccountBatchResult={success:true;results:Record<string,AccountBatchEntry>;checked_at:string;cache_age_ms?:number}
@@ -51,25 +51,20 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
    const [[holdingName,holdingPath],...otherRoutes]=routes
    const holdings=await readEntry(holdingPath)
    results[holdingName]=holdings
-   if(transient(holdings)&&!authOrLimit(holdings)){
-    const retry=canRetry()?await read(holdingPath):null
-    if(retry&&(retry.success||authOrLimit(retry)))results[holdingName]=retry
-   }
-   if(transient(results[holdingName])||controller.signal.aborted){
+   if(controller.signal.aborted || holdings.stage==='authentication' ||
+      holdings.status===429 || holdings.http_status===429){
     for(const [name] of otherRoutes)results[name]={
      success:false,status:503,stage:'account_upstream_unavailable',
-     message:'KB 연결 지연으로 조회가 보류되었습니다.'
+     message:'KB 연결 또는 인증 지연으로 조회가 보류되었습니다.'
     }
    }else{
     await Promise.all(otherRoutes.map(async ([name,path])=>{results[name]=await readEntry(path)}))
    }
-   const candidates=otherRoutes.filter(([name])=>transient(results[name]))
+   const candidates=routes.filter(([name])=>transient(results[name]))
    if(candidates.length&&canRetry()&&!Object.values(results).some(authOrLimit)){
-    // A single sequential probe avoids sending a second burst when KB is down.
     const [[name,path],...remaining]=candidates
     const probe=await read(path)
-    if(probe?.success)results[name]=probe
-    else if(probe&&authOrLimit(probe))results[name]=probe
+    if(probe&&(probe.success||authOrLimit(probe)))results[name]=probe
     if(probe?.success&&canRetry()){
      await Promise.all(remaining.map(async ([name,path])=>{
       const result=await read(path)
