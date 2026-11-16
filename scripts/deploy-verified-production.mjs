@@ -224,7 +224,8 @@ async function main(){
           continue
         }
         const errors=Array.isArray(value?.errors)?value.errors:[]
-        throw Error('Cloudflare HTTP '+response.status+' ('+step+'): '+errors.map(x=>x.code+': '+x.message).join(' / ').slice(0,300))
+        const error=Error('Cloudflare HTTP '+response.status+' ('+step+'): '+errors.map(x=>x.code+': '+x.message).join(' / ').slice(0,300))
+        throw Object.assign(error,{httpStatus:response.status,cloudflareCodes:errors.map(item=>Number(item.code))})
       }
       return value.result??value
     }
@@ -425,7 +426,7 @@ async function main(){
       newVersion=await api(versionUrl)
       break
     }catch(error){
-      const transient=String(error?.message||'').includes('Cloudflare HTTP 404: 10071:')
+      const transient=error?.httpStatus===404 && error.cloudflareCodes?.includes(10071)
       if(!transient)throw error
       if(attempt===6)throw Error('새 버전 생성 후에도 Cloudflare에서 해당 버전을 조회할 수 없습니다 (10071). 배포 중단 · 운영 버전 유지')
       const delay=Math.min(1000*2**attempt,8000)
