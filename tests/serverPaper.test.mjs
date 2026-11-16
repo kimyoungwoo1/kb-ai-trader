@@ -47,7 +47,7 @@ const makeDb=()=>{
               if(sql.startsWith('UPDATE server_paper_state SET snapshot_json=?')){
                 const [snapshot,at,error,rev,slot]=params
                 if(!server||server.revision!==rev||server.cycle_slot!==slot)return {success:true,meta:{changes:0}}
-                server={...server,snapshot_json:snapshot,updated_at:at,revision:rev+1,last_error:error,busy_until:0}
+                server={...server,snapshot_json:snapshot,updated_at:at,revision:rev+1,last_error:error,busy_until:sql.includes('busy_until=0')?0:server.busy_until}
                 return {success:true,meta:{changes:1}}
               }
               if(sql.includes('last_error=?, busy_until=0')){
@@ -219,4 +219,35 @@ test('a quote watch 522 does not delay the next scheduled full scan',async()=>{
   assert.equal((await tick(25)).result,'scanned')
   assert.deepEqual(calls.slice(0,4),['/api/kb/quotes','/api/kb/quotes','/api/market/discover','/api/market/investor-flow'])
   assert.equal(db.server.last_error,null)
+})
+
+test('held-position sale commits before a failed scan and is emitted once',async ctx=>{
+  const date=new Date('2026-11-06T01:20:00Z')
+  ctx.mock.timers.enable({apis:['Date'],now:date})
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const held={code:'100000',name:'Held',quantity:1,entry:5000,stop:4500,buyCost:0,openedAt:date.toISOString()}
+  const snapshot=JSON.parse(db.server.snapshot_json)
+  snapshot.account.positions=[held]
+  snapshot.ledger.positions=[held]
+  db.server.snapshot_json=JSON.stringify(snapshot)
+  const calls=[]
+  const post=async (path,body)=>{
+    calls.push(path)
+    if(path==='/api/kb/quotes')return {success:true,results:[{...held,price:4400,checked_at:date.toISOString()}]}
+    if(path==='/api/market/discover')return {success:true,candidates:[{code:'100001',name:'Candidate'}]}
+    if(path==='/api/market/investor-flow'){
+      assert.equal(JSON.parse(db.server.snapshot_json).account.positions.length,0)
+      throw new KbWatchUnavailable('KB 수급 타임아웃')
+    }
+    throw Error('unexpected '+path)
+  }
+  const outcome=await serverPaperTick(db,post,date)
+  assert.equal(outcome.result,'error')
+  assert.equal(outcome.filled,1)
+  assert.equal(outcome.fills[0].side,'SELL')
+  assert.equal(JSON.parse(db.server.snapshot_json).account.fills.length,1)
+  assert.equal((await serverPaperTick(db,post,date)).result,'duplicate')
+  assert.deepEqual(calls,['/api/kb/quotes','/api/market/discover','/api/market/investor-flow'])
 })
