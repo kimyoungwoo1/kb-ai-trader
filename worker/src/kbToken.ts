@@ -1,8 +1,8 @@
 import {fetchKbObserved} from './kbAccountRead'
 /**
- * KB OAuth token cache: a token is reused for up to eight hours or its shorter reported lifetime by requests
+ * KB OAuth token cache: a token is reused for up to 24 hours or its shorter reported lifetime by requests
  * routed to the same Cloudflare Worker isolate. It is NEVER returned to browsers,
- * written to assets, or stored in localStorage. Isolate restarts obtain a new token.
+ * written to assets, or stored in localStorage. New isolates can reuse the shared encrypted D1 cache.
  */
 export type KbCredentials = {
   KB_APP_KEY?: string
@@ -127,7 +127,7 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
       throw new KbAuthError('KB 토큰 발급 실패 (HTTP 200)', 502)
     const reported = Number(data?.dataBody?.expires_in ?? data?.expires_in)
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
-    const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 8 * 60 * 60) : 300
+    const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 24 * 60 * 60) : 300
     const expiresAt=Date.now() + Math.max(1, lifetime - 60) * 1000
     cached = { token, key, expiresAt }
     rejectedToken=null
