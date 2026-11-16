@@ -4,7 +4,7 @@ import {build} from 'esbuild'
 const output=await build({entryPoints:['worker/src/kbAccountBatch.ts'],bundle:true,platform:'node',format:'esm',write:false})
 const {runAccountBatch}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'))
 
-test('account UI checks holdings before starting valuation and deposit together',async()=>{
+test('account UI starts all three independent reads before waiting for results',async()=>{
  let active=0,maxActive=0
  const routes=[]
  const result=await runAccountBatch('serial-test',async route=>{
@@ -14,7 +14,7 @@ test('account UI checks holdings before starting valuation and deposit together'
   return {success:true,status:200,data:{dataBody:{Record1:[]}}}
  })
  assert.equal(result.success,true)
- assert.equal(maxActive,2)
+ assert.equal(maxActive,3)
  assert.deepEqual(routes,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
 })
 
@@ -117,4 +117,20 @@ test('account batch recovers a holdings 502 and a valuation timeout without repe
  })
  assert.ok(Object.values(batch.results).every(result=>result.success))
  assert.deepEqual([...calls.values()],[2,2,1])
+})
+
+test('slow holdings failure does not delay successful valuation and cash reads',async()=>{
+ let finishHoldings
+ const calls=[]
+ const request=runAccountBatch('slow-holdings-522',async route=>{
+  calls.push(route)
+  if(route.endsWith('/holdings'))return new Promise(resolve=>{finishHoldings=resolve})
+  return {success:true,status:200}
+ },Date.now(),100)
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
+ finishHoldings({success:false,status:502,http_status:522})
+ const batch=await request
+ assert.equal(batch.results.holdings.http_status,522)
+ assert.equal(batch.results.valuation.success,true)
+ assert.equal(batch.results.deposit.success,true)
 })
