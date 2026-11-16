@@ -7,7 +7,9 @@ export const isKbGatewayFailure = (status?: number | null) =>
 export const isKbReadTransportFailure = (error: unknown) =>
  error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError' || error instanceof TypeError)
 
-export async function readKbAccountJson(url:string,headers:Record<string,string>,body:unknown,signal?:AbortSignal, retryTransient=true):Promise<SafeAccountResult>{
+export type AccountReadFetch = typeof fetchKbObserved
+
+export async function readKbAccountJson(url:string,headers:Record<string,string>,body:unknown,signal?:AbortSignal, retryTransient=true, fetchRead:AccountReadFetch=fetchKbObserved):Promise<SafeAccountResult>{
  const requestId=crypto.randomUUID()
  let retried=false
  for(let attempt=0;attempt<2;attempt++){
@@ -15,7 +17,7 @@ export async function readKbAccountJson(url:string,headers:Record<string,string>
   try{
    signal?.throwIfAborted()
    const timeout=AbortSignal.timeout(20000)
-   response=await fetchKbObserved(url,{method:'POST',headers,body:JSON.stringify(body),signal:signal?AbortSignal.any([signal,timeout]):timeout},{requestId,attempt:attempt+1})
+   response=await fetchRead(url,{method:'POST',headers,body:JSON.stringify(body),signal:signal?AbortSignal.any([signal,timeout]):timeout},{requestId,attempt:attempt+1})
   }catch(error){
    const transient=isKbReadTransportFailure(error)
    if(attempt===0&&retryTransient&&transient&&!signal?.aborted){retried=true;continue}
