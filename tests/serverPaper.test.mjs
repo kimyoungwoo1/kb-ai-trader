@@ -50,6 +50,12 @@ const makeDb=()=>{
                 server={...server,snapshot_json:snapshot,updated_at:at,revision:rev+1,last_error:error,busy_until:sql.includes('busy_until=0')?0:server.busy_until}
                 return {success:true,meta:{changes:1}}
               }
+              if(sql.startsWith('UPDATE server_paper_state SET busy_until=0 WHERE')) {
+                const [rev,slot]=params
+                if(!server||server.revision!==rev||server.cycle_slot!==slot)return {meta:{changes:0}}
+                server={...server,busy_until:0}
+                return {meta:{changes:1}}
+              }
               if(sql.includes('last_error=?, busy_until=0')){
                 const [error,rev,slot]=params
                 if(!server||server.revision!==rev||server.cycle_slot!==slot)return {success:true,meta:{changes:0}}
@@ -284,6 +290,55 @@ test('the next minute can sell while the earlier market scan is waiting',async c
   const result=await scan
   assert.equal(result.result,'scanned')
   assert.equal(result.filled,0)
+  const saved=JSON.parse(db.server.snapshot_json)
+  assert.equal(saved.account.fills.length,1)
+  assert.equal(saved.account.positions.length,0)
+  assert.equal(saved.scanLease,undefined)
+})
+
+test('scan can commit while the next watcher waits, then watcher uses latest ledger',async ctx=>{
+  const date=new Date('2026-11-06T01:20:00Z')
+  ctx.mock.timers.enable({apis:['Date'],now:date})
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const held={code:'100000',name:'Held',quantity:1,entry:5000,stop:4500,buyCost:0,openedAt:date.toISOString()}
+  const snapshot=JSON.parse(db.server.snapshot_json)
+  snapshot.account.positions=[held]
+  snapshot.ledger.positions=[held]
+  db.server.snapshot_json=JSON.stringify(snapshot)
+  let finishScan, signalScan
+  const scanStarted=new Promise(resolve=>{signalScan=resolve})
+  const pendingScan=new Promise(resolve=>{finishScan=resolve})
+  const post=async path=>{
+    if(path==='/api/kb/quotes')return {success:true,results:[{...held,price:Date.now()>date.getTime()?4400:4900,checked_at:new Date().toISOString()}]}
+    if(path==='/api/market/discover')return {success:true,candidates:[{code:'100001',name:'Candidate'}]}
+    if(path==='/api/market/investor-flow'){signalScan();return pendingScan}
+    if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
+    if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
+    throw Error('unexpected '+path)
+  }
+  const scan=serverPaperTick(db,post,date)
+  await scanStarted
+  ctx.mock.timers.setTime(date.getTime()+60_000)
+  let startedWatch,finishWatch
+  const watchStarted=new Promise(resolve=>{startedWatch=resolve})
+  const watchQuote=new Promise(resolve=>{finishWatch=resolve})
+  const watch=serverPaperTick(db,async path=>{
+    assert.equal(path,'/api/kb/quotes')
+    startedWatch()
+    return watchQuote
+  },new Date())
+  await watchStarted
+  finishScan({success:true,results:[{code:'100001',name:'Candidate',price:5100}]})
+  const result=await scan
+  assert.equal(result.result,'scanned')
+  assert.equal(result.filled,0)
+  ctx.mock.timers.setTime(date.getTime()+60_001)
+  finishWatch({success:true,results:[{...held,price:4400,checked_at:new Date().toISOString()}]})
+  const watched=await watch
+  assert.equal(watched.result,'watched')
+  assert.equal(watched.filled,1)
   const saved=JSON.parse(db.server.snapshot_json)
   assert.equal(saved.account.fills.length,1)
   assert.equal(saved.account.positions.length,0)
