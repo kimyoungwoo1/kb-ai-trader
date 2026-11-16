@@ -11,6 +11,7 @@ import {getKbAccessToken,KbAuthError,kbBaseUrl} from './kbToken'
 
 type Env={
  DEPLOY_PROBE_TOKEN?:string;KB_APP_KEY?:string;KB_APP_SECRET?:string;KB_BASE_URL?:string;
+ KB_MARKET_EGRESS?:{fetch(request:Request):Promise<Response>};
  KB_EGRESS?:{
   readOnly(input:Parameters<typeof kbReadOnlyTlsRequest>[0]):ReturnType<typeof kbReadOnlyTlsRequest>;
   rootProbe():Promise<SafeResult>;
@@ -223,6 +224,51 @@ export async function runKbHttpQuoteProof(env:Env){
  }
  return {oauth:{status:'PASS'},quote:{...quote,durationMs:Date.now()-start}}
 }
+async function runKbHttpFlowProof(env:Env, viaPrivate:boolean){
+ const path='/api/v1/ivu10430'
+ const base=kbBaseUrl(env)
+ if(base!=='https://developer.kbsec.com:32484'||(viaPrivate&&!env.KB_MARKET_EGRESS))
+  return {oauth:{status:'SKIPPED'},flow:{status:'BLOCKED',detail:'KB_FLOW_ROUTE_UNAVAILABLE'}}
+ let token:string
+ try{token=await getKbAccessToken(env)}
+ catch(error){
+  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?(error.upstreamStatus??error.httpStatus):undefined},
+   flow:{status:'SKIPPED'}}
+ }
+ const end=new Date(Date.now()+9*3600_000)
+ const start=new Date(end.getTime()-6*86400_000)
+ const ymd=(date:Date)=>date.toISOString().slice(0,10).replace(/-/g,'')
+ const requestId=crypto.randomUUID()
+ const headers=new Headers({Authorization:'bearer '+token,appKey:env.KB_APP_KEY!,'Content-Type':'application/json'})
+ const body=JSON.stringify(payload({excg_clsf:'1',is_cd:'005930',strt_dt:ymd(start),end_dt:ymd(end),
+  amt_q_clsf:'2',trd_clsf:'1',acml_clsf:'0'}))
+ const started=Date.now()
+ const timer=AbortSignal.timeout(viaPrivate?23_000:22_000)
+ let flow:SafeResult
+ try{
+  if(viaPrivate){
+   headers.set('X-KB-Request-ID',requestId)
+   headers.set('X-KB-Attempt','1')
+   headers.set('X-KB-Timeout','22000')
+  }
+  const init:RequestInit={method:'POST',headers,body,signal:timer,redirect:'manual'}
+  const response=viaPrivate
+   ?await env.KB_MARKET_EGRESS!.fetch(new Request('https://market-egress.internal'+path,init))
+   :await fetch(base+path,init)
+  if(!response.ok)await response.body?.cancel().catch(()=>{})
+  const data=response.ok?await response.json().catch(()=>null):null
+  const error=response.headers.get('X-KB-Egress-Error')
+  const valid=response.ok&&data?.dataBody&&typeof data.dataBody==='object'&&
+   ['','0','0000','200'].includes(String(data.dataHeader?.resultCode??''))
+  flow={status:valid?'PASS':'BLOCKED',httpStatus:response.status,detail:valid?'KB_FLOW_VALID':
+   error==='timeout'?'KB_FETCH_TIMEOUT':error==='transport'?'KB_FETCH_CONNECTION_ERROR':
+   response.ok?'KB_FLOW_INVALID':'KB_FLOW_HTTP_ERROR'}
+ }catch(error){
+  flow={status:'BLOCKED',detail:error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)
+   ?'KB_FETCH_TIMEOUT':'KB_FETCH_CONNECTION_ERROR'}
+ }
+ return {oauth:{status:'PASS'},flow:{...flow,requestId,durationMs:Date.now()-started}}
+}
 export async function compareKbQuoteTransports(env:Env){
  const attempts: Array<SafeResult&{transport:'fetch'|'tls';durationMs:number}>=[]
  let token:string
@@ -263,7 +309,12 @@ export default{
     !env.DEPLOY_PROBE_TOKEN||request.headers.get('X-Deploy-Probe')!==env.DEPLOY_PROBE_TOKEN){
    return Response.json({success:false},{status:404})
   }
-  if(request.headers.get('X-KB-Diagnostic')==='http-quote'){
+  const mode=request.headers.get('X-KB-Diagnostic')
+  if(mode==='http-flow-direct'||mode==='http-flow-private'){
+   return Response.json({mode:'ISOLATED_KB_HTTP_FLOW',realOrderSent:false,
+    ...await runKbHttpFlowProof(env,mode==='http-flow-private')},{headers:{'Cache-Control':'no-store'}})
+  }
+  if(mode==='http-quote'){
    return Response.json({mode:'ISOLATED_KB_HTTP_QUOTE',realOrderSent:false,
     ...await runKbHttpQuoteProof(env)},{headers:{'Cache-Control':'no-store'}})
   }
