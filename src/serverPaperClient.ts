@@ -18,7 +18,7 @@ export type ServerCronMonitor = {
   last_tick: ServerCronRun | null;
   recent: ServerCronRun[];
   last_success: ServerCronRun | null;
-  today: { total: number; completed: number; errors: number; skipped: number };
+  today: { total: number; completed: number; partial?: number; errors: number; skipped: number };
 }
 export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
