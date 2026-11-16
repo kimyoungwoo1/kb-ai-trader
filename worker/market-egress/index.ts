@@ -17,6 +17,12 @@ export default {
       ![1, 2].includes(attempt) || !Number.isInteger(timeout) || timeout < 1 || timeout > 22000)
    return new Response(null, { status: 400 })
 
+  const placement = request.headers.get('cf-placement') || ''
+  console.log(JSON.stringify({
+   event:'kb_market_placement', request_id:requestId, attempt,
+   placement:/^(?:local|remote)-[A-Z]{3}$/.test(placement)?placement:null,
+  }))
+
   try {
    const response = await fetchKbObserved('https://developer.kbsec.com:32484'+path, {
     method: 'POST',
