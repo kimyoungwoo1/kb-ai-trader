@@ -136,7 +136,7 @@ export default function App() {
       signal: AbortSignal.timeout(35_000),
     }).catch(() => null).then(async response => {
       if (response?.status === 401) return { expired: true }
-      if (!response || [502, 503, 504, 522, 524].includes(response.status)) {
+      if (!response || [500, 502, 503, 504, 522, 524].includes(response.status)) {
         batchFailure = response ? '계좌 일괄 조회 HTTP ' + response.status : '계좌 일괄 조회 연결 실패 또는 시간 초과'
         await response?.body?.cancel().catch(() => {})
         // A single read-only valuation also provides holdings when KB returns rows.
