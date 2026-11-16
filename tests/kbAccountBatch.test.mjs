@@ -40,12 +40,12 @@ test('a sustained 522 gets one extra probe and then the cached failure',async()=
   return {success:false,status:502,http_status:522,error_type:'NON_JSON'}
  })
  const first=await request()
- assert.equal(calls,2)
+ assert.equal(calls,4)
  assert.equal(first.results.holdings.http_status,522)
- assert.equal(first.results.valuation.stage,'account_upstream_unavailable')
- assert.equal(first.results.deposit.stage,'account_upstream_unavailable')
+ assert.equal(first.results.valuation.http_status,522)
+ assert.equal(first.results.deposit.http_status,522)
  const again=await request()
- assert.equal(calls,2)
+ assert.equal(calls,4)
  assert.equal(again.results.holdings.http_status,522)
 })
 
@@ -78,7 +78,7 @@ test('batch deadline preserves cash and holdings when valuation hangs',async()=>
  assert.equal(result.results.deposit.success,true)
 })
 
-test('valuation and cash are deferred after a repeated holdings 522',async()=>{
+test('valuation and cash survive repeated holdings 522',async()=>{
  const calls=[]
  const batch=await runAccountBatch('valuation-fallback-522',async route=>{
   calls.push(route)
@@ -87,9 +87,9 @@ test('valuation and cash are deferred after a repeated holdings 522',async()=>{
    : {success:true,status:200}
  })
  assert.equal(batch.results.holdings.http_status,522)
- assert.equal(batch.results.valuation.success,false)
- assert.equal(batch.results.deposit.success,false)
- assert.deepEqual(calls,['/api/kb/holdings','/api/kb/holdings'])
+ assert.equal(batch.results.valuation.success,true)
+ assert.equal(batch.results.deposit.success,true)
+ assert.deepEqual(calls,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit','/api/kb/holdings'])
 })
 
 
