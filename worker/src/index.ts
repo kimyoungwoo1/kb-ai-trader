@@ -13,12 +13,14 @@ import {runAccountBatch} from './kbAccountBatch'
 type MarketEgress = { fetch(request: Request): Promise<Response> }
 type QuoteTrace = { requestId: string; attempt: number }
 const marketRead = async (
-  endpoint: string, init: RequestInit, trace: QuoteTrace, timeoutMs: number, egress?: MarketEgress
+  endpoint: string, init: RequestInit, trace: QuoteTrace, timeoutMs: number, egress?: MarketEgress,
+  bindingGraceMs = 0
 ) => {
-  const timeout = AbortSignal.timeout(timeoutMs)
-  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
   const url = new URL(endpoint)
-  if (!egress || trace.attempt === 2 || url.origin !== 'https://developer.kbsec.com:32484') {
+  const usePrivate = !!egress && trace.attempt === 1 && url.origin === 'https://developer.kbsec.com:32484'
+  const timeout = AbortSignal.timeout(timeoutMs + (usePrivate ? bindingGraceMs : 0))
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
+  if (!usePrivate) {
     if (egress) console.log(JSON.stringify({event:'kb_market_route',request_id:trace.requestId,
       attempt:trace.attempt,route:'direct',path:url.pathname}))
     return fetchKbObserved(endpoint, {...init,signal},trace)
@@ -826,7 +828,10 @@ const service = {
           return Math.min(limit, remaining);
         };
         const read = async (attempt: number, limit: number) => {
-          const response = await marketRead(endpoint, init, {requestId,attempt}, timeout(limit), marketEgress);
+          const kbTimeout = timeout(limit);
+          // Give the binding time to return the KB timeout result within the scan deadline.
+          const bindingGrace = Math.min(1_000, Math.max(0, scanDeadline-Date.now()-kbTimeout));
+          const response = await marketRead(endpoint, init, {requestId,attempt}, kbTimeout, marketEgress, bindingGrace);
           if (!response.ok || input.stopOnUpstream !== true) return {response};
           try {
             return {response, data: await response.json() as any};
