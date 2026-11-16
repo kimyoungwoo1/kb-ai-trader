@@ -151,10 +151,10 @@ test('failed KB scan stops additional lookups and backs off across scheduled min
   assert.equal(calls.length,2)
   const retried=await serverPaperTick(db,post,new Date('2026-11-06T01:22:00Z'))
   assert.equal(retried.result,'error')
-  assert.equal(calls.length,4)
+  assert.deepEqual(calls,['/api/market/discover','/api/market/investor-flow','/api/market/investor-flow'])
   const secondCooldown=await serverPaperTick(db,post,new Date('2026-11-06T01:23:00Z'))
   assert.equal(secondCooldown.result,'kb_cooldown')
-  assert.equal(calls.length,4)
+  assert.equal(calls.length,3)
 })
 
 test('a scan resumes after repeated KB 522 failures and a partial response',async()=>{
@@ -169,7 +169,7 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
     if(path==='/api/market/investor-flow'){
       reads++
       if(reads<=2)throw new KbWatchUnavailable('KB 시세·수급 HTTP 522')
-      if(reads===3)return {success:true,partial:true,results:[stock],message:'KB 시세·수급 HTTP 522'}
+      if(reads===3)return {success:true,results:[stock,{...missing,investorError:'수급 응답 오류'}]}
       assert.deepEqual(body.stocks.map(item=>item.code),[missing.code])
       return {success:true,results:[missing]}
     }
