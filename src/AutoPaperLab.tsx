@@ -74,7 +74,8 @@ export default function AutoPaperLab({
   const cronLabels: Record<string,string> = {
     market_closed:'장 마감 · 검사 대기', stopped:'자동매매 중지',
     duplicate:'중복 호출 무시', busy:'이전 검사 처리 중',
-    scanned:'전체시장 검사 완료', watched:'보유·진입 종목 감시 완료',
+    scan_partial:'정밀검사 일부 성공', watch_partial:'보유·진입 종목 감시 일부 성공',
+    scanned:'시장 정밀검사 완료', watched:'보유·진입 종목 감시 완료',
     no_symbols:'감시 종목 없음', kb_cooldown:'KB 재조회 대기', error:'서버 검사 오류',
   }
   void serverTick
@@ -237,7 +238,7 @@ export default function AutoPaperLab({
         <div className="auto-health-grid">
           <div><span>최근 서버 Cron 호출</span><strong>{formatTime(lastCronAt)}</strong><small>{cron?.last_tick ? (cronLabels[cron.last_tick.result] || cron.last_tick.result) : '서버 실행 이력 확인 전'}</small></div>
           <div><span>최근 정상 서버 검사</span><strong>{formatTime(cron?.last_success?.finished_at)}</strong><small>정규장 중 정상 완료된 검사</small></div>
-          <div><span>오늘 서버 검사</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>정규장 1분 감시·5분 시장 탐색 완료</small></div>
+          <div><span>오늘 서버 검사</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>전체 완료 · 일부 성공 {cron?.today?.partial ?? '-'}회</small></div>
           <div><span>오늘 서버 오류</span><strong>{cron?.today?.errors ?? '-'}회</strong><small>실패한 검사만 집계 · KB 재조회 대기는 별도 기록</small></div>
         </div>
         {['error','kb_cooldown'].includes(cron?.last_tick?.result ?? '') && <p className="news-message" role="alert">최근 서버 오류: {cron?.last_tick?.message}</p>}
