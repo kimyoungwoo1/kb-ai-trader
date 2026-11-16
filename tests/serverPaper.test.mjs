@@ -183,6 +183,7 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   const partial=await tick(24)
   assert.match(partial.message,/신규 매수 보류/)
   assert.equal(partial.filled,0)
+  assert.equal(partial.partial,true)
   assert.equal(JSON.parse(db.server.snapshot_json).screening,null)
   assert.equal((await tick(25)).result,'kb_cooldown')
   assert.equal((await tick(26)).result,'scanned')
