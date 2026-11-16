@@ -13,7 +13,7 @@ import type { PaperLedger } from '../../src/paperLedger';
 type Db = any;
 type ScanSymbol = {code:string;name:string};
 type ScanProgress = {startedAt:number;symbols:ScanSymbol[];quotes:any[]};
-type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number; scanLease?:{slot:number; expiresAt:number} };
+type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number; scanLease?:{slot:number; expiresAt:number}; modeEpoch?:number };
 type StateRow = { busy_until:number; revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[]; partial?: boolean };
@@ -88,6 +88,7 @@ export async function serverPaperApi(db: Db | undefined, action: string, expecte
       const nextMode = action === 'start' ? 'running' : 'stopped';
       const snapshot = JSON.parse(row.snapshot_json) as Snapshot;
       if (!valid(snapshot)) return ok({ success:false, message:'서버 계좌 검증 실패' }, 409);
+      if(row.mode!==nextMode) snapshot.modeEpoch=(snapshot.modeEpoch??0)+1;
       snapshot.account.enabled = nextMode === 'running';
       delete snapshot.scanLease;
       delete snapshot.scanProgress;
@@ -303,7 +304,9 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
           freshQuotes.filter((item:any)=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
           checkedAt,now,store,symbols.length);
         nextAccount.pending = snapshot.account.pending;
-        message = '정밀검사 일부 실패 · 보유 종목 감시 계속 · 신규 매수 보류';
+        const phaseError = partial ? reply.message || 'KB 시세·수급 일부 미확인' :
+          disclosuresResult?.complete!==true || disclosuresResult?.success!==true ? '공시 검증 미완료' : '뉴스 검증 미완료';
+        message = '정밀검사 일부 실패 · '+phaseError+' · 신규 매수 보류';
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
         snapshot.screening = { checkedAt, signals };
@@ -313,11 +316,32 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     } else {
       // On non-scan minutes, only watch held/pending symbols; old candidate data
       // never justifies a new BUY unless the queued trigger was created by a valid scan.
+      if (scanInProgress) {
+        // Keep the minute claim, but let the scan commit while this watch waits for KB.
+        const released = await db.prepare('UPDATE server_paper_state SET busy_until=0 WHERE id=1 AND revision=? AND cycle_slot=?')
+          .bind(writeRevision,slot).run();
+        if ((released.meta?.changes ?? 0)!==1)
+          return {result:'busy',message:'원장 변경 경합 · 보유 감시 반영 보류',filled:0,scanned:0};
+      }
       const reply = await post('/api/kb/quotes',{stocks:symbols});
+      if (scanInProgress) {
+        const latest=await state(db);
+        if (!latest || latest.mode!=='running' || latest.cycle_slot!==slot)
+          return {result:'busy',message:'원장 변경 경합 · 보유 감시 반영 보류',filled:0,scanned:0};
+        const fresh=JSON.parse(latest.snapshot_json) as Snapshot;
+        if(!valid(fresh)||!fresh.account.enabled||fresh.modeEpoch!==snapshot.modeEpoch)
+          return {result:'stopped',message:'서버 계좌가 비활성화됨',filled:0,scanned:0};
+        snapshot=fresh;
+        nextLedger=fresh.ledger;
+        writeRevision=latest.revision;
+        scanError=latest.last_error;
+      }
+      now=new Date();
+      checkedAt=now.toISOString();
       if (!reply.success || reply.rate_limited || reply.token_expired || !Array.isArray(reply.results))
         throw new KbWatchUnavailable(reply.rate_limited?'호출 제한 (429)':reply.token_expired?'인증 만료':'빠른 현재가 조회 실패');
       const validQuotes = reply.results.filter((x:any)=>!x.error && Number.isFinite(x.price) && x.price>0
-        && Number.isFinite(Date.parse(x.checked_at)) && Date.now()-Date.parse(x.checked_at)<120_000);
+        && Number.isFinite(Date.parse(x.checked_at)) && now.getTime()-Date.parse(x.checked_at)>=0 && now.getTime()-Date.parse(x.checked_at)<120_000);
       if (!validQuotes.length) {
         const status = reply.results.find((item:any)=>[502,503,504,522,524].includes(item.upstream_status))?.upstream_status;
         const transport = reply.results.find((item:any)=>item.transport_error)?.transport_error;
@@ -351,7 +375,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const detail = error instanceof Error ? error.message : '서버 감시 실패';
     const prefix = error instanceof KbQuoteUnavailable ? kbQuoteFailurePrefix :
       error instanceof KbWatchUnavailable ? (doScan ? kbScanFailurePrefix : kbFailurePrefix) : '';
-    const diagnostic = watchDuringCooldown && row.last_error ? row.last_error : (prefix+detail).slice(0,180);
+    const diagnostic = watchDuringCooldown && scanError ? scanError : (prefix+detail).slice(0,180);
     if (detachedScan) {
       if (!await rebaseScan()) return scanConflict();
       if (retryProgress && error instanceof KbWatchUnavailable) {
