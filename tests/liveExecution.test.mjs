@@ -267,3 +267,27 @@ test('buy account read failures identify the failed prechecks without reserving 
   assert.ok(seen.every(path=>!path.includes('/ssam')))
  }finally{broker.restore();restoreClock()}
 })
+
+test('live buy prechecks prefer private account reads and only fall back for the failing read',async()=>{
+ const restoreClock=holdClock()
+ const broker=mockBroker()
+ const old=globalThis.fetch
+ const privateCalls=[]
+ const config={...env('mock-private-account'),KB_MARKET_EGRESS:{
+  async fetch(request){
+   const path=new URL(request.url).pathname
+   privateCalls.push(path)
+   if(path.endsWith('/ssqm1802'))return new Response(null,{status:522})
+   return Response.json({dataHeader:{resultCode:'200'},dataBody:{Record1:[],nxt_key:''}})
+  },
+ }}
+ globalThis.fetch=async(url,options)=>String(url).endsWith('/ssqm1802')
+  ?new Response(null,{status:502}):old(url,options)
+ try{
+  const db=new Db()
+  assert.equal(await processLiveFill(db,config,fill,monday),'buying_power_unverified')
+  assert.deepEqual(privateCalls.sort(),['/api/v1/ssqm1801','/api/v1/ssqm1802','/api/v1/ssqm2952'])
+  assert.ok(broker.seen.every(path=>!path.includes('/ssam')))
+  assert.deepEqual(db.actions,[])
+ }finally{broker.restore();restoreClock()}
+})
