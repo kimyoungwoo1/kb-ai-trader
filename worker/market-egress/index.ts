@@ -1,12 +1,11 @@
-import { fetchKbObserved } from '../src/kbAccountRead'
+import { fetchKbObserved, isKbAccountReadPath } from '../src/kbAccountRead'
 
-const accountPaths = new Set(['/api/v1/ssqm1801', '/api/v1/ssqm2952', '/api/v1/ssqm0004'])
 const allowedPaths = new Set(['/api/v1/ivu10140', '/api/v1/ivu10430'])
 
 export default {
  async fetch(request: Request): Promise<Response> {
   const path = new URL(request.url).pathname
-  if (request.method !== 'POST' || (!allowedPaths.has(path) && !accountPaths.has(path)))
+  if (request.method !== 'POST' || (!allowedPaths.has(path) && !isKbAccountReadPath(path)))
    return new Response(null, { status: 404 })
 
   const authorization = request.headers.get('Authorization')
@@ -14,7 +13,7 @@ export default {
   const requestId = request.headers.get('X-KB-Request-ID') || ''
   const attempt = Number(request.headers.get('X-KB-Attempt'))
   const timeout = Number(request.headers.get('X-KB-Timeout'))
-  if (!authorization || (!accountPaths.has(path) && !appKey) || !/^[a-f0-9-]{36}$/i.test(requestId) ||
+  if (!authorization || (!isKbAccountReadPath(path) && !appKey) || !/^[a-f0-9-]{36}$/i.test(requestId) ||
       ![1, 2].includes(attempt) || !Number.isInteger(timeout) || timeout < 1 || timeout > 22000)
    return new Response(null, { status: 400 })
 
