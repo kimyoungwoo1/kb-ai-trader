@@ -18,7 +18,7 @@ const decisionLabels:Record<string,string>={
  unknown_order_result:'주문 접수 여부 미확정 · 원장 확인 필요',
  budget_exceeded:'지정가가 시험 예산을 초과해 매수 보류',
  history_unavailable:'KB 주문·체결 조회 미확인 · 신규 매수 보류',
- account_not_verified:'KB 계좌·주문가능금액 조회 미확인',
+ account_not_verified:'주문 미전송 · KB 계좌 또는 주문가능금액 조회 실패',
  already_held_in_real_account:'실계좌에 이미 보유한 종목',
  journal_unavailable:'서버 주문 원장 확인 실패', risk_blocked:'주문 한도 또는 위험 조건 미충족',
  duplicate_or_blocked:'중복 주문 또는 원장 제한으로 보류', not_claimed:'서버 주문 전송권 미확보',
@@ -157,7 +157,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
         </p>}
         {status.progress.decisions.length?<div className="notification-list">{status.progress.decisions.map(item=>
           <article key={item.event_id} className="notification-item">
-            <div className="notification-item-heading"><strong>{item.side==='BUY'?'매수':'매도'} · {item.code}</strong>
+            <div className="notification-item-heading"><strong>{item.side==='BUY'?'매수 판단':'매도 판단'} · {item.code}</strong>
               <span>{new Date(item.checked_at).toLocaleString('ko-KR')}</span></div>
             <p>{decisionLabels[item.decision]??'주문 판단 결과 확인 필요'}</p>
           </article>)}</div>:<p className="notification-hint">기록된 실주문 판단 없음 · 접수와 체결은 아래 주문 원장에서 확인</p>}
