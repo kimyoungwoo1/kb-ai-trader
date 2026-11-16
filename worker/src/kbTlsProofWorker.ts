@@ -224,17 +224,9 @@ export async function runKbHttpQuoteProof(env:Env){
  }
  return {oauth:{status:'PASS'},quote:{...quote,durationMs:Date.now()-start}}
 }
-async function runKbHttpFlowProof(env:Env, viaPrivate:boolean){
+async function runKbHttpFlowProof(env:Env, token:string, viaPrivate:boolean){
  const path='/api/v1/ivu10430'
  const base=kbBaseUrl(env)
- if(base!=='https://developer.kbsec.com:32484'||(viaPrivate&&!env.KB_MARKET_EGRESS))
-  return {oauth:{status:'SKIPPED'},flow:{status:'BLOCKED',detail:'KB_FLOW_ROUTE_UNAVAILABLE'}}
- let token:string
- try{token=await getKbAccessToken(env)}
- catch(error){
-  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?(error.upstreamStatus??error.httpStatus):undefined},
-   flow:{status:'SKIPPED'}}
- }
  const end=new Date(Date.now()+9*3600_000)
  const start=new Date(end.getTime()-6*86400_000)
  const ymd=(date:Date)=>date.toISOString().slice(0,10).replace(/-/g,'')
@@ -267,7 +259,26 @@ async function runKbHttpFlowProof(env:Env, viaPrivate:boolean){
   flow={status:'BLOCKED',detail:error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)
    ?'KB_FETCH_TIMEOUT':'KB_FETCH_CONNECTION_ERROR'}
  }
- return {oauth:{status:'PASS'},flow:{...flow,requestId,durationMs:Date.now()-started}}
+ return {...flow,requestId,durationMs:Date.now()-started}
+}
+async function compareKbHttpFlowRoutes(env:Env){
+ const routes=['private','direct'] as const
+ const attempts:Array<{round:number;route:typeof routes[number];flow:SafeResult}>=[]
+ if(kbBaseUrl(env)!=='https://developer.kbsec.com:32484'||!env.KB_MARKET_EGRESS)
+  return {oauth:{status:'SKIPPED',detail:'KB_FLOW_ROUTE_UNAVAILABLE'},attempts}
+ let token:string
+ try{token=await getKbAccessToken(env)}
+ catch(error){
+  return {oauth:{status:'BLOCKED',httpStatus:error instanceof KbAuthError?(error.upstreamStatus??error.httpStatus):undefined},attempts}
+ }
+ for(let round=1;round<=3;round++){
+  for(const route of round===2?[...routes].reverse():routes){
+   const flow=await runKbHttpFlowProof(env,token,route==='private')
+   attempts.push({round,route,flow})
+   if(flow.httpStatus===429)return {oauth:{status:'PASS'},attempts}
+  }
+ }
+ return {oauth:{status:'PASS'},attempts}
 }
 export async function compareKbQuoteTransports(env:Env){
  const attempts: Array<SafeResult&{transport:'fetch'|'tls';durationMs:number}>=[]
@@ -310,9 +321,9 @@ export default{
    return Response.json({success:false},{status:404})
   }
   const mode=request.headers.get('X-KB-Diagnostic')
-  if(mode==='http-flow-direct'||mode==='http-flow-private'){
+  if(mode==='http-flow-compare'){
    return Response.json({mode:'ISOLATED_KB_HTTP_FLOW',realOrderSent:false,
-    ...await runKbHttpFlowProof(env,mode==='http-flow-private')},{headers:{'Cache-Control':'no-store'}})
+    ...await compareKbHttpFlowRoutes(env)},{headers:{'Cache-Control':'no-store'}})
   }
   if(mode==='http-quote'){
    return Response.json({mode:'ISOLATED_KB_HTTP_QUOTE',realOrderSent:false,
