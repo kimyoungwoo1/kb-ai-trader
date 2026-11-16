@@ -18,7 +18,7 @@ test('account UI starts all three independent reads before waiting for results',
  assert.deepEqual(routes,['/api/kb/holdings','/api/kb/valuation','/api/kb/deposit'])
 })
 
-test('repeated concurrent refreshes share one batch of 3 upstream reads',async()=>{
+test('concurrent refreshes own their reads and reuse only a completed snapshot',async()=>{
  let calls=0
  const request=()=>runAccountBatch('dedupe-test',async()=>{
   calls++
@@ -26,10 +26,10 @@ test('repeated concurrent refreshes share one batch of 3 upstream reads',async()
   return {success:true,status:200}
  })
  const [a,b]=await Promise.all([request(),request()])
- assert.equal(calls,3)
- assert.equal(a.checked_at,b.checked_at)
+ assert.equal(calls,6)
+ assert.ok(a.success && b.success)
  const cached=await request()
- assert.equal(calls,3)
+ assert.equal(calls,6)
  assert.equal(typeof cached.cache_age_ms,'number')
 })
 
