@@ -1090,30 +1090,39 @@ const service = {
         let pageError = "";
         // Keep a bounded request budget while covering busy disclosure windows.
         const lastPage = Math.min(pagesRequired, fullScan ? 30 : 1);
+        const readPage = async (page: number) => {
+          try {
+            const nextParams = new URLSearchParams(params);
+            nextParams.set("page_no", String(page));
+            const pageResponse = await fetchKbObserved("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
+              redirect: "manual",
+              headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
+              signal: AbortSignal.timeout(12000),
+            });
+            if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
+              await pageResponse.body?.cancel().catch(() => {});
+              return { page, list: [], error: "DART 추가 페이지 HTTP " + pageResponse.status,
+                transient: isKbGatewayFailure(pageResponse.status) };
+            }
+            const pageData = await pageResponse.json() as typeof result;
+            if (pageData.status !== "000" || !Array.isArray(pageData.list)) {
+              return { page, list: [], error: "DART 추가 페이지 오류 " + (pageData.status || "자료 없음") };
+            }
+            return { page, list: pageData.list, error: "" };
+          } catch (error) {
+            return { page, list: [], error: "DART 추가 페이지 연결 실패", transient: isKbReadTransportFailure(error) };
+          }
+        };
+        let retriedPage = false;
         for (let startPage = 2; startPage <= lastPage; startPage += 4) {
           const pages = Array.from({ length: Math.min(4, lastPage - startPage + 1) },
             (_, index) => startPage + index);
-          const batch = await Promise.all(pages.map(async page => {
-            try {
-              const nextParams = new URLSearchParams(params);
-              nextParams.set("page_no", String(page));
-              const pageResponse = await fetchKbObserved("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
-                redirect: "manual",
-                headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
-                signal: AbortSignal.timeout(12000),
-              });
-              if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
-                return { page, list: [], error: "DART 추가 페이지 HTTP " + pageResponse.status };
-              }
-              const pageData = await pageResponse.json() as typeof result;
-              if (pageData.status !== "000" || !Array.isArray(pageData.list)) {
-                return { page, list: [], error: "DART 추가 페이지 오류 " + (pageData.status || "자료 없음") };
-              }
-              return { page, list: pageData.list, error: "" };
-            } catch {
-              return { page, list: [], error: "DART 추가 페이지 연결 실패" };
-            }
-          }));
+          const batch = await Promise.all(pages.map(readPage));
+          const failures = batch.filter(page => page.error);
+          if (!retriedPage && failures.length === 1 && failures[0].transient) {
+            retriedPage = true;
+            batch[batch.indexOf(failures[0])] = await readPage(failures[0].page);
+          }
           for (const pageData of batch) {
             if (pageData.error) pageError = pageError || pageData.error + " (" + pageData.page + "페이지)";
             else combined.push(...pageData.list);
