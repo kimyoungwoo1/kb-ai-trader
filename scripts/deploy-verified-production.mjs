@@ -22,7 +22,23 @@ const knownGood = 'dafe0360-d736-4bf2-8a82-eb4ed03e48a4'
 const required = ['DASHBOARD_API_KEY','KB_APP_KEY','KB_APP_SECRET','GEMINI_API_KEY','DART_API_KEY']
 const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
 let token = '', accountId = '', switched = false, rollbackVersion = '', paperDbId = ''
-const exec = (program,args,dir=cwd) => execFileSync(program,args,{cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']})
+const exec = (program,args,dir=cwd) => {
+  const options={cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']}
+  // Node on Windows cannot reliably spawn npm/npx shell shims directly.
+  // Run only these two known commands through cmd.exe; every argument must be
+  // trusted/shell-safe. Do not print command output (OAuth token is secret).
+  if(process.platform==='win32' && (program==='npm'||program==='npx')){
+    const safeArgs=args.map(value=>{
+      const arg=String(value)
+      if(!/^[\p{L}\p{N}_./:\\=+\-@]+$/u.test(arg))
+        throw Error('Windows CLI 인자에 지원하지 않는 문자가 있습니다.')
+      return arg
+    })
+    return execFileSync(process.env.ComSpec||'cmd.exe',
+      ['/d','/s','/c',program+'.cmd '+safeArgs.join(' ')],options)
+  }
+  return execFileSync(program,args,options)
+}
 const ensure = (ok,msg) => { if(!ok) throw Error(msg) }
 const parseJson = (value, label='CLI') => {
   const raw=String(value||'')
