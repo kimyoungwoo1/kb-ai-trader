@@ -128,7 +128,10 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const pool = discover.candidates.filter((x:any)=>/^\d{6}$/.test(String(x.code)) && !/ETF|ETN|레버리지|인버스/.test(String(x.name)));
       const rotated = pool.slice(((Math.floor(slot/5)*15)%Math.max(pool.length,1)));
       const selected = [...watched,...rotated,...pool].filter((x:any,i:number,a:any[])=>a.findIndex(y=>y.code===x.code)===i);
-      return selected.slice(0,25);
+      // Rotate the candidate universe across 5-minute scans. Keep the
+      // per-tick KB quote+investor workload bounded (10 instead of 25) so
+      // an unreachable gateway does not keep Cron busy for multiple minutes.
+      return selected.slice(0,10);
     })() : watched;
     if (!symbols.length) {
       await db.prepare('UPDATE server_paper_state SET busy_until=0, last_error=NULL WHERE id=1 AND revision=? AND cycle_slot=?')
@@ -152,6 +155,12 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         if (!f.success || !Array.isArray(f.results)) throw Error('KB 정밀 시세 조회 실패');
         quotes.push(...f.results);
       }
+      // A partially failed precision scan must not open new positions based on
+      // an incomplete set of price/flow checks. Held positions are monitored
+      // again on the next one-minute watch tick.
+      if (quotes.some((quote:any)=>!Number.isFinite(Number(quote.price)) ||
+          Number(quote.price)<=0 || quote.quoteError || quote.investorError))
+        throw Error('KB 정밀 시세·수급 일부 실패 · 신규 매수 보류');
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
