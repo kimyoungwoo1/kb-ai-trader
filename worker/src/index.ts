@@ -923,7 +923,7 @@ const service = {
       let fullScan = false;
       try { const body = await request.clone().json() as { complete?: boolean }; fullScan = body?.complete === true; }
       catch { /* legacy empty body */ }
-      if (!env.DART_API_KEY) return json({ success: false, message: "DART_API_KEY Secret이 설정되지 않았습니다. OpenDART 인증키를 등록해 주세요." }, 503);
+      if (!env.DART_API_KEY) return json({ success: false, stage: "missing_key", message: "DART_API_KEY Secret이 설정되지 않았습니다. OpenDART 인증키를 등록해 주세요." }, 503);
       const now = new Date();
       const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
       const ymd = (date: Date) => date.getUTCFullYear() + String(date.getUTCMonth() + 1).padStart(2, "0") + String(date.getUTCDate()).padStart(2, "0");
@@ -1380,6 +1380,7 @@ const service = {
         body:JSON.stringify(body),
       }),env,env.KB_MARKET_EGRESS,cronQuotes);
       const result = await response.json() as any;
+      if (path === '/api/market/disclosures' && result && typeof result === 'object') return result;
       if (!response.ok || result?.success !== true) {
         const message=String(result?.message||'내부 조회 실패').slice(0,150);
         if (result?.stage==='authentication' || result?.stage==='kb_upstream') throw new KbWatchUnavailable(message);
