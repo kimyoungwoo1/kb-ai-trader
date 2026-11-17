@@ -11,7 +11,7 @@ import ManualLimitOrder from './ManualLimitOrder'
 import { AUTO_EVENT, readAutoAccount, recordAutoWatchError, runAutoCycle, runAutoWatchCycle, writeAutoAccount } from './autoPaper'
 import { FAST_QUOTE_INTERVAL_MS, selectAutoWatchStocks } from './autoWatch'
 import { canExecutePaperTrade, CLOUD_SYNC_EVENT, getCloudSyncState, startCloudAutoSync, verifyTradingLease } from './cloudAutoSync'
-import { getAutoHealth } from './autoStatus'
+import { getAutoHealth, getServerAutoHealth } from './autoStatus'
 import { applyCatalystGate, catalystAllowsPending, catalystReady, readCatalystSnapshot, writeCatalystSnapshot, type CatalystSnapshot, type MarketArticle, type MarketDisclosure } from './marketCatalysts'
 import { writeScreeningSnapshot } from './screeningHistory'
 import { isServerPaperMode, serverPaperAction, setServerPaperMode, setServerPaperError, getServerPaperStatus, SERVER_PAPER_EVENT } from './serverPaperClient'
@@ -782,7 +782,8 @@ export default function App() {
 
   const baseHealth = getAutoHealth(readAutoAccount(), new Date(autoHeartbeat), marketDataLoading, marketDataMessage)
   const cloudHealth = getCloudSyncState()
-  const autoHealth = readAutoAccount().enabled && ['blocked', 'error'].includes(cloudHealth.phase)
+  const autoHealth = serverMode ? getServerAutoHealth(getServerPaperStatus(), new Date(autoHeartbeat))
+    : readAutoAccount().enabled && ['blocked', 'error'].includes(cloudHealth.phase)
     ? { ...baseHealth, tone: 'warning' as const, label: 'D1 실행권 오류 · 가상체결 차단',
       detail: cloudHealth.message }
     : readAutoAccount().enabled && isKrxSession(new Date(autoHeartbeat))
