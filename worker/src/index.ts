@@ -327,7 +327,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS, 1_500) : undefined);
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
