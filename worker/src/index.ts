@@ -922,23 +922,27 @@ const service = {
       });
       let dartStage = "connectivity_probe";
       try {
-        const probeHost = async (target: string) => {
-          try {
-            const probe = await fetchKbObserved(target, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8000) });
-            return { ok: true, status: probe.status, type: probe.headers.get("content-type") || "" };
-          } catch (probeError) {
-            const name = probeError instanceof Error ? probeError.name : "UnknownError";
-            const cause = probeError && typeof probeError === "object" && "cause" in probeError ? (probeError as { cause?: unknown }).cause : undefined;
-            const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
-            return { ok: false, error_type: name, cause_code: code || null };
+        // Trade-risk scans validate the actual API response. A probe of the
+        // website root is not a prerequisite for fetching the filings list.
+        if (!fullScan) {
+          const probeHost = async (target: string) => {
+            try {
+              const probe = await fetchKbObserved(target, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8000) });
+              return { ok: true, status: probe.status, type: probe.headers.get("content-type") || "" };
+            } catch (probeError) {
+              const name = probeError instanceof Error ? probeError.name : "UnknownError";
+              const cause = probeError && typeof probeError === "object" && "cause" in probeError ? (probeError as { cause?: unknown }).cause : undefined;
+              const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code || "") : "";
+              return { ok: false, error_type: name, cause_code: code || null };
+            }
+          };
+          const [dartHostProbe, publicHostProbe] = await Promise.all([
+            probeHost("https://opendart.fss.or.kr/"),
+            probeHost("https://www.google.com/generate_204"),
+          ]);
+          if (!dartHostProbe.ok) {
+            return json({ success: false, stage: "connectivity_probe", error_type: dartHostProbe.error_type, cause_code: dartHostProbe.cause_code, public_host_ok: publicHostProbe.ok, public_host_status: publicHostProbe.status || null, message: "Cloudflare Worker에서 OpenDART 호스트 연결 자체가 실패했습니다. 인증키 문제가 아닌 네트워크/TLS 연결 문제입니다." }, 502);
           }
-        };
-        const [dartHostProbe, publicHostProbe] = await Promise.all([
-          probeHost("https://opendart.fss.or.kr/"),
-          probeHost("https://www.google.com/generate_204"),
-        ]);
-        if (!dartHostProbe.ok) {
-          return json({ success: false, stage: "connectivity_probe", error_type: dartHostProbe.error_type, cause_code: dartHostProbe.cause_code, public_host_ok: publicHostProbe.ok, public_host_status: publicHostProbe.status || null, message: "Cloudflare Worker에서 OpenDART 호스트 연결 자체가 실패했습니다. 인증키 문제가 아닌 네트워크/TLS 연결 문제입니다." }, 502);
         }
         dartStage = "api_fetch";
         let requestUrl = "https://opendart.fss.or.kr/api/list.json?" + params.toString();
