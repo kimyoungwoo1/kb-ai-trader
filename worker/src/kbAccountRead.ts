@@ -122,13 +122,85 @@ export const marketRead = async (
   return response
 }
 
+type ReadOutcome = { response: Response } | { error: unknown }
+
+async function readHoldingsWithBackup(
+  primary: (signal: AbortSignal) => Promise<Response>,
+  backup: (signal: AbortSignal) => Promise<Response>,
+  parentSignal: AbortSignal | null | undefined,
+  delayMs: number,
+): Promise<Response> {
+  parentSignal?.throwIfAborted()
+  const primaryAbort = new AbortController()
+  const backupAbort = new AbortController()
+  const signalFor = (controller: AbortController) => parentSignal
+    ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal
+  const settle = (pending: Promise<Response>): Promise<ReadOutcome> =>
+    pending.then(response => ({response}), error => ({error}))
+  const usable = (outcome: ReadOutcome, isPrimary: boolean): boolean =>
+    'response' in outcome && !isKbGatewayFailure(outcome.response.status) &&
+    (!isPrimary || outcome.response.status !== 404)
+  const unwrap = (outcome: ReadOutcome): Response => {
+    if ('response' in outcome) return outcome.response
+    throw outcome.error
+  }
+  const discard = (controller: AbortController, pending: Promise<ReadOutcome>) => {
+    controller.abort()
+    void pending.then(outcome => {
+      if ('response' in outcome) return outcome.response.body?.cancel().catch(()=>{})
+    }).catch(()=>{})
+  }
+
+  const firstRead = settle(primary(signalFor(primaryAbort)))
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const delay = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), delayMs) })
+  const first = await Promise.race([firstRead, delay])
+  clearTimeout(timer)
+  if (first && usable(first, true)) return unwrap(first)
+  if (first && 'error' in first && !isKbReadTransportFailure(first.error)) throw first.error
+  if (parentSignal?.aborted) {
+    discard(primaryAbort, firstRead)
+    parentSignal.throwIfAborted()
+  }
+
+  const secondRead = settle(backup(signalFor(backupAbort)))
+  if (first) {
+    discard(primaryAbort, firstRead)
+    return unwrap(await secondRead)
+  }
+  const next = await Promise.race([
+    firstRead.then(outcome => ({outcome, primary: true})),
+    secondRead.then(outcome => ({outcome, primary: false})),
+  ])
+  const otherRead = next.primary ? secondRead : firstRead
+  const otherAbort = next.primary ? backupAbort : primaryAbort
+  if (usable(next.outcome, next.primary)) {
+    discard(otherAbort, otherRead)
+    return unwrap(next.outcome)
+  }
+  const other = await otherRead
+  if (usable(other, !next.primary) || next.primary) {
+    discard(next.primary ? primaryAbort : backupAbort, next.primary ? firstRead : secondRead)
+    return unwrap(other)
+  }
+  discard(primaryAbort, firstRead)
+  return unwrap(next.outcome)
+}
+
 // Route only explicitly permitted, read-only account APIs through the private Worker.
-export const accountRead = (egress?: MarketEgress): typeof fetchKbObserved | undefined => {
+export const accountRead = (egress?: MarketEgress, holdingsBackupDelayMs?: number): typeof fetchKbObserved | undefined => {
   if (!egress) return undefined
   return async (endpoint, init, trace = {requestId:crypto.randomUUID(),attempt:1}) => {
     const url = new URL(endpoint)
     if (url.origin !== 'https://developer.kbsec.com:32484' || init.method !== 'POST' || !isKbAccountReadPath(url.pathname))
       return fetchKbObserved(endpoint, init, trace)
+    if (holdingsBackupDelayMs !== undefined && url.pathname === '/api/v1/ssqm1801' && typeof init.body === 'string') {
+      return readHoldingsWithBackup(
+        signal => marketRead(endpoint, {...init,signal,redirect:'manual'}, {...trace,attempt:1}, 6000, egress, 750),
+        signal => fetchKbObserved(endpoint, {...init,signal,redirect:'manual'}, {...trace,attempt:2}),
+        init.signal, holdingsBackupDelayMs,
+      )
+    }
     try {
       const response = await marketRead(endpoint, {...init, redirect:'manual'}, { ...trace, attempt:1 }, 6000, egress, 750)
       if (!isKbGatewayFailure(response.status) && response.status !== 404)
