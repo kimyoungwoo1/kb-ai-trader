@@ -1035,11 +1035,10 @@ const service = {
         const combined = [...(result.list || [])];
         const pagesRequired = Math.ceil(totalReported / 100);
         let pageError = "";
-        // Parallelize in bounded groups (Cloudflare subrequest pressure and DART quotas).
-        // 20 pages cover up to 2,000 filings. Anything larger is explicitly incomplete
-        // and will block NEW entries instead of concealing possible adverse reports.
-        for (let startPage = 2; startPage <= Math.min(pagesRequired, fullScan ? 20 : 1); startPage += 4) {
-          const pages = Array.from({ length: Math.min(4, Math.min(pagesRequired, fullScan ? 20 : 1) - startPage + 1) },
+        // Keep a bounded request budget while covering busy disclosure windows.
+        const lastPage = Math.min(pagesRequired, fullScan ? 30 : 1);
+        for (let startPage = 2; startPage <= lastPage; startPage += 4) {
+          const pages = Array.from({ length: Math.min(4, lastPage - startPage + 1) },
             (_, index) => startPage + index);
           const batch = await Promise.all(pages.map(async page => {
             try {
