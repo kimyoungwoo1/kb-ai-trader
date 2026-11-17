@@ -344,3 +344,40 @@ test('scan can commit while the next watcher waits, then watcher uses latest led
   assert.equal(saved.account.positions.length,0)
   assert.equal(saved.scanLease,undefined)
 })
+
+test('a resumed scan preserves the successful half of each stock read',async ctx=>{
+  const date=new Date('2026-11-06T01:20:00Z')
+  ctx.mock.timers.enable({apis:['Date'],now:date})
+  const db=makeDb()
+  await serverPaperApi(db,'migrate','0::0:')
+  await serverPaperApi(db,'start')
+  const a={code:'100000',name:'Quote succeeded'}
+  const b={code:'100001',name:'Flow succeeded'}
+  let reads=0
+  const post=async (path,body)=>{
+    if(path==='/api/market/discover')return {success:true,candidates:[a,b]}
+    if(path==='/api/market/investor-flow'){
+      if(++reads===1)return {success:true,partial:true,results:[
+        {...a,price:5000,quote:{cur_prc:'5000'},quoteReceivedAt:date.getTime(),investorError:'timeout'},
+        {...b,price:null,investor:{out:[]},investorReceivedAt:date.getTime(),quoteError:'timeout'},
+      ]}
+      const prior=new Map(body.stocks.map(stock=>[stock.code,stock.prior]))
+      assert.equal(prior.get(a.code).quoteReceivedAt,date.getTime())
+      assert.equal(prior.get(b.code).investorReceivedAt,date.getTime())
+      return {success:true,results:[
+        {...prior.get(a.code),investorError:'',investor:{out:[]},investorReceivedAt:Date.now()},
+        {...prior.get(b.code),quoteError:'',price:5100,quote:{cur_prc:'5100'},quoteReceivedAt:Date.now()},
+      ]}
+    }
+    if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
+    if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
+    throw Error('unexpected provider call '+path)
+  }
+  assert.equal((await serverPaperTick(db,post,date)).partial,true)
+  const resume=new Date(date.getTime()+120_000)
+  ctx.mock.timers.setTime(resume.getTime())
+  const outcome=await serverPaperTick(db,post,resume)
+  assert.equal(outcome.result,'scanned')
+  assert.equal(outcome.partial,false)
+  assert.equal(JSON.parse(db.server.snapshot_json).screening.signals.length,2)
+})
