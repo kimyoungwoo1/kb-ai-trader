@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
-import { join, relative, resolve, extname, sep } from 'node:path'
+import { join, relative, resolve, extname, sep, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { parseActiveVersion } from './parse-deployment-status.mjs'
 
@@ -24,18 +24,13 @@ const domain = 'https://kb-ai-trader.ksmsy1.workers.dev'
 let token = '', accountId = '', switched = false, rollbackVersion = '', paperDbId = ''
 const exec = (program,args,dir=cwd) => {
   const options={cwd:dir,encoding:'utf8',timeout:120000,stdio:['ignore','pipe','pipe']}
-  // Node on Windows cannot reliably spawn npm/npx shell shims directly.
-  // Run only these two known commands through cmd.exe; every argument must be
-  // trusted/shell-safe. Do not print command output (OAuth token is secret).
+  // Reuse the Windows invocation already proven in the earlier
+  // market-egress deployment: execute npm/npx CLI JS with Node directly.
+  // Do not rely on PowerShell/cmd shim resolution for auth token JSON.
   if(process.platform==='win32' && (program==='npm'||program==='npx')){
-    const safeArgs=args.map(value=>{
-      const arg=String(value)
-      if(!/^[\p{L}\p{N}_./:\\=+\-@]+$/u.test(arg))
-        throw Error('Windows CLI 인자에 지원하지 않는 문자가 있습니다.')
-      return arg
-    })
-    return execFileSync(process.env.ComSpec||'cmd.exe',
-      ['/d','/s','/c',program+'.cmd '+safeArgs.join(' ')],options)
+    const cli=join(dirname(process.execPath),'node_modules','npm','bin',program+'-cli.js')
+    if(!existsSync(cli))throw Error('Windows Node.js 설치의 '+program+' CLI를 찾지 못했습니다.')
+    return execFileSync(process.execPath,[cli,...args],options)
   }
   return execFileSync(program,args,options)
 }
