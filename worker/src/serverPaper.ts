@@ -304,8 +304,19 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
           freshQuotes.filter((item:any)=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
           checkedAt,now,store,symbols.length);
         nextAccount.pending = snapshot.account.pending;
+        let dartDetail = '';
+        if (disclosures.stage === 'missing_key') dartDetail = 'DART 인증키 미설정';
+        else if (/^\d{3}$/.test(disclosures.status ?? '')) dartDetail = 'DART 응답 코드 ' + disclosures.status;
+        else if (Number.isInteger(disclosures.http_status) && disclosures.http_status >= 100 && disclosures.http_status <= 599)
+          dartDetail = 'DART HTTP ' + disclosures.http_status;
+        else if (['TimeoutError','AbortError'].includes(disclosures.error_type)) dartDetail = 'DART 요청 시간 초과';
+        else if (disclosures.stage === 'api_fetch') dartDetail = 'DART 요청 실패';
+        else if (/^DART 추가 페이지 (?:HTTP \d{3}|오류 (?:\d{3}|자료 없음)|연결 실패) \(\d+페이지\)$/.test(disclosures.pagination_error ?? ''))
+          dartDetail = disclosures.pagination_error;
+        else if (disclosures.success === true && Number.isInteger(disclosures.fetched_count) && Number.isInteger(disclosures.total_count))
+          dartDetail = '공시 ' + disclosures.fetched_count + '/' + disclosures.total_count + '건 수집';
         const phaseError = partial ? reply.message || 'KB 시세·수급 일부 미확인' :
-          disclosuresResult?.complete!==true || disclosuresResult?.success!==true ? '공시 검증 미완료' : '뉴스 검증 미완료';
+          disclosuresResult?.complete!==true || disclosuresResult?.success!==true ? '공시 검증 미완료' + (dartDetail ? ' (' + dartDetail + ')' : '') : '뉴스 검증 미완료';
         message = '정밀검사 일부 실패 · '+phaseError+' · 신규 매수 보류';
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
