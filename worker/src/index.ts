@@ -6,7 +6,7 @@ import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
 import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
-import { getKbAccessToken, clearKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
+import { getKbAccessToken, clearKbAccessToken, revokeKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure,accountRead,marketRead,type MarketEgress} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
 
@@ -99,7 +99,7 @@ const service = {
     if (url.pathname === "/api/deploy/verify" && request.method === "POST") {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
-      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number}> = {};
+      const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number;error_type?:string}> = {};
       let upstreamUnavailable=false;
       for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
         // This is deployment verification, not an availability stress test.
@@ -127,9 +127,11 @@ const service = {
             /시간 초과|네트워크 연결 실패|응답 없음|재시도 2회 실패/.test(message)?'auth_transport':
             'auth_unclassified';
           const upstreamStatus=Number(result.http_status)||0;
+          const errorType=['TIMEOUT','NETWORK','NON_JSON','HTTP_ERROR'].find(type=>type===result.error_type);
           const successful=reply.ok&&result.success===true;
           checks[name]={success:successful,stage,http_status:reply.status,
             ...(upstreamStatus?{upstream_status:upstreamStatus}:{}),
+            ...(errorType?{error_type:errorType}:{}),
             ...(authIssue?{auth_issue:authIssue}:{})};
           upstreamUnavailable=!successful&&(
             stage==='authentication' || stage.endsWith('_network') ||
@@ -562,7 +564,8 @@ const service = {
           await Promise.all(remaining.map(async index => { results[index] = await retry(index); }));
         }
       }
-      if (results.some(item => item.token_expired)) clearKbAccessToken(accessToken);
+      if (results.some(item => item.upstream_status === 401)) await revokeKbAccessToken(env,accessToken);
+      else if (results.some(item => item.token_expired)) clearKbAccessToken(accessToken);
       return Response.json({
         success: true, requested: stocks.length, checked_at: new Date().toISOString(),
         received: results.filter(item => item.price !== null).length,
@@ -601,7 +604,8 @@ const service = {
       const header = quoteResult?.dataHeader || {};
       const resultCode = String(header.resultCode ?? "");
       if (!quoteResponse.ok || (resultCode && !["0", "0000", "200"].includes(resultCode))) {
-        if (quoteResponse.status === 401 || quoteResponse.status === 403) clearKbAccessToken(accessToken);
+        if (quoteResponse.status === 401) await revokeKbAccessToken(env,accessToken);
+        else if (quoteResponse.status === 403) clearKbAccessToken(accessToken);
         return json({ success: false, stage: "quote", http_status: quoteResponse.status, message: getKbErrorMessage(quoteResult) }, 502);
       }
       const body = quoteResult?.dataBody || {};
@@ -753,7 +757,7 @@ const service = {
       const readFlow = async (endpoint: string, init: RequestInit) => {
         const requestId = crypto.randomUUID();
         const timeout = (limit: number) => {
-          if (!marketEgress) return limit;
+          if (input.stopOnUpstream !== true) return limit;
           const remaining = scanDeadline - Date.now();
           if (remaining <= 0) throw new DOMException("KB scan deadline", "TimeoutError");
           return Math.min(limit, remaining);
@@ -800,7 +804,8 @@ const service = {
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
+            if (response.status === 401) await revokeKbAccessToken(env,accessToken);
+            else if (response.status === 403) clearKbAccessToken(accessToken);
             const message = "KB 현재가 HTTP " + response.status;
             await response.body?.cancel().catch(()=>{});
             if (isKbGatewayFailure(response.status) && canSkip()) {
@@ -834,7 +839,8 @@ const service = {
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if ([401, 403].includes(response.status)) clearKbAccessToken(accessToken);
+            if (response.status === 401) await revokeKbAccessToken(env,accessToken);
+            else if (response.status === 403) clearKbAccessToken(accessToken);
             const message = "KB 수급 HTTP " + response.status;
             await response.body?.cancel().catch(()=>{});
             if (!isKbGatewayFailure(response.status)) return unavailable(message,response.status);
