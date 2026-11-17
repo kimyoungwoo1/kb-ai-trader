@@ -479,7 +479,11 @@ const service = {
           limited ? 429 : 502);
       }
       const baseUrl = kbBaseUrl(env);
-      const results = await Promise.all(stocks.map(async stock => {
+      const results: any[] = [];
+      // Limit each one-minute watch to two simultaneous upstream connections.
+      // More concurrent requests amplify intermittent TCP/522 gateway failures.
+      for (let offset=0; offset<stocks.length; offset+=2) {
+      const batch=await Promise.all(stocks.slice(offset,offset+2).map(async stock => {
         try {
           const response = await fetch(baseUrl + "/api/v1/ivu10140", {
             method: "POST",
@@ -530,6 +534,18 @@ const service = {
           };
         }
       }));
+      results.push(...batch);
+      // If the gateway failed for the whole wave, stop opening connections.
+      // Unqueried prices stay explicitly invalid and cannot trigger trades.
+      if (batch.every(item=>item.price === null && !item.token_expired)) {
+        for (const remaining of stocks.slice(offset+2)) results.push({
+          code:remaining.code,name:remaining.name,price:null,checked_at:'',
+          error:'KB 연결 장애 · 나머지 현재가 조회 보류',
+          rate_limited:false,token_expired:false
+        });
+        break;
+      }
+      }
       if (results.some(item => item.token_expired)) clearKbAccessToken();
       return Response.json({
         success: true, requested: stocks.length, checked_at: new Date().toISOString(),
