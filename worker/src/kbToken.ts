@@ -11,7 +11,7 @@ export type KbCredentials = {
   PAPER_DB?: any // optional shared encrypted OAuth token cache
 }
 
-type CachedToken = { token: string; key: string; expiresAt: number }
+type CachedToken = { token: string; key: string; expiresAt: number; shared?: { fingerprint:string; nonce:string } }
 let cached: CachedToken | null = null
 let inflight: Promise<string> | null = null
 let inflightKey = ''
@@ -40,21 +40,23 @@ async function loadSharedToken(env:KbCredentials,key:string):Promise<string|null
   const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64ToBytes(row.nonce_b64)},aes,b64ToBytes(row.token_b64))
   const token=new TextDecoder().decode(plain)
   if(!token||token===rejectedToken)return null
-  cached={key,token,expiresAt:row.expires_at}
+  cached={key,token,expiresAt:row.expires_at,shared:{fingerprint,nonce:row.nonce_b64}}
   return token
  }catch{return null}
 }
-async function saveSharedToken(env:KbCredentials,token:string,expiresAt:number):Promise<void>{
+async function saveSharedToken(env:KbCredentials,token:string,expiresAt:number):Promise<CachedToken['shared']>{
  if(!env.PAPER_DB)return
  try{
   const {aes,fingerprint}=await sharedCrypto(env)
   const nonce=crypto.getRandomValues(new Uint8Array(12))
   const payload=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce},aes,new TextEncoder().encode(token)))
+  const nonce64=bytesToB64(nonce)
   await env.PAPER_DB.prepare(`INSERT INTO kb_oauth_token_cache(id,key_fingerprint,nonce_b64,token_b64,expires_at)
     VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     key_fingerprint=excluded.key_fingerprint,nonce_b64=excluded.nonce_b64,
     token_b64=excluded.token_b64,expires_at=excluded.expires_at`)
-    .bind(fingerprint,bytesToB64(nonce),bytesToB64(payload),expiresAt).run()
+    .bind(fingerprint,nonce64,bytesToB64(payload),expiresAt).run()
+  return {fingerprint,nonce:nonce64}
  }catch{/* Never fail a successful KB authentication due to D1. */}
 }
 
@@ -73,6 +75,18 @@ export function clearKbAccessToken(token: string): void {
   if (cached?.token !== token) return
   rejectedToken = token
   cached = null
+}
+
+// Only an explicit HTTP 401 can revoke the shared copy. The nonce condition
+// protects a newer token saved by a concurrent invocation.
+export async function revokeKbAccessToken(env: KbCredentials, token: string): Promise<void> {
+  const current = cached?.token === token ? cached : null
+  clearKbAccessToken(token)
+  if (!current?.shared || !env.PAPER_DB) return
+  try {
+    await env.PAPER_DB.prepare('DELETE FROM kb_oauth_token_cache WHERE id=1 AND key_fingerprint=? AND nonce_b64=?')
+      .bind(current.shared.fingerprint,current.shared.nonce).run()
+  } catch { /* The local rejection still prevents reuse in this isolate. */ }
 }
 
 export async function getKbAccessToken(env: KbCredentials): Promise<string> {
@@ -129,9 +143,10 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
     const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 24 * 60 * 60) : 300
     const expiresAt=Date.now() + Math.max(1, lifetime - 60) * 1000
-    cached = { token, key, expiresAt }
+    const entry:CachedToken = { token, key, expiresAt }
+    entry.shared = await saveSharedToken(env,token,expiresAt)
+    cached = entry
     rejectedToken=null
-    await saveSharedToken(env,token,expiresAt)
     return token
   }
   const promise = load()
