@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const result=await build({entryPoints:['worker/src/kbAccountRead.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const {readKbAccountJson}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'))
+const {readKbAccountJson,accountRead}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'))
 const run=()=>readKbAccountJson('https://developer.kbsec.com:32484/api/v1/ssqm1801',{Authorization:'Bearer mock'},{})
 
 test('temporary upstream 502 HTML is retried once and recovers',async()=>{
@@ -57,4 +57,48 @@ test('upstream 401 is never retried and non-JSON body is not exposed',async()=>{
   assert.equal(r.status,401)
   assert.equal(calls,1)
  }finally{globalThis.fetch=old}
+})
+
+const holdingsUrl = 'https://developer.kbsec.com:32484/api/v1/ssqm1801'
+const holdingsInit = {method:'POST',body:'{}'}
+
+test('a prompt holdings response does not start a backup read',async()=>{
+ const saved=globalThis.fetch
+ let direct=0
+ globalThis.fetch=async()=>{direct++;return Response.json({})}
+ try{
+  for(const status of [200,401,429]){
+   const read=accountRead({fetch:async()=>new Response(null,{status})},1)
+   assert.equal((await read(holdingsUrl,holdingsInit)).status,status)
+  }
+  assert.equal(direct,0)
+ }finally{globalThis.fetch=saved}
+})
+
+test('a slow private holdings read starts a backup and aborts the losing request',async()=>{
+ const saved=globalThis.fetch
+ let primarySignal,direct=0
+ globalThis.fetch=async()=>{direct++;return Response.json({route:'direct'})}
+ const read=accountRead({fetch(request){
+  primarySignal=request.signal
+  return new Promise((_,reject)=>primarySignal.addEventListener('abort',()=>reject(primarySignal.reason),{once:true}))
+ }},1)
+ try{
+  assert.deepEqual(await (await read(holdingsUrl,holdingsInit)).json(),{route:'direct'})
+  assert.equal(direct,1)
+  assert.equal(primarySignal.aborted,true)
+ }finally{globalThis.fetch=saved}
+})
+
+test('gateway failure on the backup does not hide a usable private response',async()=>{
+ const saved=globalThis.fetch
+ let finish
+ globalThis.fetch=async()=>{
+  setTimeout(()=>finish(Response.json({route:'private'})),5)
+  return new Response(null,{status:522})
+ }
+ try{
+  const read=accountRead({fetch:()=>new Promise(resolve=>{finish=resolve})},1)
+  assert.deepEqual(await (await read(holdingsUrl,holdingsInit)).json(),{route:'private'})
+ }finally{globalThis.fetch=saved}
 })
