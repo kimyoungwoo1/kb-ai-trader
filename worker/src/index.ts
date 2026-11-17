@@ -75,8 +75,10 @@ function readXmlLink(xml: string): string {
 }
 
 const accountBatchRequests = new WeakSet<Request>();
+type CronQuotes = Map<string, { payload: Record<string, unknown>; receivedAt: number }>;
+
 const service = {
-  async fetch(request: Request, env: Env, marketEgress?: MarketEgress): Promise<Response> {
+  async fetch(request: Request, env: Env, marketEgress?: MarketEgress, cronQuotes?: CronQuotes): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -531,6 +533,7 @@ const service = {
           const raw = kbQuotePrice(payload);
           const parsed = raw == null ? NaN : Number(String(raw).replace(/,/g, ""));
           const good = Number.isFinite(parsed) && parsed > 0;
+          if (good) cronQuotes?.set(stock.code, { payload, receivedAt: Date.now() });
           return {
             code: stock.code, name: stock.name,
             price: good ? parsed : null,
@@ -564,6 +567,7 @@ const service = {
           await Promise.all(remaining.map(async index => { results[index] = await retry(index); }));
         }
       }
+      if (results.some(item => item.token_expired || item.rate_limited)) cronQuotes?.clear();
       if (results.some(item => item.upstream_status === 401)) await revokeKbAccessToken(env,accessToken);
       else if (results.some(item => item.token_expired)) clearKbAccessToken(accessToken);
       return Response.json({
@@ -798,7 +802,11 @@ const service = {
         let quoteError = "";
         let investorError = "";
         let stopAfterStock = false;
-        try {
+        const priorQuote = input.stopOnUpstream === true ? cronQuotes?.get(stock.code) : undefined;
+        const quoteAge = priorQuote ? Date.now() - priorQuote.receivedAt : -1;
+        if (priorQuote && quoteAge >= 0 && quoteAge < 30_000) {
+          quote = priorQuote.payload;
+        } else try {
           const {response, data: parsed} = await readFlow(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
@@ -1359,12 +1367,13 @@ const service = {
     const scheduledAt=new Date(controller.scheduledTime ?? now.getTime());
     const phase=paperCronPhase(scheduledAt,now);
     if(phase==='off')return;
+    const cronQuotes: CronQuotes = new Map();
     const post = async (path: string, body: unknown): Promise<any> => {
       if (!env.DASHBOARD_API_KEY) throw Error('서버 API 인증 설정 없음');
       const response = await service.fetch(new Request('https://localhost'+path,{
         method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
         body:JSON.stringify(body),
-      }),env,env.KB_MARKET_EGRESS);
+      }),env,env.KB_MARKET_EGRESS,cronQuotes);
       const result = await response.json() as any;
       if (!response.ok || result?.success !== true) {
         const message=String(result?.message||'내부 조회 실패').slice(0,150);
