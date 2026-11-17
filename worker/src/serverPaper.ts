@@ -144,12 +144,12 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     let nextLedger: PaperLedger = snapshot.ledger;
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
-      const [flow,disclosures,news] = await Promise.all([
-        Promise.all(Array.from({length:Math.ceil(symbols.length/10)},(_,i)=>symbols.slice(i*10,i*10+10))
-          .map(chunk=>post('/api/market/investor-flow',{stocks:chunk}))),
-        post('/api/market/disclosures',{complete:true}),
-        post('/api/market/research',{skip_ai:true}),
-      ]);
+      // KB data is a prerequisite for this scan. Do not spend CPU and
+      // external requests on news/DART when prices are already unavailable.
+      const flow = await Promise.all(
+        Array.from({length:Math.ceil(symbols.length/10)},(_,i)=>symbols.slice(i*10,i*10+10))
+          .map(chunk=>post('/api/market/investor-flow',{stocks:chunk}))
+      );
       const quotes:any[] = [];
       for (const f of flow) {
         if (!f.success || !Array.isArray(f.results)) throw Error('KB 정밀 시세 조회 실패');
@@ -161,6 +161,10 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       if (quotes.some((quote:any)=>!Number.isFinite(Number(quote.price)) ||
           Number(quote.price)<=0 || quote.quoteError || quote.investorError))
         throw Error('KB 정밀 시세·수급 일부 실패 · 신규 매수 보류');
+      const [disclosures,news] = await Promise.all([
+        post('/api/market/disclosures',{complete:true}),
+        post('/api/market/research',{skip_ai:true}),
+      ]);
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
