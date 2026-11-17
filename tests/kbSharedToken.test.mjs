@@ -12,6 +12,12 @@ const db=()=>{
   return {
    first:async()=>{assert.match(sql,/SELECT key_fingerprint/);return row},
    bind(...args){
+    if(sql.startsWith('DELETE FROM kb_oauth_token_cache')){
+     return {run:async()=>{
+      if(row?.key_fingerprint===args[0]&&row?.nonce_b64===args[1])row=null
+      return {meta:{changes:1}}
+     }}
+    }
     assert.match(sql,/INSERT INTO kb_oauth_token_cache/)
     return {run:async()=>{row={key_fingerprint:args[0],nonce_b64:args[1],token_b64:args[2],expires_at:args[3]};return {meta:{changes:1}}}}
    }
@@ -65,4 +71,22 @@ test('failed D1 read/write degrades to normal KB authentication without leaking 
   assert.equal(await (await load('fallback')).getKbAccessToken(env),'fallback-token')
   assert.equal(count,1)
  }finally{globalThis.fetch=original}
+})
+
+test('HTTP 401 eviction removes only the rejected shared token',async()=>{
+ const store=db(),env={...config,KB_APP_KEY:'revocation-key',PAPER_DB:store}
+ const previous=globalThis.fetch
+ let issued=0
+ globalThis.fetch=async()=>Response.json({dataBody:{access_token:'token-'+(++issued),expires_in:3600}})
+ try{
+  const a=await load('reject-a'), b=await load('reject-b'), c=await load('reject-c')
+  assert.equal(await a.getKbAccessToken(env),'token-1')
+  assert.equal(await b.getKbAccessToken(env),'token-1')
+  await a.revokeKbAccessToken(env,'token-1')
+  assert.equal(store.row,null)
+  assert.equal(await c.getKbAccessToken(env),'token-2')
+  await b.revokeKbAccessToken(env,'token-1')
+  assert.equal(await (await load('reject-d')).getKbAccessToken(env),'token-2')
+  assert.equal(issued,2)
+ }finally{globalThis.fetch=previous}
 })
