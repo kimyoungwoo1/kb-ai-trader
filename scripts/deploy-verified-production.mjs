@@ -139,7 +139,8 @@ const probeVersion = async(origin,secret,label,{checkAccount=true}={}) => {
       const failure=new Error('KB 조회 실패: 보유 '+(h?.stage||'unknown')+'/'+(h?.http_status||reply.status)+
         ', 평가 '+(v?.stage||'unknown')+'/'+(v?.http_status||reply.status)+
         (upstream?' · KB HTTP '+upstream:'')+
-        (category?' · 원인 '+category:''))
+        (category?' · 원인 '+category:'')+
+        (h?.error_type?' · 보유 '+h.error_type:'')+(v?.error_type?' · 평가 '+v.error_type:''))
       failure.authIssue=category
       failure.gatewayIssue=gateway
       throw failure
