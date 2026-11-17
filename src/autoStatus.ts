@@ -56,6 +56,35 @@ export function getAutoHealth(
   return { tone: 'ok', label: '정상 검사 중', detail: '최근 전략 평가가 정상 완료됐습니다. 가상 체결은 진입 조건 충족 시에만 발생합니다.', inSession }
 }
 
+type ServerHealthStatus = {
+  mode: string
+  last_error?: string | null
+  cron?: { last_tick: { finished_at: string; result: string; message: string } | null }
+}
+
+export function getServerAutoHealth(status: ServerHealthStatus | null, now: Date): AutoHealth {
+  const base = getAutoHealth({ enabled: status?.mode !== 'stopped', runs: [] }, now, false, '')
+  if (!base.inSession || base.tone === 'off') return base
+
+  const tick = status?.cron?.last_tick
+  if (!tick) return { ...base, label: '서버 검사 상태 확인 중', detail: '서버 Cron 실행 이력을 확인하고 있습니다.' }
+
+  const age = now.getTime() - Date.parse(tick.finished_at)
+  if (!Number.isFinite(age) || age < -60_000 || age > 180_000)
+    return { ...base, tone: 'warning', label: '서버 검사 지연', detail: '최근 3분간 서버 Cron 완료 기록이 확인되지 않았습니다.' }
+
+  const error = status?.last_error
+  if (error?.includes('정밀검사 재시도'))
+    return { ...base, tone: 'warning', label: '정밀검사 재시도', detail: error }
+  if (error || tick.result === 'error' || tick.result === 'kb_cooldown')
+    return { ...base, tone: 'warning', label: '서버 조회 확인 필요', detail: error || tick.message }
+  if (tick.result === 'scan_partial' || tick.result === 'watch_partial')
+    return { ...base, tone: 'warning', label: '서버 검사 일부 성공', detail: tick.message }
+  if (tick.result === 'scanned' || tick.result === 'watched')
+    return { ...base, tone: 'ok', label: tick.result === 'watched' ? '서버 보유 감시 완료' : '서버 정밀검사 완료', detail: tick.message }
+  return { ...base, label: '서버 자동매매 실행 중', detail: tick.message }
+}
+
 export function todayActivity(account: Pick<AutoAccount, 'runs' | 'fills' | 'dailyStats'>, now: Date) {
   const day = kstDay(now)
   if (account.dailyStats?.date === day) {
