@@ -252,23 +252,35 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
     const store = { read:()=>nextLedger, write:(value:PaperLedger)=>{nextLedger=value} };
     if (doScan) {
       retryProgress = progress ?? {startedAt:date.getTime(),symbols,quotes:[]};
-      const remaining = symbols.filter(symbol=>!progress?.quotes.some(quote=>quote.code===symbol.code));
-      const reply = await post('/api/market/investor-flow',{stocks:remaining,stopOnUpstream:true});
+      const previous = new Map(progress?.quotes.map(quote => [quote.code, quote]));
+      const isFresh = (time: unknown) =>
+        typeof time === 'number' && Date.now()-time >= 0 && Date.now()-time < 180_000;
+      const isComplete = (quote: any) => quote && !quote.quoteError && !quote.investorError &&
+        Number.isFinite(quote.price) && quote.price > 0 &&
+        (quote.quoteReceivedAt === undefined || isFresh(quote.quoteReceivedAt)) &&
+        (quote.investorReceivedAt === undefined || isFresh(quote.investorReceivedAt));
+      const remaining = symbols.filter(symbol=>!isComplete(previous.get(symbol.code)));
+      const reply = remaining.length
+        ? await post('/api/market/investor-flow',{stocks:remaining.map(symbol=>{
+            const prior=previous.get(symbol.code);
+            return prior ? {...symbol,prior} : symbol;
+          }),stopOnUpstream:true})
+        : {success:true,results:[]};
       if (!reply.success || !Array.isArray(reply.results)) throw Error('KB 정밀 시세 조회 실패');
       const freshQuotes = reply.results;
-      const quotes = [...(progress?.quotes ?? []),...freshQuotes];
+      for (const quote of freshQuotes) {
+        if (quote.quoteReceivedAt !== undefined || quote.investorReceivedAt !== undefined || isComplete(quote))
+          previous.set(quote.code,quote);
+      }
+      const quotes = symbols.map(symbol=>previous.get(symbol.code)).filter(Boolean);
+      retryProgress = {startedAt:retryProgress.startedAt,symbols,quotes};
       if (!quotes.some((item:any)=>Number.isFinite(item.price)&&item.price>0))
         throw new KbWatchUnavailable('정밀 시세에 유효한 가격 없음');
-      const completeCodes = new Set(freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
-        Number.isFinite(quote.price)&&quote.price>0).map((quote:any)=>quote.code));
-      const partial = reply.partial === true || remaining.some(symbol=>!completeCodes.has(symbol.code));
-      let nextProgress:ScanProgress|undefined;
-      if (partial) {
-        const completed = freshQuotes.filter((quote:any)=>!quote.quoteError&&!quote.investorError &&
-          Number.isFinite(quote.price)&&quote.price>0&&remaining.some(symbol=>symbol.code===quote.code));
-        nextProgress = {startedAt:progress?.startedAt ?? date.getTime(),symbols,
-          quotes:[...(progress?.quotes ?? []),...completed]};
-      }
+      const partial = reply.partial === true || symbols.some(symbol=>!isComplete(previous.get(symbol.code)));
+      const nextProgress = partial ? retryProgress : undefined;
+      // Only prices acquired during this tick may drive simulated fills.
+      const currentQuotes = freshQuotes.filter((quote:any)=>
+        !quote.quoteReceivedAt || quote.quoteReceivedAt >= date.getTime());
       const [disclosuresResult,newsResult] = partial ? [null,null] : await Promise.all([
         Promise.resolve().then(()=>post('/api/market/disclosures',{complete:true})).catch(()=>null),
         Promise.resolve().then(()=>post('/api/market/research',{skip_ai:true})).catch(()=>null),
@@ -301,7 +313,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
         // Keep watching existing positions from this scan's usable quotes.
         // A partial scan must not open or replace pending entry orders.
         nextAccount = runAutoWatchCycle({...snapshot.account,pending:[]},
-          freshQuotes.filter((item:any)=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
+          currentQuotes.filter((item:any)=>!item.quoteError&&Number.isFinite(item.price)&&item.price>0),
           checkedAt,now,store,symbols.length);
         nextAccount.pending = snapshot.account.pending;
         let dartDetail = '';
@@ -321,7 +333,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
         snapshot.screening = { checkedAt, signals };
-        nextAccount = runAutoCycle(snapshot.account,signals,freshQuotes,checkedAt,now,store);
+        nextAccount = runAutoCycle(snapshot.account,signals,currentQuotes,checkedAt,now,store);
         message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
       }
     } else {
