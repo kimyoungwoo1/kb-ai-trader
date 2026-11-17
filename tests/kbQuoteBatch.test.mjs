@@ -18,7 +18,7 @@ const req = (list = stocks, password = 'dashboard-pass') => new Request(base, {
   headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + password },
   body: JSON.stringify({ stocks: list }),
 })
-test('one OAuth grant and five concurrent KB quotes, then reused on the second thirty-second poll', async () => {
+test('one OAuth grant and at most two concurrent KB quotes, then reused on the second thirty-second poll', async () => {
   const oldFetch = globalThis.fetch
   let auths = 0, quoted = 0, active = 0, simultaneous = 0
   globalThis.fetch = async (target, options) => {
@@ -45,7 +45,7 @@ test('one OAuth grant and five concurrent KB quotes, then reused on the second t
     assert.equal(result.received, 5)
     assert.equal(result.results.length, 5)
     assert.ok(result.results.every(item => item.price === 12345 && Number.isFinite(Date.parse(item.checked_at))))
-    assert.ok(simultaneous >= 2, 'stocks should be checked concurrently rather than serially')
+    assert.equal(simultaneous,2, 'one quote watch must never create more than two parallel KB connections')
     assert.ok(!JSON.stringify(result).includes('private-kb-token'))
     const second = await worker.fetch(req(), env)
     assert.equal((await second.json()).received, 5)
@@ -94,4 +94,26 @@ test('authentication is required, and invalid/too many codes are rejected before
     assert.equal(tooMany.status, 400)
     assert.equal(count, 0)
   } finally { globalThis.fetch = oldFetch }
+})
+
+test('a complete gateway outage stops after two quote requests and does not fabricate prices',async()=>{
+ const oldFetch=globalThis.fetch
+ let quoteCalls=0
+ globalThis.fetch=async target=>{
+   if(String(target).endsWith('/oauth2/token'))
+     return Response.json({dataBody:{access_token:'gateway-test-token',expires_in:3600}})
+   quoteCalls++
+   return new Response('<html>522</html>',{status:522,headers:{'content-type':'text/html'}})
+ }
+ try{
+   const response=await worker.fetch(req(),mkEnv('quote-batch-gateway-breaker'))
+   const body=await response.json()
+   assert.equal(response.status,200)
+   assert.equal(body.success,true)
+   assert.equal(quoteCalls,2)
+   assert.equal(body.received,0)
+   assert.equal(body.results.length,5)
+   assert.ok(body.results.every(row=>row.price===null && !row.checked_at))
+   assert.match(body.results[2].error,/조회 보류/)
+ }finally{globalThis.fetch=oldFetch}
 })
