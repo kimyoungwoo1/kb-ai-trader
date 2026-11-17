@@ -35,4 +35,9 @@ test('Cron limits market precision to ten candidates and blocks incomplete scans
  assert.match(source,/return selected\.slice\(0,10\)/)
  assert.match(source,/quotes\.some\(\(quote:any\)=>/)
  assert.match(source,/KB 정밀 시세·수급 일부 실패 · 신규 매수 보류/)
+ const priceFailure=source.indexOf("throw Error('KB 정밀 시세·수급 일부 실패 · 신규 매수 보류')")
+ const extra=source.indexOf("post('/api/market/disclosures',{complete:true})")
+ assert.ok(priceFailure>=0&&extra>priceFailure,
+   'Failed KB price validation must abort before fetching external news/DART')
+
 })
