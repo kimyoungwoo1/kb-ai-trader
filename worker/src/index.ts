@@ -741,7 +741,11 @@ const service = {
           else quoteError = getKbErrorMessage(data);
         } catch (error) { quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
 
-        if (quote) {
+        const quotedPrice = Number(String(
+          quote?.now_prc ?? quote?.stck_prpr ?? quote?.cur_prc ??
+          quote?.current_price ?? quote?.price ?? ''
+        ).replace(/,/g,''));
+        if (quote && Number.isFinite(quotedPrice) && quotedPrice>0) {
           consecutiveQuoteFailures = 0;
           try {
           const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
