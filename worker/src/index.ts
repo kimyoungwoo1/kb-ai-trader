@@ -699,7 +699,16 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
 
       const results = [];
+      let consecutiveQuoteFailures = 0;
       for (const stock of stocks) {
+        if (consecutiveQuoteFailures >= 2) {
+          // An unreachable KB gateway is not fixed by sending 20 more calls.
+          // Never fabricate prices: a partial scan must not create BUY signals.
+          results.push({code:stock.code,name:stock.name,price:null,change:null,
+            changeRate:null,volume:null,tradeValue:null,quote:null,investor:null,
+            quoteError:'KB 연결 장애 · 연속 실패로 남은 조회 보류',investorError:'현재가 조회 실패로 생략'});
+          continue;
+        }
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
         let investor: any = null;
@@ -716,7 +725,9 @@ const service = {
           else quoteError = getKbErrorMessage(data);
         } catch (error) { quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패"; }
 
-        try {
+        if (quote) {
+          consecutiveQuoteFailures = 0;
+          try {
           const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
           const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
           const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
@@ -730,6 +741,10 @@ const service = {
           if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
           else investorError = getKbErrorMessage(data);
         } catch (error) { investorError = error instanceof Error ? error.message.slice(0, 160) : "투자자 동향 조회 실패"; }
+        } else {
+          consecutiveQuoteFailures++;
+          investorError = "현재가 조회 실패로 수급 API 생략";
+        }
 
         const toNumber = (value: unknown): number | null => {
           if (value == null || String(value).trim() === "") return null;
