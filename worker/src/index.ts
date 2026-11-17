@@ -751,10 +751,15 @@ const service = {
       const scanDeadline = Date.now() + 45_000;
       // One recovery attempt per read batch. A persistent outage still stops the scan.
       let retryAvailable = input.stopOnUpstream === true;
+      const firstReadLimit = marketEgress ? 8_000 : 15_000;
+      const retryLimit = 8_000;
+      const canRetry = () => retryAvailable && scanDeadline - Date.now() >= retryLimit + firstReadLimit;
+      class KbScanDeadlineReached extends Error {}
       class KbScanResponseFormatError extends Error {}
       const recoverableRead = (error: unknown) =>
         isKbReadTransportFailure(error) || error instanceof KbScanResponseFormatError;
       const readFailureMessage = (error: unknown, kind: string) =>
+        error instanceof KbScanDeadlineReached ? "정밀검사 시간 한도 도달 · " + kind + " 미조회" :
         kind + (error instanceof KbScanResponseFormatError ? " 응답 JSON 형식 오류" :
           error instanceof Error && ['AbortError','TimeoutError'].includes(error.name)
             ? " 타임아웃" : " 연결 또는 응답 오류");
@@ -763,7 +768,7 @@ const service = {
         const timeout = (limit: number) => {
           if (input.stopOnUpstream !== true) return limit;
           const remaining = scanDeadline - Date.now();
-          if (remaining <= 0) throw new DOMException("KB scan deadline", "TimeoutError");
+          if (remaining <= 0) throw new KbScanDeadlineReached();
           return Math.min(limit, remaining);
         };
         const read = async (attempt: number, limit: number) => {
@@ -784,14 +789,14 @@ const service = {
           }
         };
         try {
-          const result = await read(1, marketEgress ? 8_000 : 15_000);
-          if (!retryAvailable || !isKbGatewayFailure(result.response.status)) return result;
+          const result = await read(1, firstReadLimit);
+          if (!canRetry() || !isKbGatewayFailure(result.response.status)) return result;
           await result.response.body?.cancel().catch(()=>{});
         } catch (error) {
-          if (!retryAvailable || !recoverableRead(error)) throw error;
+          if (!canRetry() || !recoverableRead(error)) throw error;
         }
         retryAvailable = false;
-        return read(2, 8_000);
+        return read(2, retryLimit);
       };
       let skippedMessage = "";
       const canSkip = () => !!marketEgress && !skippedMessage && Date.now() < scanDeadline;
