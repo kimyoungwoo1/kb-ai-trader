@@ -723,11 +723,17 @@ const service = {
 
     if (url.pathname === "/api/market/investor-flow" && request.method === "POST") {
       if (!env.KB_APP_KEY || !env.KB_APP_SECRET) return json({ success: false, message: "KB_APP_KEY 또는 KB_APP_SECRET이 설정되지 않았습니다." }, 503);
-      let input: { stocks?: { code?: string; name?: string }[]; stopOnUpstream?: boolean };
-      try { input = await request.json() as { stocks?: { code?: string; name?: string }[]; stopOnUpstream?: boolean }; }
+      type ScanStock = { code?: string; name?: string; prior?: {
+        quote?: Record<string, unknown>; investor?: Record<string, unknown>;
+        quoteReceivedAt?: number; investorReceivedAt?: number;
+      }};
+      let input: { stocks?: ScanStock[]; stopOnUpstream?: boolean };
+      try { input = await request.json() as typeof input; }
       catch { return json({ success: false, message: "요청 형식이 올바르지 않습니다." }, 400); }
+      const scheduledScan = !!cronQuotes && input.stopOnUpstream === true;
       const stocks = (Array.isArray(input.stocks) ? input.stocks : [])
-        .map(item => ({ code: String(item.code || "").trim(), name: String(item.name || "").trim() }))
+        .map(item => ({ code: String(item.code || "").trim(), name: String(item.name || "").trim(),
+          prior: scheduledScan ? item.prior : undefined }))
         .filter(item => /^\d{6}$/.test(item.code))
         .filter((item, index, all) => all.findIndex(other => other.code === item.code) === index)
         .slice(0, 10);
@@ -743,7 +749,8 @@ const service = {
       const results: Array<{price:number|null; [key:string]:unknown}> = [];
       const unavailable = (message: string, status?: number) => {
         if (![401, 403, 429].includes(status ?? 0) &&
-            results.some(item => item.price !== null && Number.isFinite(item.price) && item.price > 0)) {
+            results.some(item => (item.price !== null && Number.isFinite(item.price) && item.price > 0) ||
+              (scheduledScan && item.investorReceivedAt !== undefined))) {
           return json({ success: true, partial: true, results, message });
         }
         return json({ success: false, stage: "kb_upstream", message }, 502);
@@ -753,7 +760,7 @@ const service = {
       let retryAvailable = input.stopOnUpstream === true;
       const firstReadLimit = marketEgress ? 8_000 : 15_000;
       const retryLimit = 8_000;
-      const canRetry = () => retryAvailable && scanDeadline - Date.now() >= retryLimit + firstReadLimit;
+      const canRetry = () => !abortScan && retryAvailable && scanDeadline - Date.now() >= retryLimit + firstReadLimit;
       class KbScanDeadlineReached extends Error {}
       class KbScanResponseFormatError extends Error {}
       const recoverableRead = (error: unknown) =>
@@ -791,58 +798,76 @@ const service = {
         try {
           const result = await read(1, firstReadLimit);
           if (!canRetry() || !isKbGatewayFailure(result.response.status)) return result;
+          retryAvailable = false;
           await result.response.body?.cancel().catch(()=>{});
+          if (abortScan) return result;
         } catch (error) {
           if (!canRetry() || !recoverableRead(error)) throw error;
+          retryAvailable = false;
         }
-        retryAvailable = false;
         return read(2, retryLimit);
       };
       let skippedMessage = "";
-      const canSkip = () => !!marketEgress && !skippedMessage && Date.now() < scanDeadline;
-      for (const stock of stocks) {
+      const canSkip = () => scheduledScan || (!!marketEgress && !skippedMessage && Date.now() < scanDeadline);
+      const fresh = (time?: number): time is number =>
+        typeof time === "number" && Date.now() - time >= 0 && Date.now() - time < 180_000;
+      let abortScan: { message: string; status: number } | undefined;
+      const readStock = async (stock: (typeof stocks)[number]) => {
         const headers = { Authorization: `bearer ${accessToken}`, appKey: env.KB_APP_KEY, "Content-Type": "application/json" };
         let quote: any = null;
         let investor: any = null;
+        let quoteReceivedAt: number | undefined;
+        let investorReceivedAt: number | undefined;
         let quoteError = "";
         let investorError = "";
         let stopAfterStock = false;
         const priorQuote = input.stopOnUpstream === true ? cronQuotes?.get(stock.code) : undefined;
         const quoteAge = priorQuote ? Date.now() - priorQuote.receivedAt : -1;
-        if (priorQuote && quoteAge >= 0 && quoteAge < 30_000) {
+        if (stock.prior?.quote && fresh(stock.prior.quoteReceivedAt)) {
+          quote = stock.prior.quote;
+          quoteReceivedAt = stock.prior.quoteReceivedAt;
+        } else if (priorQuote && quoteAge >= 0 && quoteAge < 30_000) {
           quote = priorQuote.payload;
+          quoteReceivedAt = priorQuote.receivedAt;
         } else try {
           const {response, data: parsed} = await readFlow(`${baseUrl}/api/v1/ivu10140`, {
             method: "POST", headers,
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", shrt_cd: stock.code } }),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if (response.status === 401) await revokeKbAccessToken(env,accessToken);
-            else if (response.status === 403) clearKbAccessToken(accessToken);
             const message = "KB 현재가 HTTP " + response.status;
-            await response.body?.cancel().catch(()=>{});
-            if (isKbGatewayFailure(response.status) && canSkip()) {
-              skippedMessage = message;
-              continue;
+            if (!isKbGatewayFailure(response.status)) {
+              abortScan ??= { message, status: response.status };
+              await response.body?.cancel().catch(()=>{});
+              return {};
             }
-            return unavailable(message, response.status);
+            await response.body?.cancel().catch(()=>{});
+            if (!canSkip()) return {failure: message, status: response.status};
+            skippedMessage ||= message;
+            if (!scheduledScan) return {};
+            quoteError = message;
+          } else {
+            const data = parsed === undefined ? await response.json() as any : parsed;
+            if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) {
+              quote = data?.dataBody || {};
+              quoteReceivedAt = Date.now();
+            } else quoteError = getKbErrorMessage(data);
           }
-          const data = parsed === undefined ? await response.json() as any : parsed;
-          if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) quote = data?.dataBody || {};
-          else quoteError = getKbErrorMessage(data);
         } catch (error) {
           if (input.stopOnUpstream === true) {
             const message = readFailureMessage(error, "KB 현재가");
-            if (recoverableRead(error) && canSkip()) {
-              skippedMessage = message;
-              continue;
-            }
-            return unavailable(message);
-          }
-          quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패";
+            if (!(recoverableRead(error) || error instanceof KbScanDeadlineReached) || !canSkip()) return {failure: message};
+            skippedMessage ||= message;
+            if (!scheduledScan) return {};
+            quoteError = message;
+          } else quoteError = error instanceof Error ? error.message.slice(0, 160) : "현재가 조회 실패";
         }
 
-        try {
+        if (abortScan) return {};
+        if (stock.prior?.investor && fresh(stock.prior.investorReceivedAt)) {
+          investor = stock.prior.investor;
+          investorReceivedAt = stock.prior.investorReceivedAt;
+        } else try {
           const today = new Date(Date.now() + 9 * 60 * 60 * 1000);
           const endDate = today.toISOString().slice(0, 10).replace(/-/g, "");
           const start = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
@@ -852,23 +877,29 @@ const service = {
             body: JSON.stringify({ dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" }, dataBody: { excg_clsf: "1", is_cd: stock.code, strt_dt: startDate, end_dt: endDate, amt_q_clsf: "2", trd_clsf: "1", acml_clsf: "0" } }),
           });
           if (input.stopOnUpstream === true && [401, 403, 429, 502, 503, 504, 522, 524].includes(response.status)) {
-            if (response.status === 401) await revokeKbAccessToken(env,accessToken);
-            else if (response.status === 403) clearKbAccessToken(accessToken);
             const message = "KB 수급 HTTP " + response.status;
+            if (!isKbGatewayFailure(response.status)) {
+              abortScan ??= { message, status: response.status };
+              await response.body?.cancel().catch(()=>{});
+              return {};
+            }
             await response.body?.cancel().catch(()=>{});
-            if (!isKbGatewayFailure(response.status)) return unavailable(message,response.status);
             stopAfterStock = !canSkip();
             investorError = message;
             skippedMessage ||= message;
           } else {
             const data = parsed === undefined ? await response.json() as any : parsed;
-            if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) investor = data?.dataBody || {};
-            else investorError = getKbErrorMessage(data);
+            if (response.ok && ["", "0", "0000", "200"].includes(String(data?.dataHeader?.resultCode ?? ""))) {
+              investor = data?.dataBody || {};
+              if (scheduledScan && (!data?.dataBody || typeof data.dataBody !== "object" || Array.isArray(data.dataBody))) {
+                investorError = "KB 수급 데이터 없음";
+              } else investorReceivedAt = Date.now();
+            } else investorError = getKbErrorMessage(data);
           }
         } catch (error) {
           if (input.stopOnUpstream === true) {
             const message = readFailureMessage(error, "KB 수급");
-            if (!recoverableRead(error)) return unavailable(message);
+            if (!(recoverableRead(error) || error instanceof KbScanDeadlineReached)) return {failure: message};
             stopAfterStock = !canSkip();
             investorError = message;
             skippedMessage ||= message;
@@ -891,7 +922,7 @@ const service = {
         const tradeValue = averagePrice != null && volume != null
           ? Math.round(averagePrice * volume)
           : null;
-        results.push({
+        return {result: {
           code: stock.code,
           name: quote?.is_nm || quote?.hts_kor_is_nm || stock.name || stock.code,
           price: rawPrice,
@@ -911,8 +942,30 @@ const service = {
           investor,
           quoteError,
           investorError,
-        });
-        if (stopAfterStock) break;
+          ...(scheduledScan ? {
+            quoteReceivedAt: rawPrice !== null && rawPrice > 0 ? quoteReceivedAt : undefined,
+            investorReceivedAt,
+          } : {}),
+        }, stopAfterStock};
+      };
+      const batchSize = scheduledScan ? 2 : 1;
+      for (let index = 0; index < stocks.length; index += batchSize) {
+        if (scheduledScan && Date.now() >= scanDeadline) {
+          skippedMessage ||= "정밀검사 시간 한도 도달 · 남은 종목 미조회";
+          break;
+        }
+        const batch = await Promise.all(stocks.slice(index, index + batchSize).map(readStock));
+        if (abortScan) {
+          const { message, status } = abortScan;
+          if (status === 401) await revokeKbAccessToken(env,accessToken);
+          else if (status === 403) clearKbAccessToken(accessToken);
+          return unavailable(message, status);
+        }
+        for (const item of batch) {
+          if (item.result) results.push(item.result);
+          if (item.failure) return unavailable(item.failure, item.status);
+        }
+        if (batch.some(item => item.stopAfterStock)) break;
       }
       if (skippedMessage) return unavailable(skippedMessage);
       return json({ success: true, api: ["IVU10140", "IVU10430"], requested: stocks.length, results, checked_at: new Date().toISOString(), period: "최근 7일" });
