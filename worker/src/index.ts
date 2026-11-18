@@ -1,3 +1,4 @@
+import {fetchDartScan} from './dartScan'
 import {kbQuotePrice} from './kbQuotePrice'
 import { KbWatchUnavailable, serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
@@ -825,10 +826,10 @@ const service = {
         let stopAfterStock = false;
         const priorQuote = input.stopOnUpstream === true ? cronQuotes?.get(stock.code) : undefined;
         const quoteAge = priorQuote ? Date.now() - priorQuote.receivedAt : -1;
-        if (stock.prior?.quote && fresh(stock.prior.quoteReceivedAt)) {
+        if (stock.prior?.quote && Number(String(kbQuotePrice(stock.prior.quote) ?? "").replaceAll(",", "")) > 0 && fresh(stock.prior.quoteReceivedAt)) {
           quote = stock.prior.quote;
           quoteReceivedAt = stock.prior.quoteReceivedAt;
-        } else if (priorQuote && quoteAge >= 0 && quoteAge < 30_000) {
+        } else if (priorQuote && quoteAge >= 0 && quoteAge < 60_000) {
           quote = priorQuote.payload;
           quoteReceivedAt = priorQuote.receivedAt;
         } else try {
@@ -985,6 +986,26 @@ const service = {
       const endDate = ymd(kstNow);
       const startDateObj = new Date(kstNow.getTime() - 2 * 24 * 60 * 60 * 1000);
       const startDate = ymd(startDateObj);
+      const formatDisclosures = (combined: Awaited<ReturnType<typeof fetchDartScan>>["combined"]) => combined.map(item => ({
+          company: item.corp_name || "회사명 없음",
+          stock_code: item.stock_code || "",
+          title: item.report_nm || "공시 제목 없음",
+          date: item.rcept_dt || "",
+          receipt_no: item.rcept_no || "",
+          reporter: item.flr_nm || "",
+          remark: item.rm || "",
+          link: item.rcept_no ? "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + item.rcept_no : "",
+          listed: Boolean(item.stock_code),
+        })).sort((a, b) => Number(b.date) - Number(a.date));
+      if (fullScan) {
+        const scan = await fetchDartScan(env.DART_API_KEY,startDate,endDate,fetchKbObserved);
+        return json({
+          success: true, disclosures: formatDisclosures(scan.combined), total_count: scan.total,
+          fetched_count: scan.combined.length, complete: !scan.paginationError,
+          pagination_error: scan.paginationError, date_range: startDate + " ~ " + endDate,
+          checked_at: new Date().toISOString(), source: "금융감독원 OpenDART 공시검색 API",
+        });
+      }
       const params = new URLSearchParams({
         crtfc_key: env.DART_API_KEY,
         bgn_de: startDate,
@@ -998,7 +1019,7 @@ const service = {
       try {
         // Trade-risk scans validate the actual API response. A probe of the
         // website root is not a prerequisite for fetching the filings list.
-        if (!fullScan) {
+        {
           const probeHost = async (target: string) => {
             try {
               const probe = await fetchKbObserved(target, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8000) });
@@ -1084,73 +1105,15 @@ const service = {
         if (result.status !== "000" && result.status !== "013") {
           return json({ success: false, message: "OpenDART 오류 " + (result.status || "미상") + ": " + (result.message || "응답 확인 필요"), status: result.status }, 502);
         }
-        // DART defaults to paginated results. Checking only the first 100 filings
-        // could miss a severe event and incorrectly call a stock risk-free.
         const totalReported = Number(result.total_count || 0);
-        const combined = [...(result.list || [])];
-        const pagesRequired = Math.ceil(totalReported / 100);
-        let pageError = "";
-        // Keep a bounded request budget while covering busy disclosure windows.
-        const lastPage = Math.min(pagesRequired, fullScan ? 30 : 1);
-        const readPage = async (page: number) => {
-          try {
-            const nextParams = new URLSearchParams(params);
-            nextParams.set("page_no", String(page));
-            const pageResponse = await fetchKbObserved("https://opendart.fss.or.kr/api/list.json?" + nextParams.toString(), {
-              redirect: "manual",
-              headers: { Accept: "application/json", "User-Agent": "curl/8.5.0" },
-              signal: AbortSignal.timeout(12000),
-            });
-            if (!pageResponse.ok || (pageResponse.status >= 300 && pageResponse.status < 400)) {
-              await pageResponse.body?.cancel().catch(() => {});
-              return { page, list: [], error: "DART 추가 페이지 HTTP " + pageResponse.status,
-                transient: isKbGatewayFailure(pageResponse.status) };
-            }
-            const pageData = await pageResponse.json() as typeof result;
-            if (pageData.status !== "000" || !Array.isArray(pageData.list)) {
-              return { page, list: [], error: "DART 추가 페이지 오류 " + (pageData.status || "자료 없음") };
-            }
-            return { page, list: pageData.list, error: "" };
-          } catch (error) {
-            return { page, list: [], error: "DART 추가 페이지 연결 실패", transient: isKbReadTransportFailure(error) };
-          }
-        };
-        let retriedPage = false;
-        for (let startPage = 2; startPage <= lastPage; startPage += 4) {
-          const pages = Array.from({ length: Math.min(4, lastPage - startPage + 1) },
-            (_, index) => startPage + index);
-          const batch = await Promise.all(pages.map(readPage));
-          const failures = batch.filter(page => page.error);
-          if (!retriedPage && failures.length === 1 && failures[0].transient) {
-            retriedPage = true;
-            batch[batch.indexOf(failures[0])] = await readPage(failures[0].page);
-          }
-          for (const pageData of batch) {
-            if (pageData.error) pageError = pageError || pageData.error + " (" + pageData.page + "페이지)";
-            else combined.push(...pageData.list);
-          }
-          if (pageError) break;
-        }
-        const disclosureComplete = !pageError && combined.length >= totalReported
-          && (totalReported === 0 || combined.length > 0);
-        const disclosures = combined.map(item => ({
-          company: item.corp_name || "회사명 없음",
-          stock_code: item.stock_code || "",
-          title: item.report_nm || "공시 제목 없음",
-          date: item.rcept_dt || "",
-          receipt_no: item.rcept_no || "",
-          reporter: item.flr_nm || "",
-          remark: item.rm || "",
-          link: item.rcept_no ? "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + item.rcept_no : "",
-          listed: Boolean(item.stock_code),
-        })).sort((a, b) => Number(b.date) - Number(a.date));
+        const disclosures = formatDisclosures(result.list || []);
         return json({
           success: true,
           disclosures,
           total_count: totalReported,
           fetched_count: disclosures.length,
-          complete: disclosureComplete,
-          pagination_error: pageError || null,
+          complete: disclosures.length >= totalReported,
+          pagination_error: null,
           date_range: startDate + " ~ " + endDate,
           checked_at: now.toISOString(),
           source: "금융감독원 OpenDART 공시검색 API",

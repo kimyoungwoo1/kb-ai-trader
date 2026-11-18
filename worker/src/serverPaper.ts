@@ -323,7 +323,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
           dartDetail = 'DART HTTP ' + disclosures.http_status;
         else if (['TimeoutError','AbortError'].includes(disclosures.error_type)) dartDetail = 'DART 요청 시간 초과';
         else if (disclosures.stage === 'api_fetch') dartDetail = 'DART 요청 실패';
-        else if (/^DART 추가 페이지 (?:HTTP \d{3}|오류 (?:\d{3}|자료 없음)|연결 실패) \(\d+페이지\)$/.test(disclosures.pagination_error ?? ''))
+        else if (/^[0-9]{8}(?::[0-9]{8})? DART [가-힣0-9A-Za-z ()]+$/.test(disclosures.pagination_error ?? '') || /^DART 추가 페이지 (?:HTTP \d{3}|오류 (?:\d{3}|자료 없음)|연결 실패) \(\d+페이지\)$/.test(disclosures.pagination_error ?? ''))
           dartDetail = disclosures.pagination_error;
         else if (disclosures.success === true && Number.isInteger(disclosures.fetched_count) && Number.isInteger(disclosures.total_count))
           dartDetail = '공시 ' + disclosures.fetched_count + '/' + disclosures.total_count + '건 수집';
