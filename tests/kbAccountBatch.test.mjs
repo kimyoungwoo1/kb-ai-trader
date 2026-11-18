@@ -134,3 +134,46 @@ test('slow holdings failure does not delay successful valuation and cash reads',
  assert.equal(batch.results.valuation.success,true)
  assert.equal(batch.results.deposit.success,true)
 })
+
+const snapshotBundle = await build({entryPoints:['worker/src/kbAccountSnapshots.ts'],bundle:true,platform:'node',format:'esm',write:false})
+const {accountSnapshots} = await import('data:text/javascript;base64,'+Buffer.from(snapshotBundle.outputFiles[0].contents).toString('base64'))
+
+test('display-only encrypted snapshots preserve last success per endpoint and isolate accounts',async()=>{
+ const rows = new Map()
+ const db = {prepare(sql){return {bind(scope,item,checked_at,nonce,payload){
+  const key = scope+':'+item
+  return {
+   async run(){
+    assert.match(sql,/WHERE excluded.checked_at > kb_account_display_snapshot.checked_at/)
+    assert.ok(!payload.includes('sensitive-account-number'))
+    if (!rows.has(key) || checked_at > rows.get(key).checked_at) rows.set(key,{checked_at,nonce,payload})
+   },
+   async first(){return rows.get(key)},
+  }
+ }}}}
+ const env = {PAPER_DB:db,KB_APP_KEY:'test-key',KB_APP_SECRET:'test-secret'}
+ const first = '2026-11-17T01:00:00.000Z'
+ const later = '2026-11-17T02:00:00.000Z'
+ const success = (checked_at,dataBody) => ({success:true,status:200,checked_at,data:{dataBody}})
+ const failed = {success:false,status:502,error_type:'TIMEOUT'}
+ const batch = (results) => ({success:true,checked_at:later,results})
+ await accountSnapshots(env,batch({
+  holdings:success(first,{Record1:[{is_no:'316140',gnrl_q:1,account:'sensitive-account-number'}]}),
+  valuation:success(first,{val_amt_sum:33000}),
+  deposit:success(first,{ordr_psbl_csh:55000}),
+ }))
+ const partial = batch({holdings:failed,valuation:success(later,{val_amt_sum:34000}),deposit:failed})
+ const saved = await accountSnapshots(env,partial)
+ assert.equal(partial.results.holdings.success,false)
+ assert.deepEqual(saved,{
+  holdings:{checked_at:first,data:{dataBody:{Record1:[{is_no:'316140',gnrl_q:1}]}}},
+  deposit:{checked_at:first,data:{dataBody:{ordr_psbl_csh:55000}}},
+ })
+ await accountSnapshots(env,batch({valuation:success(first,{val_amt_sum:1}),holdings:success(later,{Record1:[]})}))
+ assert.deepEqual(await accountSnapshots(env,batch({valuation:failed,holdings:failed})),{
+  holdings:{checked_at:later,data:{dataBody:{Record1:[]}}},
+  valuation:{checked_at:later,data:{dataBody:{val_amt_sum:34000}}},
+ })
+ assert.deepEqual(await accountSnapshots({...env,KB_APP_KEY:'other-key'},partial),{})
+ assert.deepEqual(await accountSnapshots({...env,PAPER_DB:{prepare(){throw Error('unavailable')}}},partial),{})
+})

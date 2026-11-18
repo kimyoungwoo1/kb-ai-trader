@@ -31,7 +31,10 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
   },budgetMs)
  })
  const read=async(path:string):Promise<AccountBatchEntry|null>=>{
-  try{return await Promise.race([fetchRoute(path,controller.signal),deadline])}
+  try{
+   const entry=await Promise.race([fetchRoute(path,controller.signal),deadline])
+   return entry?.success?{...entry,checked_at:new Date().toISOString()}:entry
+  }
   catch{return {success:false,status:502,stage:'account_batch',
     error_type:'NETWORK',message:'계좌 조회 중 연결 오류'}}
  }
@@ -63,8 +66,7 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
  }finally{clearTimeout(timer)}
  const result:AccountBatchResult={success:true,results,checked_at:new Date().toISOString()}
  // Cache a consistent read-only UI snapshot for at most 10 seconds, or a
- // gateway failure for 15 seconds to prevent refresh storms. Never persist
- // potentially stale account data to D1.
+ // gateway failure for 15 seconds to prevent refresh storms.
  const anyFailed=Object.values(results).some(x=>!x.success)
  if(anyFailed){
   console.log(JSON.stringify({event:'kb_account_batch_incomplete',

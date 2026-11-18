@@ -9,6 +9,7 @@ import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, revokeKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure,accountRead,marketRead,type MarketEgress} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
+import {accountSnapshots} from './kbAccountSnapshots'
 
 export interface Env {
   KB_MARKET_EGRESS?: MarketEgress;
@@ -183,7 +184,8 @@ const service = {
         const body=await response.json() as Record<string,unknown>
         return {...body,status:response.status,success:body.success===true}
       })
-      return new Response(JSON.stringify(result),{
+      const last_success = await accountSnapshots(env, result)
+      return new Response(JSON.stringify({...result,last_success}),{
         headers:{...corsHeaders,"Cache-Control":"no-store","Content-Type":"application/json"}
       })
     }

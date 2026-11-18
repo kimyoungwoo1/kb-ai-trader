@@ -50,6 +50,8 @@ export default function App() {
   // Live order preflight never reads these UI values as authoritative.
   const accountPendingRef = useRef<Promise<void> | null>(null)
   const accountNextRefreshRef = useRef(0)
+  const accountSessionRef = useRef(0)
+  const accountCheckedAtRef = useRef<Partial<Record<'holdings' | 'valuation' | 'deposit', string>>>({})
   const [cloudflareAnalysis, setCloudflareAnalysis] = useState('')
   const [geminiAnalysis, setGeminiAnalysis] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
@@ -121,6 +123,9 @@ export default function App() {
   }
 
   async function refreshAccountOnce() {
+    const session = accountSessionRef.current
+    const checkedAt = accountCheckedAtRef.current
+    const displayTime = (time: string) => new Date(time).toLocaleString('ko-KR')
     setLoading(true)
     setMessage('KB증권 계좌 조회 중...')
     setDepositMessage('예수금 조회 중...')
@@ -149,6 +154,7 @@ export default function App() {
         const data = await valuation.json().catch(() => null)
         return { results: { valuation: { ...data,
           success: valuation.ok && data?.success === true, status: valuation.status,
+          checked_at: new Date().toISOString(),
         } } }
       }
       if (!response.ok) throw Error('계좌 일괄 조회 HTTP ' + response.status)
@@ -168,14 +174,15 @@ export default function App() {
         const result = batch.results?.[endpoint]
         if (!result || result.success !== true) {
           const reason = String(result?.message || (batchFailure ? '개별 조회 미실행' : 'API 조회 실패')).slice(0, 180)
-          if (!result && batchFailure) {
-            failures.push(label + ': 개별 조회 미실행')
-            return null
-          }
-          const status = Number(result?.status) || 502
-          failures.push(label + ': ' + reason + ' (HTTP ' + status +
-            (result?.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')')
-          return null
+          const saved = batch.last_success?.[endpoint]
+          const timestamp = typeof saved?.checked_at === 'string' ? saved.checked_at : undefined
+          const lastTime = timestamp && (!checkedAt[endpoint] || timestamp > checkedAt[endpoint])
+            ? timestamp : checkedAt[endpoint]
+          const detail = !result && batchFailure ? reason : reason + ' (HTTP ' + (Number(result?.status) || 502) +
+            (result?.stage ? ', 단계 ' + String(result.stage).slice(0, 50) : '') + ')'
+          failures.push(label + ': ' + detail + (lastTime ? ' · 마지막 성공값 ' + displayTime(lastTime) : ''))
+          return timestamp && saved.data && (!checkedAt[endpoint] || timestamp > checkedAt[endpoint])
+            ? { ...saved, stale: true } : null
         }
         return result
       } catch (error) {
@@ -188,9 +195,11 @@ export default function App() {
     }
     try {
       const holdingsResult = await requestAccount('holdings', '보유 종목')
+      if (session !== accountSessionRef.current) return
       if (holdingsResult) {
         const rows = holdingsResult.data?.dataBody?.Record1
         if (Array.isArray(rows)) {
+          checkedAt.holdings = holdingsResult.checked_at
           setHoldings(rows.map((row: any) => ({
             name: row.is_nm || '종목명 없음', code: row.is_no || '',
             quantity: Number(row.gnrl_q || 0), orderable: Number(row.ordr_psbl_q || 0),
@@ -202,7 +211,9 @@ export default function App() {
 
       if (!sessionExpired) {
         const valuationResult = await requestAccount('valuation', '계좌 평가')
+        if (session !== accountSessionRef.current) return
         if (valuationResult) {
+          checkedAt.valuation = valuationResult.checked_at
           const valuationBody = valuationResult.data?.dataBody || {}
           const valuationHeader = valuationResult.data?.dataHeader || {}
           const summarySource = { ...valuationHeader, ...valuationBody }
@@ -214,8 +225,8 @@ export default function App() {
             yieldRate: numericField(summarySource.val_yld_sum),
           })
           const valuationRows = valuationBody.Record1
-          if (Array.isArray(valuationRows) && valuationRows.length) {
-            setHoldings(valuationRows.map((row: any) => ({
+          if (!valuationResult.stale && Array.isArray(valuationRows) && valuationRows.length) {
+            const valuationHoldings = valuationRows.map((row: any) => ({
               name: row.is_nm || '종목명 없음',
               code: row.is_cd || '',
               quantity: Number(row.hld_q || row.ec_q || 0),
@@ -225,36 +236,51 @@ export default function App() {
               valuation: Number(row.val_amt || 0),
               profitLoss: Number(row.val_pl || 0),
               yieldRate: Number(row.val_yld || 0),
-            })))
+            }))
+            if (Array.isArray(holdingsResult?.data?.dataBody?.Record1)) {
+              setHoldings(previous => previous.map(holding => {
+                const valuation = valuationHoldings.find((row: {code: string}) => row.code === holding.code)
+                return valuation ? { ...valuation, ...holding } : holding
+              }))
+            } else if (!checkedAt.holdings) {
+              checkedAt.holdings = valuationResult.checked_at
+              setHoldings(valuationHoldings)
+              failures.push('보유 종목: 계좌 평가 응답 기준 ' + displayTime(valuationResult.checked_at))
+            }
           }
-        } else {
-          setAccountSummary(null)
         }
       }
 
       if (!sessionExpired) {
         const depositResult = await requestAccount('deposit', '예수금')
+        if (session !== accountSessionRef.current) return
         if (depositResult) {
+          checkedAt.deposit = depositResult.checked_at
           setDeposit(depositResult.data?.dataBody || {})
-          setDepositMessage('예수금 조회 성공 · ' + new Date().toLocaleString('ko-KR'))
-        } else {
-          setDeposit(null)
-          setDepositMessage(batchFailure || failures.find(item => item.startsWith('예수금:')) || '예수금 조회 실패')
         }
+        setDepositMessage(depositResult && !depositResult.stale
+          ? '예수금 조회 성공 · ' + displayTime(depositResult.checked_at)
+          : failures.find(item => item.startsWith('예수금:')) ||
+            [batchFailure || '예수금 조회 실패', checkedAt.deposit && '마지막 성공값 ' + displayTime(checkedAt.deposit)].filter(Boolean).join(' · '))
+
       }
       if (sessionExpired) {
         logout()
         setError('세션이 만료되었습니다. 다시 로그인해 주세요.')
         return
       }
-      setMessage(batchFailure ? [batchFailure, ...failures].join(' · ') : failures.length
-        ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : '마지막 조회: ' + new Date().toLocaleString('ko-KR'))
+      const times = ([['holdings', '보유 종목'], ['valuation', '계좌 평가']] as const)
+        .filter(([item]) => checkedAt[item])
+        .map(([item, label]) => label + ' ' + displayTime(checkedAt[item]!))
+      setMessage(batchFailure ? [batchFailure, ...failures, ...times].join(' · ') : failures.length
+        ? '일부 계좌 조회 실패 · ' + failures.join(' / ') : times.join(' · '))
     } finally {
       // A manual refresh within this window reuses the shared menu state,
       // rather than creating new provider sessions during an outage.
-      if (!sessionExpired) accountNextRefreshRef.current =
-        Date.now() + (batchFailure || failures.length ? 15_000 : 10_000)
-      setLoading(false)
+      if (session === accountSessionRef.current) {
+        accountNextRefreshRef.current = Date.now() + (batchFailure || failures.length ? 15_000 : 10_000)
+        setLoading(false)
+      }
     }
   }
 
@@ -774,6 +800,9 @@ export default function App() {
     sessionStorage.removeItem('kb-trader-session')
     accountPendingRef.current = null
     accountNextRefreshRef.current = 0
+    accountSessionRef.current++
+    accountCheckedAtRef.current = {}
+    setLoading(false)
     setToken('')
     setHoldings([])
     setDeposit(null)
