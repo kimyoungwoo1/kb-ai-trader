@@ -23,9 +23,8 @@ let rejectedToken: string | null = null
 // decrypt or expose the token. A failed/unavailable D1 never disables OAuth.
 const bytesToB64=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes))
 const b64ToBytes=(value:string)=>Uint8Array.from(atob(value),char=>char.charCodeAt(0))
-async function sharedCrypto(env:KbCredentials){
- // V1 rows lack issuance time, so their 23-hour deadline cannot be reconstructed.
- const material=new TextEncoder().encode('kb-ai-trader:oauth:v2\n'+env.KB_APP_KEY+'\n'+env.KB_APP_SECRET+'\n'+kbBaseUrl(env))
+async function sharedCrypto(env:KbCredentials,version='v2'){
+ const material=new TextEncoder().encode('kb-ai-trader:oauth:'+version+'\n'+env.KB_APP_KEY+'\n'+env.KB_APP_SECRET+'\n'+kbBaseUrl(env))
  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',material))
  const aes=await crypto.subtle.importKey('raw',digest,'AES-GCM',false,['encrypt','decrypt'])
  return {aes,fingerprint:bytesToB64(digest)}
@@ -36,12 +35,21 @@ async function loadSharedToken(env:KbCredentials,key:string):Promise<string|null
   const row=await env.PAPER_DB.prepare('SELECT key_fingerprint,nonce_b64,token_b64,expires_at FROM kb_oauth_token_cache WHERE id=1').first()
   if(!row||typeof row.expires_at!=='number'||row.expires_at<=Date.now()+30_000||
      typeof row.key_fingerprint!=='string'||typeof row.nonce_b64!=='string'||typeof row.token_b64!=='string')return null
-  const {aes,fingerprint}=await sharedCrypto(env)
-  if(row.key_fingerprint!==fingerprint)return null
+  let keyMaterial=await sharedCrypto(env)
+  let expiresAt=row.expires_at
+  if(row.key_fingerprint!==keyMaterial.fingerprint){
+   // V1 bounded reuse at 24 hours. Shorten its stored deadline by an hour
+   // so a legacy token cannot exceed the revised 23-hour cap.
+   expiresAt-=60*60*1000
+   if(expiresAt<=Date.now()+30_000)return null
+   keyMaterial=await sharedCrypto(env,'v1')
+   if(row.key_fingerprint!==keyMaterial.fingerprint)return null
+  }
+  const {aes,fingerprint}=keyMaterial
   const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64ToBytes(row.nonce_b64)},aes,b64ToBytes(row.token_b64))
   const token=new TextDecoder().decode(plain)
   if(!token||token===rejectedToken)return null
-  cached={key,token,expiresAt:row.expires_at,shared:{fingerprint,nonce:row.nonce_b64}}
+  cached={key,token,expiresAt,shared:{fingerprint,nonce:row.nonce_b64}}
   return token
  }catch{return null}
 }
