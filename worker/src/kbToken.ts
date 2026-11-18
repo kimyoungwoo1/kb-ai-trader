@@ -1,6 +1,6 @@
 import {fetchKbObserved} from './kbAccountRead'
 /**
- * KB OAuth token cache: a token is reused for up to 24 hours or its shorter reported lifetime by requests
+ * KB OAuth token cache: a token is reused for up to 23 hours or its shorter reported lifetime by requests
  * routed to the same Cloudflare Worker isolate. It is NEVER returned to browsers,
  * written to assets, or stored in localStorage. New isolates can reuse the shared encrypted D1 cache.
  */
@@ -24,7 +24,8 @@ let rejectedToken: string | null = null
 const bytesToB64=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes))
 const b64ToBytes=(value:string)=>Uint8Array.from(atob(value),char=>char.charCodeAt(0))
 async function sharedCrypto(env:KbCredentials){
- const material=new TextEncoder().encode('kb-ai-trader:oauth:v1\n'+env.KB_APP_KEY+'\n'+env.KB_APP_SECRET+'\n'+kbBaseUrl(env))
+ // V1 rows lack issuance time, so their 23-hour deadline cannot be reconstructed.
+ const material=new TextEncoder().encode('kb-ai-trader:oauth:v2\n'+env.KB_APP_KEY+'\n'+env.KB_APP_SECRET+'\n'+kbBaseUrl(env))
  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',material))
  const aes=await crypto.subtle.importKey('raw',digest,'AES-GCM',false,['encrypt','decrypt'])
  return {aes,fingerprint:bytesToB64(digest)}
@@ -141,8 +142,8 @@ export async function getKbAccessToken(env: KbCredentials): Promise<string> {
       throw new KbAuthError('KB 토큰 발급 실패 (HTTP 200)', 502)
     const reported = Number(data?.dataBody?.expires_in ?? data?.expires_in)
     // Honor explicit expiry. If absent, conservatively reuse for only 5 minutes.
-    const lifetime = Number.isFinite(reported) && reported > 0 ? Math.min(reported, 24 * 60 * 60) : 300
-    const expiresAt=Date.now() + Math.max(1, lifetime - 60) * 1000
+    const lifetime = Number.isFinite(reported) && reported > 0 ? reported : 300
+    const expiresAt=Date.now() + Math.min(23 * 60 * 60, Math.max(1, lifetime - 60)) * 1000
     const entry:CachedToken = { token, key, expiresAt }
     entry.shared = await saveSharedToken(env,token,expiresAt)
     cached = entry
