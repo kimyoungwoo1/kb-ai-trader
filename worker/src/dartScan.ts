@@ -5,23 +5,56 @@ type Page = {status?:string;total_count?:number;list?:Filing[]}
 type Window = {filings:Filing[];total:number;error?:string}
 type FetchPage = (url:string,init:RequestInit)=>Promise<Response>
 
+const pageSize = 100
+const maxPages = 30
+const cacheMs = 5 * 60_000
+
+type Progress = {total:number;expiresAt:number;pages:Array<[number,Filing[]]>}
+type ProgressDb = {
+ prepare(sql:string): {bind(...values:unknown[]): {
+  first<T>():Promise<T|null>;run():Promise<unknown>
+ }}
+}
+
 let history:{key:string;range:string;expiresAt:number;value:Window}|undefined
 
-export async function fetchDartScan(key:string,start:string,end:string,fetchPage:FetchPage){
+export async function fetchDartScan(key:string,start:string,end:string,fetchPage:FetchPage,db?:ProgressDb){
  const yesterday = new Date(Date.UTC(+end.slice(0,4),+end.slice(4,6)-1,+end.slice(6,8)-1))
   .toISOString().slice(0,10).replaceAll('-','')
  const range = start+':'+yesterday
  const cached = history?.key===key && history.range===range && history.expiresAt>Date.now() ? history.value : undefined
- const deadline = Date.now()+45_000
+ const startedAt = Date.now()
+ const deadline = startedAt+45_000
 
  const readWindow = async (from:string,to:string):Promise<Window> => {
-  const filings = new Map<string,Filing>()
+  const slot = from===to ? 'today' : 'history'
+  const windowRange = from+':'+to
+  const loadProgress = async ():Promise<Progress|null> => {
+   try {
+    const row = await db?.prepare('SELECT payload FROM dart_scan_progress WHERE slot=? AND window_range=?')
+     .bind(slot,windowRange).first<{payload:string|null}>()
+    const saved = row?.payload ? JSON.parse(row.payload) as Progress : null
+    return saved && saved.expiresAt>startedAt ? saved : null
+   } catch { return null }
+  }
+  const saveProgress = async (progress:Progress|null) => {
+   try {
+    await db?.prepare(`INSERT INTO dart_scan_progress(slot,window_range,scan_started_at,payload) VALUES(?,?,?,?)
+     ON CONFLICT(slot) DO UPDATE SET window_range=excluded.window_range,
+     scan_started_at=excluded.scan_started_at,payload=excluded.payload
+     WHERE excluded.scan_started_at >= dart_scan_progress.scan_started_at`)
+     .bind(slot,windowRange,startedAt,progress ? JSON.stringify(progress) : null).run()
+   } catch { /* A storage failure must not interrupt disclosure verification. */ }
+  }
+  const progress = loadProgress()
+  const pagesRead = new Map<number,Filing[]>()
+  const receiptNumbers = new Set<string>()
   let total = 0
   let retry = true
   const read = async (page:number):Promise<{data?:Page;error?:string;transient?:boolean}> => {
    const budget = deadline-Date.now()
    if(budget<=0) return {error:'DART 조회 시간 한도 초과'}
-   const params = new URLSearchParams({crtfc_key:key,bgn_de:from,end_de:to,page_count:'100',
+   const params = new URLSearchParams({crtfc_key:key,bgn_de:from,end_de:to,page_count:String(pageSize),
     page_no:String(page),sort:'date',sort_mth:'desc'})
    try {
     const response = await fetchPage('https://opendart.fss.or.kr/api/list.json?'+params,{
@@ -46,35 +79,74 @@ export async function fetchDartScan(key:string,start:string,end:string,fetchPage
    initial=await read(1)
   }
   if(initial.error) return {filings:[],total,error:initial.error+' (1페이지)'}
-  if(initial.data?.status==='013') return {filings:[],total}
+  const saved = await progress
+  if(initial.data?.status==='013'){
+   if(saved) await saveProgress(null)
+   return {filings:[],total}
+  }
   total = Number(initial.data?.total_count)
-  if(!Number.isSafeInteger(total)||total<=0) return {filings:[],total:0,error:'DART 공시 건수 확인 실패'}
-  const add = (data?:Page) => {
-   if(!Array.isArray(data?.list)||Number(data.total_count)!==total) return false
-   for(const item of data.list){
-    if(typeof item?.rcept_no!=='string'||!item.rcept_no||filings.has(item.rcept_no)) return false
-    filings.set(item.rcept_no,item)
+  if(!Number.isSafeInteger(total)||total<=0){
+   if(saved) await saveProgress(null)
+   return {filings:[],total:0,error:'DART 공시 건수 확인 실패'}
+  }
+
+  const pages = Math.min(maxPages,Math.ceil(total/pageSize))
+  const accept = (page:number,list?:Filing[]) => {
+   if(!Array.isArray(list)||list.length!==Math.min(pageSize,total-(page-1)*pageSize)) return false
+   const ids = new Set<string>()
+   for(const item of list){
+    const id = item?.rcept_no
+    if(typeof id!=='string'||!id||ids.has(id)||receiptNumbers.has(id)) return false
+    ids.add(id)
    }
+   for(const id of ids) receiptNumbers.add(id)
+   pagesRead.set(page,list)
    return true
   }
-  let error = add(initial.data) ? undefined : 'DART 공시 목록 불일치 (1페이지)'
-  const pages = Math.min(30,Math.ceil(total/100))
-  for(let startPage=2;!error&&startPage<=pages;startPage+=2){
-   const batch = await Promise.all(Array.from({length:Math.min(2,pages-startPage+1)},(_,i)=>read(startPage+i)))
-   for(const [index,page] of batch.entries()){
-    const pageNo = startPage+index
-    let result=page
+  if(!accept(1,initial.data?.list)){
+   if(saved) await saveProgress(null)
+   return {filings:[],total,error:'DART 공시 목록 불일치 (1페이지)'}
+  }
+
+  const firstPage = initial.data?.list
+  const reusing = saved?.total===total && JSON.stringify(saved.pages[0]?.[1])===JSON.stringify(firstPage)
+  if(reusing){
+   for(const [page,list] of saved.pages.slice(1)) accept(page,list)
+  }
+  const missing = Array.from({length:pages-1},(_,i)=>i+2).filter(page=>!pagesRead.has(page))
+  let error: string|undefined
+  let changed = false
+  for(let i=0;i<missing.length&&Date.now()<deadline;i+=2){
+   const batch = missing.slice(i,i+2)
+   const results = await Promise.all(batch.map(read))
+   for(const [index,pageNo] of batch.entries()){
+    let result = results[index]
     if(result.transient&&retry){retry=false;result=await read(pageNo)}
-    if(result.error||!add(result.data)){error=(result.error||'DART 공시 목록 불일치')+' ('+pageNo+'페이지)';break}
+    if(result.error){
+     error ??= result.error+' ('+pageNo+'페이지)'
+     continue
+    }
+    if(Number(result.data?.total_count)!==total || !accept(pageNo,result.data?.list)){
+     changed = true
+     error = 'DART 공시 목록 불일치 ('+pageNo+'페이지)'
+    }
    }
   }
-  return {filings:[...filings.values()],total,error:error||(filings.size!==total?'DART 공시 수집 미완료':undefined)}
+  const entries = [...pagesRead].sort(([a],[b])=>a-b)
+  const filings = entries.flatMap(([,list])=>list)
+  error ??= filings.length!==total ? 'DART 공시 수집 미완료' : undefined
+  if(error && !changed && pagesRead.size<pages){
+   await saveProgress({total,expiresAt:reusing?saved.expiresAt:startedAt+cacheMs,pages:entries})
+  }else if(saved){
+   await saveProgress(null)
+  }
+  return {filings,total,error}
  }
 
  const [today,previous] = await Promise.all([
   readWindow(end,end),
   cached ?? readWindow(start,yesterday).then(value=>{
-   if(!value.error) history={key,range,expiresAt:Date.now()+5*60_000,value}
+   if(!value.error) history={key,range,expiresAt:Date.now()+cacheMs,value}
    return value
   }),
  ])

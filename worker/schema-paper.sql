@@ -130,3 +130,4 @@ CREATE TABLE IF NOT EXISTS live_cancel_journal (
 );
 
 CREATE TABLE IF NOT EXISTS kb_account_display_snapshot (scope TEXT NOT NULL,item TEXT NOT NULL,checked_at TEXT NOT NULL,nonce TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(scope,item));
+CREATE TABLE IF NOT EXISTS dart_scan_progress (slot TEXT PRIMARY KEY, window_range TEXT NOT NULL, scan_started_at INTEGER NOT NULL, payload TEXT);

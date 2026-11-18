@@ -44,3 +44,63 @@ test('duplicated or drifting pages leave validation incomplete, including on suc
  }
  assert.equal(priorReads,4)
 })
+
+test('continues after a failed page and resumes only the gap after checking page 1',async()=>{
+ const rows = new Map()
+ const db = {prepare(sql){return {bind(slot,range,startedAt,payload){return {
+  async first(){return rows.get(slot)?.range===range ? rows.get(slot) : null},
+  async run(){rows.set(slot,{range,startedAt,payload})},
+ }}}}}
+ let pageTwoFails = true
+ const requested = []
+ const fetchPage = async url=>{
+  const query = new URL(url).searchParams
+  if(query.get('end_de')==='20261117') return Response.json({status:'013'})
+  const page = Number(query.get('page_no'))
+  requested.push(page)
+  if(page===2 && pageTwoFails) return new Response(null,{status:503})
+  return Response.json({status:'000',total_count:301,list:Array.from(
+   {length:page===4?1:100},(_,i)=>({rcept_no:page+':'+i}))})
+ }
+ const first = await fetchDartScan('resume','20261116','20261118',fetchPage,db)
+ assert.match(first.paginationError,/20261118 DART HTTP 503 \(2페이지\)/)
+ assert.equal(first.combined.length,201)
+ assert.ok(first.combined.some(row=>row.rcept_no==='4:0'))
+ assert.deepEqual(requested.sort(),[1,2,2,3,4])
+
+ pageTwoFails = false
+ requested.length = 0
+ const next = await fetchDartScan('resume','20261116','20261118',fetchPage,db)
+ assert.equal(next.paginationError,null)
+ assert.equal(next.combined.length,301)
+ assert.deepEqual(requested,[1,2])
+ assert.equal(rows.get('today').payload,null)
+})
+
+test('discards partial pages when the first page changes even at the same total',async()=>{
+ let payload
+ const db = {prepare(){return {bind(slot,range,startedAt,value){return {
+  async first(){return slot==='today' ? {payload} : null},
+  async run(){if(slot==='today') payload=value},
+ }}}}}
+ let version = 1
+ const requested = []
+ const fetchPage = async url=>{
+  const query = new URL(url).searchParams
+  if(query.get('end_de')==='20261117') return Response.json({status:'013'})
+  const page = Number(query.get('page_no'))
+  requested.push(page)
+  if(page===2 && version===1) return new Response(null,{status:503})
+  return Response.json({status:'000',total_count:201,list:Array.from(
+   {length:page===3?1:100},(_,i)=>({rcept_no:version+':'+page+':'+i}))})
+ }
+ const first = await fetchDartScan('revalidate','20261116','20261118',fetchPage,db)
+ assert.match(first.paginationError,/2페이지/)
+ version = 2
+ requested.length = 0
+ const next = await fetchDartScan('revalidate','20261116','20261118',fetchPage,db)
+ assert.equal(next.paginationError,null)
+ assert.equal(next.combined.length,201)
+ assert.ok(next.combined.every(row=>row.rcept_no.startsWith('2:')))
+ assert.deepEqual(requested,[1,2,3])
+})

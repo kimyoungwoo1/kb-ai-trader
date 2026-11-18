@@ -998,7 +998,7 @@ const service = {
           listed: Boolean(item.stock_code),
         })).sort((a, b) => Number(b.date) - Number(a.date));
       if (fullScan) {
-        const scan = await fetchDartScan(env.DART_API_KEY,startDate,endDate,fetchKbObserved);
+        const scan = await fetchDartScan(env.DART_API_KEY,startDate,endDate,fetchKbObserved,env.PAPER_DB);
         return json({
           success: true, disclosures: formatDisclosures(scan.combined), total_count: scan.total,
           fetched_count: scan.combined.length, complete: !scan.paginationError,
