@@ -20,7 +20,7 @@ const quote = (code = '005930', key = env.DASHBOARD_API_KEY) => new Request(endp
   body: JSON.stringify({ code, exchange: '1' }),
 })
 
-test('multiple existing KB price calls share the token for up to 24 hours', async () => {
+test('multiple existing KB price calls share the token for up to 23 hours', async () => {
   const fetchOriginal = globalThis.fetch
   const nowOriginal = Date.now
   const start = Date.parse('2026-11-06T01:00:00Z')
@@ -46,13 +46,13 @@ test('multiple existing KB price calls share the token for up to 24 hours', asyn
     assert.equal(JSON.stringify(value).includes('private-test-token'), false)
     clock += 30_000
     await worker.fetch(quote('035720'), env)
-    clock = start + 23 * 60 * 60 * 1000
+    clock = start + 23 * 60 * 60 * 1000 - 1
     await worker.fetch(quote('030200'), env)
     assert.equal(authCalls, 1)
     assert.equal(priceCalls, 3)
-    clock = start + 24 * 60 * 60 * 1000 - 60_000
+    clock = start + 23 * 60 * 60 * 1000
     await worker.fetch(quote('005930'), env)
-    assert.equal(authCalls, 2, '24-hour cap forces a fresh token')
+    assert.equal(authCalls, 2, '23-hour cap forces a fresh token')
     assert.equal(priceCalls, 4)
   } finally {
     globalThis.fetch = fetchOriginal
@@ -60,7 +60,7 @@ test('multiple existing KB price calls share the token for up to 24 hours', asyn
   }
 })
 
-test('a shorter KB expiry overrides the 24-hour reuse maximum', async () => {
+test('a shorter KB expiry overrides the 23-hour reuse maximum', async () => {
   const fetchOriginal = globalThis.fetch
   const nowOriginal = Date.now
   let now = Date.parse('2026-11-06T01:00:00Z'), authCalls = 0
