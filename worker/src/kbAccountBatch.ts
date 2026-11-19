@@ -52,15 +52,15 @@ export async function runAccountBatch(key:string,fetchRoute:(route:string,signal
    results[name]=await readEntry(path)
   }))
   const candidates=routes.filter(([name])=>transient(results[name]))
-  if(candidates.length&&canRetry()&&!Object.values(results).some(authOrLimit)){
-   const [[name,path],...remaining]=candidates
-   const probe=await read(path)
-   if(probe&&(probe.success||authOrLimit(probe)))results[name]=probe
-   if(probe?.success&&canRetry()){
-    await Promise.all(remaining.map(async ([name,path])=>{
-     const result=await read(path)
-     if(result&&(result.success||authOrLimit(result)))results[name]=result
-    }))
+  if(candidates.length&&!Object.values(results).some(authOrLimit)){
+   let reachable=Object.values(results).some(entry=>entry.success)
+   for(const [name,path] of candidates){
+    if(!canRetry())break
+    const probe=await read(path)
+    if(probe&&(probe.success||authOrLimit(probe)))results[name]=probe
+    if(probe&&authOrLimit(probe))break
+    reachable ||= probe?.success===true
+    if(!reachable)break
    }
   }
  }finally{clearTimeout(timer)}

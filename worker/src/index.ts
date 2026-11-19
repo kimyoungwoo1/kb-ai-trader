@@ -105,18 +105,13 @@ const service = {
       if (!env.DEPLOY_PROBE_TOKEN || request.headers.get("X-Deploy-Probe") !== env.DEPLOY_PROBE_TOKEN)
         return json({ success:false, message:"Not Found" },404);
       const checks: Record<string, {success:boolean;stage:string;http_status:number;auth_issue?:string;upstream_status?:number;error_type?:string}> = {};
-      let upstreamUnavailable=false;
-      for (const [name,route] of [["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const) {
-        // This is deployment verification, not an availability stress test.
-        // Never initiate valuation after an unresolved KB gateway failure.
-        if (upstreamUnavailable) {
-          checks[name]={success:false,stage:'skipped_upstream_unavailable',http_status:503};
-          continue;
-        }
+      const probeSignal=AbortSignal.any([request.signal,AbortSignal.timeout(50_000)]);
+      const routes=[["holdings","/api/kb/holdings"],["valuation","/api/kb/valuation"]] as const;
+      const probeRead=async (name: typeof routes[number][0],route:string) => {
         try {
           const subrequest=new Request('https://localhost'+route,{
             method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+env.DASHBOARD_API_KEY},
-            body:'{}',
+            body:'{}',signal:probeSignal,
           });
           if (env.KB_MARKET_EGRESS) accountBatchRequests.add(subrequest);
           const reply=await service.fetch(subrequest,env);
@@ -138,16 +133,24 @@ const service = {
             ...(upstreamStatus?{upstream_status:upstreamStatus}:{}),
             ...(errorType?{error_type:errorType}:{}),
             ...(authIssue?{auth_issue:authIssue}:{})};
-          upstreamUnavailable=!successful&&(
-            stage==='authentication' || stage.endsWith('_network') ||
-            (stage.endsWith('_response') && (
-              [502,503,504,522,524].includes(upstreamStatus) ||
-              ['NETWORK','TIMEOUT'].includes(String(result.error_type||''))
-            ))
-          );
         } catch {
-          checks[name]={success:false,stage:'network',http_status:502};
-          upstreamUnavailable=true;
+          checks[name]={success:false,stage:'network',http_status:502,error_type:'NETWORK'};
+        }
+      };
+      const blocked=(check: typeof checks[string])=>check.stage==='authentication' ||
+        [401,403,429].includes(check.upstream_status??check.http_status);
+      const localFailure=(check: typeof checks[string])=>!check.success && !blocked(check) &&
+        !check.upstream_status && ['TIMEOUT','NETWORK'].includes(check.error_type??'');
+      const [holdings,valuation]=routes;
+      await probeRead(...holdings);
+      if(blocked(checks.holdings)||isKbGatewayFailure(checks.holdings.upstream_status)||probeSignal.aborted){
+        checks.valuation={success:false,stage:'skipped_upstream_unavailable',http_status:503};
+      }else{
+        await probeRead(...valuation);
+        // A fresh reply from the other route warrants one targeted recovery.
+        if(!probeSignal.aborted){
+          if(checks.valuation.success&&localFailure(checks.holdings))await probeRead(...holdings);
+          else if(checks.holdings.success&&localFailure(checks.valuation))await probeRead(...valuation);
         }
       }
       const success=checks.holdings.success&&checks.valuation.success;
@@ -333,7 +336,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm1801`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{mkt_tm_ccd:"1",nxt_key:"",inq_clsf:"0",is_no:""}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS, 1_500) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS, { holdingsBackupDelayMs:1_500, directTimeoutMs:8_000 }) : undefined);
       if(!checked.success){
         return json({success:false,stage:"holdings_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -363,7 +366,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm0004`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS, { directTimeoutMs:8_000 }) : undefined);
       if(!checked.success){
         return json({success:false,stage:"deposit_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,
@@ -385,7 +388,7 @@ const service = {
         message: error instanceof KbAuthError ? error.message : "KB 인증 실패" }, 502); }
       const checked=await readKbAccountJson(`${baseUrl}/api/v1/ssqm2952`,
         {Authorization:`Bearer ${accessToken}`,"Content-Type":"application/json"},{dataHeader:{ipAddr:"127.0.0.1",macAddr:"00:00:00:00:00:00"},dataBody:{excg_mktpr_ccd:"A"}},request.signal,!fromAccountBatch,
-        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS) : undefined);
+        fromAccountBatch ? accountRead(env.KB_MARKET_EGRESS, { directTimeoutMs:8_000 }) : undefined);
       if(!checked.success){
         return json({success:false,stage:"valuation_response",http_status:checked.status,
           error_type:checked.issue,content_type:checked.contentType,retried:checked.retried,

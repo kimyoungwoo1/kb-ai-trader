@@ -68,7 +68,7 @@ test('a prompt holdings response does not start a backup read',async()=>{
  globalThis.fetch=async()=>{direct++;return Response.json({})}
  try{
   for(const status of [200,401,429]){
-   const read=accountRead({fetch:async()=>new Response(null,{status})},1)
+   const read=accountRead({fetch:async()=>new Response(null,{status})},{holdingsBackupDelayMs:1})
    assert.equal((await read(holdingsUrl,holdingsInit)).status,status)
   }
   assert.equal(direct,0)
@@ -82,7 +82,7 @@ test('a slow private holdings read starts a backup and aborts the losing request
  const read=accountRead({fetch(request){
   primarySignal=request.signal
   return new Promise((_,reject)=>primarySignal.addEventListener('abort',()=>reject(primarySignal.reason),{once:true}))
- }},1)
+ }},{holdingsBackupDelayMs:1})
  try{
   assert.deepEqual(await (await read(holdingsUrl,holdingsInit)).json(),{route:'direct'})
   assert.equal(direct,1)
@@ -98,7 +98,22 @@ test('gateway failure on the backup does not hide a usable private response',asy
   return new Response(null,{status:522})
  }
  try{
-  const read=accountRead({fetch:()=>new Promise(resolve=>{finish=resolve})},1)
+  const read=accountRead({fetch:()=>new Promise(resolve=>{finish=resolve})},{holdingsBackupDelayMs:1})
   assert.deepEqual(await (await read(holdingsUrl,holdingsInit)).json(),{route:'private'})
  }finally{globalThis.fetch=saved}
+})
+
+test('dashboard direct fallback uses its own deadline when the binding fails',async()=>{
+ const original=globalThis.fetch
+ const keepAlive=setInterval(()=>{},100)
+ globalThis.fetch=async (_url,{signal})=>new Promise((_,reject)=>{
+  signal.addEventListener('abort',()=>reject(signal.reason),{once:true})
+ })
+ try{
+  const read=accountRead({fetch:async()=>new Response(null,{status:502})},{directTimeoutMs:10})
+  await assert.rejects(read(holdingsUrl,holdingsInit),{name:'TimeoutError'})
+ }finally{
+  clearInterval(keepAlive)
+  globalThis.fetch=original
+ }
 })

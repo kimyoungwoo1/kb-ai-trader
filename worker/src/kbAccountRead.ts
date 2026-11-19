@@ -188,16 +188,23 @@ async function readHoldingsWithBackup(
 }
 
 // Route only explicitly permitted, read-only account APIs through the private Worker.
-export const accountRead = (egress?: MarketEgress, holdingsBackupDelayMs?: number): typeof fetchKbObserved | undefined => {
+type AccountReadOptions = { holdingsBackupDelayMs?: number; directTimeoutMs?: number }
+export const accountRead = (egress?: MarketEgress, options: AccountReadOptions = {}): typeof fetchKbObserved | undefined => {
   if (!egress) return undefined
   return async (endpoint, init, trace = {requestId:crypto.randomUUID(),attempt:1}) => {
     const url = new URL(endpoint)
     if (url.origin !== 'https://developer.kbsec.com:32484' || init.method !== 'POST' || !isKbAccountReadPath(url.pathname))
       return fetchKbObserved(endpoint, init, trace)
+    const {holdingsBackupDelayMs,directTimeoutMs}=options
+    const direct=(parentSignal: AbortSignal | null | undefined)=>{
+      const timeout=directTimeoutMs===undefined ? undefined : AbortSignal.timeout(directTimeoutMs)
+      const signal=timeout&&parentSignal ? AbortSignal.any([timeout,parentSignal]) : timeout??parentSignal
+      return fetchKbObserved(endpoint,{...init,signal,redirect:'manual'},{...trace,attempt:2})
+    }
     if (holdingsBackupDelayMs !== undefined && url.pathname === '/api/v1/ssqm1801' && typeof init.body === 'string') {
       return readHoldingsWithBackup(
         signal => marketRead(endpoint, {...init,signal,redirect:'manual'}, {...trace,attempt:1}, 6000, egress, 750),
-        signal => fetchKbObserved(endpoint, {...init,signal,redirect:'manual'}, {...trace,attempt:2}),
+        direct,
         init.signal, holdingsBackupDelayMs,
       )
     }
@@ -210,7 +217,7 @@ export const accountRead = (egress?: MarketEgress, holdingsBackupDelayMs?: numbe
       if (!isKbReadTransportFailure(error)) throw error
     }
     init.signal?.throwIfAborted()
-    return fetchKbObserved(endpoint, {...init,redirect:'manual'}, {...trace,attempt:2})
+    return direct(init.signal)
   }
 }
 

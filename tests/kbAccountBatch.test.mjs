@@ -177,3 +177,17 @@ test('display-only encrypted snapshots preserve last success per endpoint and is
  assert.deepEqual(await accountSnapshots({...env,KB_APP_KEY:'other-key'},partial),{})
  assert.deepEqual(await accountSnapshots({...env,PAPER_DB:{prepare(){throw Error('unavailable')}}},partial),{})
 })
+
+test('a repeated holdings timeout does not stop valuation recovery when cash succeeded',async()=>{
+ const attempts=new Map()
+ const result=await runAccountBatch('successful-deposit-independent-valuation',async route=>{
+  const count=(attempts.get(route)??0)+1
+  attempts.set(route,count)
+  if(route.endsWith('/holdings') || (route.endsWith('/valuation')&&count===1))
+   return {success:false,status:502,error_type:'TIMEOUT'}
+  return {success:true,status:200}
+ })
+ assert.equal(result.results.holdings.success,false)
+ assert.equal(result.results.valuation.success,true)
+ assert.deepEqual([...attempts.values()],[2,2,1])
+})

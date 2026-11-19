@@ -97,3 +97,32 @@ test('deploy probe stops after persistent KB 522 and never claims successful val
   assert.equal(valuation,0)
  }finally{globalThis.fetch=previous}
 })
+
+test('deploy probe checks valuation after a holdings timeout and recovers only holdings',async()=>{
+ const original=globalThis.fetch
+ const reads=[]
+ let holdings=0
+ const isolated={...env,KB_APP_KEY:'deploy-isolated-holdings-timeout',KB_MARKET_EGRESS:{
+  async fetch(request){
+   const path=new URL(request.url).pathname
+   reads.push(path)
+   if(path.endsWith('/ssqm1801')&&++holdings===1)
+    return new Response(null,{status:502,headers:{'X-KB-Egress-Error':'timeout'}})
+   return Response.json({dataBody:{Record1:[]}})
+  }
+ }}
+ globalThis.fetch=async input=>{
+  const url=String(input)
+  if(url.endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'mock',expires_in:3600}})
+  assert.ok(url.endsWith('/ssqm1801'))
+  throw new DOMException('simulated deadline','TimeoutError')
+ }
+ try{
+  const response=await worker.fetch(request(env.DEPLOY_PROBE_TOKEN),isolated)
+  const result=await response.json()
+  assert.equal(response.status,200)
+  assert.equal(result.checks.holdings.success,true)
+  assert.equal(result.checks.valuation.success,true)
+  assert.deepEqual(reads,['/api/v1/ssqm1801','/api/v1/ssqm2952','/api/v1/ssqm1801'])
+ }finally{globalThis.fetch=original}
+})
