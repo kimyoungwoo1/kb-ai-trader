@@ -301,7 +301,9 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
       const newsSources = checks.filter((x:any)=>x.status===200 && x.count>0).length;
       const catalyst: CatalystSnapshot = {
-        checkedAt, newsOk: news.success===true && newsSources>0,
+        checkedAt,
+        ...(partial ? {skippedReason:'KB 정밀 시세·수급 미확인 · 다음 정밀검사에서 뉴스·공시 조회'} : {}),
+        newsOk: news.success===true && newsSources>0,
         dartOk: disclosures.success===true,
         dartComplete: disclosures.complete===true,
         articles: Array.isArray(news.articles)?news.articles:[],

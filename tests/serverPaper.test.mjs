@@ -167,7 +167,7 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   const db=makeDb()
   await serverPaperApi(db,'migrate','0::0:')
   await serverPaperApi(db,'start')
-  let reads=0
+  let reads=0, catalystCalls=0
   const stock={code:'100000',name:'Test',price:5000}
   const missing={code:'100001',name:'Missing',price:5100}
   const post=async (path, body)=>{
@@ -179,6 +179,7 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
       assert.deepEqual(body.stocks.map(item=>item.code),[missing.code])
       return {success:true,results:[missing]}
     }
+    if(['/api/market/disclosures','/api/market/research'].includes(path))catalystCalls++
     if(path==='/api/market/disclosures')return {success:true,complete:true,disclosures:[]}
     if(path==='/api/market/research')return {success:true,diagnostics:[{status:200,count:1}],articles:[]}
     throw Error('unexpected provider call '+path)
@@ -190,10 +191,17 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   assert.match(partial.message,/신규 매수 보류/)
   assert.equal(partial.filled,0)
   assert.equal(partial.partial,true)
+  assert.equal(catalystCalls,0)
+  const pendingCatalyst=JSON.parse(db.server.snapshot_json).catalyst
+  assert.match(pendingCatalyst.skippedReason,/KB 정밀 시세·수급 미확인/)
+  assert.equal(pendingCatalyst.newsOk,false)
+  assert.equal(pendingCatalyst.dartComplete,false)
   assert.equal(JSON.parse(db.server.snapshot_json).screening,null)
   assert.equal((await tick(25)).result,'kb_cooldown')
   assert.equal((await tick(26)).result,'scanned')
   assert.equal(reads,4)
+  assert.equal(catalystCalls,2)
+  assert.equal(JSON.parse(db.server.snapshot_json).catalyst.skippedReason,undefined)
   assert.equal(JSON.parse(db.server.snapshot_json).screening.signals.length,2)
   assert.equal(JSON.parse(db.server.snapshot_json).scanProgress,undefined)
   assert.equal(db.server.last_error,null)

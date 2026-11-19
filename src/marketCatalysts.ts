@@ -17,6 +17,7 @@ export type MarketDisclosure = {
 }
 export type CatalystSnapshot = {
   checkedAt: string
+  skippedReason?: string
   newsOk: boolean
   dartOk: boolean
   dartComplete: boolean
