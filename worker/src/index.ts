@@ -1,11 +1,12 @@
+import {runLiveStrategy} from './liveStrategy'
 import {fetchDartScan} from './dartScan'
 import {kbQuotePrice} from './kbQuotePrice'
 import { KbWatchUnavailable, serverPaperApi } from './serverPaper'
 import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
-import { liveTrialApi, observePaperFill, recordLiveDecision } from './liveTrial'
-import { processLiveFill, reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
+import { liveTrialApi } from './liveTrial'
+import { reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
 import { getKbAccessToken, clearKbAccessToken, revokeKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
 import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure,accountRead,marketRead,type MarketEgress} from './kbAccountRead'
@@ -1418,16 +1419,6 @@ const service = {
       const outcome=phase==='market'?await runMonitoredPaperCron(env.PAPER_DB,post,now):null;
       if(outcome?.fills?.length){
         for(const fill of outcome.fills){
-          // Audit only: no live order calls. DB uniqueness prevents duplicate
-          // candidate creation even across repeated Cron events.
-          try{await observePaperFill(env.PAPER_DB,fill);}catch{console.warn('Live trial audit write failed')}
-          // Hard locked by default. A single D1 reservation/claim prevents
-          // duplicate broker POSTs even when Cron repeats after an error.
-          let decision='execution_error';
-          try {decision=await processLiveFill(env.PAPER_DB,env,fill);}
-          catch {console.warn('Real pilot execution blocked by safety error')}
-          try {await recordLiveDecision(env.PAPER_DB,fill,decision);}
-          catch {console.warn('Live trial decision audit write failed')}
           const notice=formatPaperFillNotification(fill);
           await publishNotification(env,{
             eventKey:'fill:'+fill.id,kind:'trade',...notice
@@ -1435,6 +1426,10 @@ const service = {
         }
       }
       if(env.PAPER_DB){
+        if(phase==='market'){
+          try {await runLiveStrategy(env.PAPER_DB,env,post);}
+          catch {console.warn('Live strategy account or quote read unavailable')}
+        }
         // Reconcile only known KB order IDs; never infer that an unanswered
         // order was rejected and never submit a duplicate order.
         try{await reconcileLiveOrders(env.PAPER_DB,env)}

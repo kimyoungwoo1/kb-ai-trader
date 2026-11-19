@@ -16,7 +16,7 @@ const API='/api/live/trial'
 const decisionLabels:Record<string,string>={
  accepted_not_filled:'KB 주문 접수 · 체결 확인 대기', rejected:'KB 주문 거부',
  unknown_order_result:'주문 접수 여부 미확정 · 원장 확인 필요',
- budget_exceeded:'지정가가 시험 예산을 초과해 매수 보류',
+ budget_exceeded:'1주와 현금 여유분이 5만원 한도를 초과해 매수 보류',
  history_unavailable:'KB 주문·체결 조회 미확인 · 신규 매수 보류',
  buying_power_unverified:'주문 미전송 · KB 주문가능금액 확인 실패',
  buy_holdings_unverified:'주문 미전송 · KB 보유수량 교차 확인 실패',
@@ -127,7 +127,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
         <span>주문 방식: 지정가</span><span>중복 후보: 서버 D1에서 차단</span>
       </div>
       <div className="notification-actions"><button className="outline-button" disabled={busy} onClick={()=>void disable()}><Lock size={14}/> 실주문 잠금 확인</button></div>
-      {status?.hardEnabled&&!armed&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 1주, 수수료 여유금 포함 5만 원 상한이며 장중 가상매매의 새 체결 신호만 사용합니다. 직접 잠글 때까지 다음 정규장에도 자동 주문이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
+      {status?.hardEnabled&&!armed&&<p role="alert" className="live-trial-inline-error">실제 KB 계좌에서 자동 주문이 발생할 수 있습니다. 하루 1회, 1주, 수수료 여유금 포함 5만 원 상한이며 정밀검사 후보 중 예산에 맞는 종목의 후속 시세를 확인합니다. 직접 잠글 때까지 다음 정규장에도 자동 주문이 전송될 수 있습니다. KB 주문번호와 체결을 증권사 앱에서 반드시 확인해 주세요.</p>}
       {status?.hardEnabled&&!armed&&<div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input className="live-trial-field" aria-label="실주문 활성화 확인 문구" style={{width:300}}
           placeholder={LIVE_BUY_CONFIRMATION} value={confirmation}
@@ -154,7 +154,7 @@ export default function LiveTrial({token,holdings,accountSummary,deposit,deposit
           ?? decisionLabels[diagnostic.decision] ?? '진단 결과 확인 필요'}</p>
       </div>}
       {!status?.progress?<p className="notification-hint">{status||statusError?'서버 진행 기록을 확인할 수 없습니다.':'서버 진행 상황 조회 중'}</p>:<>
-        <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!armed?'실주문 잠금 상태':!status.enabled?'자동매매 승인 유지 · 정규장 대기':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버의 새 체결 신호를 받아 주문 조건을 검사합니다.'}</p>
+        <p className="notification-hint">{statusError?'상태 조회 실패 · 아래는 마지막으로 확인한 기록':!armed?'실주문 잠금 상태':!status.enabled?'자동매매 승인 유지 · 정규장 대기':status.progress.paperMode!=='running'?'서버 자동 가상매매가 중지돼 새 실주문 신호를 받지 않습니다.':'실주문 활성화 · 서버 정밀검사에서 5만원 한도에 맞는 후보를 선정하고, 후속 시세로 진입 조건을 검사합니다.'}</p>
         {status.progress.tick&&<p className="notification-hint">
           최근 서버 감시 {new Date(status.progress.tick.finished_at).toLocaleString('ko-KR')} · {status.progress.tick.message} · 가상 체결 {status.progress.tick.filled}건
         </p>}

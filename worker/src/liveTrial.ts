@@ -173,7 +173,7 @@ export async function liveTrialApi(db:Db|undefined,input:unknown,env?:LiveEnv):P
 }
 export async function observePaperFill(db:Db|undefined,fill:any,now=new Date()):Promise<boolean>{
   if(!db||fill?.side!=='BUY'||fill?.test)return false
-  // Only committed paper fills, not client-supplied signals, may create audit entries.
+  // Only server-generated strategy events may create audit entries.
   // We intentionally never call a broker order endpoint here.
   const candidate:TrialCandidate={
     eventId:String(fill.id||''),code:String(fill.code||''),name:String(fill.name||'').slice(0,80),

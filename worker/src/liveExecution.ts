@@ -3,7 +3,7 @@ import {LIVE_BUY_LIMIT_WON,LIVE_BUY_CONFIRMATION,isLiveOrderTick,liveBuyRequired
 /**
  * Real-account trial engine. HARD LOCKED by default: Cloudflare has no
  * LIVE_TRADING_HARD_ENABLE binding; D1 live_execution_gate defaults to OFF.
- * Automatic trades require committed paper fills. Manual buys use a separate gate.
+ * The live strategy supplies independent budget-qualified signals. Manual buys use a separate gate.
  */
 import {accountRead,fetchKbObserved,type KbAccountEgress} from './kbAccountRead'
 import {readKbBuyingPower,evaluateBuyPreview} from './liveRiskPreflight'
@@ -241,7 +241,11 @@ export async function diagnoseAutoBuy(db:Db,env:LiveEnv,now=new Date()){
  const row=await db.prepare('SELECT mode,snapshot_json FROM server_paper_state WHERE id=1').first()
  if(row?.mode!=='running')return {decision:'paper_stopped'}
  if(!gate.enabled)return {decision:'locked'}
- const screening=JSON.parse(row.snapshot_json).screening
+ const snapshot=JSON.parse(row.snapshot_json)
+ const screening=snapshot.liveScreening ? {
+  checkedAt:snapshot.liveScreening.checkedAt,
+  signals:snapshot.liveScreening.candidates.map((item:any)=>({...item,price:item.trigger})),
+ } : snapshot.screening
  const signals=Array.isArray(screening?.signals)?screening.signals:[]
  const valid=signals.filter((item:any)=>/^\d{6}$/.test(item?.code)&&Number.isSafeInteger(item.price)&&item.price>0)
  const item=valid.find((signal:any)=>liveBuyRequiredCash(signal.price)<=MAX_PILOT_WON)??valid[0]

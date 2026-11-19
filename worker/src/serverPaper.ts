@@ -1,3 +1,4 @@
+import {liveCandidates} from './liveCandidates'
 import {isKrxRegularSession as marketOpen} from '../../src/marketSession'
 export {isKrxRegularSession as marketOpen} from '../../src/marketSession'
 /**
@@ -13,7 +14,7 @@ import type { PaperLedger } from '../../src/paperLedger';
 type Db = any;
 type ScanSymbol = {code:string;name:string};
 type ScanProgress = {startedAt:number;symbols:ScanSymbol[];quotes:any[]};
-type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number; scanLease?:{slot:number; expiresAt:number}; modeEpoch?:number };
+type Snapshot = { format: number; savedAt: string; account: AutoAccount; ledger: PaperLedger; screening?: unknown; liveScreening?: {checkedAt:string;candidates:ReturnType<typeof liveCandidates>}; catalyst?: CatalystSnapshot; scanProgress?: ScanProgress; scanRetryAfterSlot?:number; scanLease?:{slot:number; expiresAt:number}; modeEpoch?:number };
 type StateRow = { busy_until:number; revision: number; mode: string; cycle_slot: number; updated_at: string; snapshot_json: string; last_error: string | null };
 type Post = (path: string, data: unknown) => Promise<any>;
 export type TickOutcome = { result:'market_closed'|'stopped'|'duplicate'|'busy'|'scanned'|'watched'|'no_symbols'|'kb_cooldown'|'error'; message:string; filled:number; scanned:number; fills?: AutoFill[]; partial?: boolean };
@@ -309,6 +310,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       };
       snapshot.catalyst = catalyst;
       if(incompleteScan){
+        delete snapshot.liveScreening;
         partialRun = true;
         // Keep watching existing positions from this scan's usable quotes.
         // A partial scan must not open or replace pending entry orders.
@@ -333,6 +335,7 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
         snapshot.screening = { checkedAt, signals };
+        snapshot.liveScreening = {checkedAt,candidates:liveCandidates(signals,checkedAt)};
         nextAccount = runAutoCycle(snapshot.account,signals,currentQuotes,checkedAt,now,store);
         message = '시장 정밀검사 '+quotes.length+'종목 · '+(catalyst.newsOk && catalyst.dartComplete ? '뉴스·공시 검증':'신규 매수 보류');
       }
