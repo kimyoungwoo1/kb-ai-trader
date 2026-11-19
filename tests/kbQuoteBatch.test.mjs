@@ -1,10 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-const bundle = await build({ entryPoints: ['worker/src/index.ts'], bundle: true,
-  platform: 'node', format: 'esm', write: false })
-const worker = (await import('data:text/javascript;base64,'
-  + Buffer.from(bundle.outputFiles[0].contents).toString('base64'))).default
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+const bundle = await build({ stdin: {
+  contents: readFileSync('worker/src/index.ts','utf8') + '\nexport { service }',
+  resolveDir: resolve('worker/src'), sourcefile: 'index.ts', loader: 'ts',
+}, bundle: true, platform: 'node', format: 'esm', write: false })
+const {default: worker,service} = await import('data:text/javascript;base64,'
+  + Buffer.from(bundle.outputFiles[0].contents).toString('base64'))
 const base = 'https://kb-ai-trader.ksmsy1.workers.dev/api/kb/quotes'
 const mkEnv = (key) => ({
   KB_APP_KEY: key, KB_APP_SECRET: 'never-expose-secret',
@@ -172,5 +176,36 @@ test('scan retains a verified quote when investor flow times out on both attempt
   assert.match(result.results[0].investorError,/수급 타임아웃/)
   assert.equal(result.results.length,1)
   assert.deepEqual(calls,['/api/v1/ivu10140','/api/v1/ivu10430','/api/v1/ivu10430'])
+ }finally{globalThis.fetch=original}
+})
+
+test('scheduled flow can recover late in the scan when the fallback itself still fits',async ctx=>{
+ const start=new Date()
+ ctx.mock.timers.enable({apis:['Date'],now:start})
+ const original=globalThis.fetch
+ let directFlows=0
+ const egress={async fetch(request){
+  if(new URL(request.url).pathname.endsWith('/ivu10140'))
+   return Response.json({dataBody:{now_prc:'12300'}})
+  ctx.mock.timers.setTime(start.getTime()+32_000)
+  return new Response(null,{status:502,headers:{'X-KB-Egress-Error':'timeout'}})
+ }}
+ globalThis.fetch=async url=>{
+  const path=new URL(String(url)).pathname
+  if(path.endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'token',expires_in:3600}})
+  assert.match(path,/\/ivu10430$/)
+  directFlows++
+  return Response.json({dataBody:{out:[]}})
+ }
+ try{
+  const response=await service.fetch(new Request(base.replace('/kb/quotes','/market/investor-flow'),{
+   method:'POST',headers:{Authorization:'Bearer dashboard-pass','Content-Type':'application/json'},
+   body:JSON.stringify({stocks:stocks.slice(0,1),stopOnUpstream:true}),
+  }),mkEnv('scheduled-late-flow-recovery'),egress,new Map())
+  const result=await response.json()
+  assert.equal(result.success,true)
+  assert.notEqual(result.partial,true)
+  assert.equal(result.results[0].investorError,'')
+  assert.equal(directFlows,1)
  }finally{globalThis.fetch=original}
 })

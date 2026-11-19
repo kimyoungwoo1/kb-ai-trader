@@ -767,7 +767,10 @@ const service = {
       let retryAvailable = input.stopOnUpstream === true;
       const firstReadLimit = marketEgress ? 8_000 : 15_000;
       const retryLimit = 8_000;
-      const canRetry = () => !abortScan && retryAvailable && scanDeadline - Date.now() >= retryLimit + firstReadLimit;
+      const canRetry = () => {
+        const retryBudget = scheduledScan ? retryLimit + 1_000 : retryLimit + firstReadLimit;
+        return !abortScan && retryAvailable && scanDeadline - Date.now() >= retryBudget;
+      };
       class KbScanDeadlineReached extends Error {}
       class KbScanResponseFormatError extends Error {}
       const recoverableRead = (error: unknown) =>

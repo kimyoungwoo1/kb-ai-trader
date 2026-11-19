@@ -295,7 +295,9 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
       const news = newsResult || {};
       if (partial) {
         scanError = (kbScanFailurePrefix + (reply.message || '정밀 시세 일부 실패')).slice(0,180);
-        snapshot.scanRetryAfterSlot = slot+2;
+        // A partial reply proves KB is responding. Resume missing reads before
+        // successful quote and flow samples expire.
+        snapshot.scanRetryAfterSlot = slot+1;
       } else delete snapshot.scanRetryAfterSlot;
       const incompleteScan = partial || disclosuresResult?.success!==true || disclosuresResult.complete!==true || newsResult?.success!==true;
       const checks = Array.isArray(news.diagnostics) ? news.diagnostics : [];
@@ -333,7 +335,8 @@ export async function serverPaperTick(db: Db | undefined, post: Post, date = new
           dartDetail = '공시 ' + disclosures.fetched_count + '/' + disclosures.total_count + '건 수집';
         const phaseError = partial ? reply.message || 'KB 시세·수급 일부 미확인' :
           disclosuresResult?.complete!==true || disclosuresResult?.success!==true ? '공시 검증 미완료' + (dartDetail ? ' (' + dartDetail + ')' : '') : '뉴스 검증 미완료';
-        message = '정밀검사 일부 실패 · '+phaseError+' · 신규 매수 보류';
+        const coverage = partial ? ' · 정밀검사 '+symbols.filter(symbol=>isComplete(previous.get(symbol.code))).length+'/'+symbols.length+'종목 완료' : '';
+        message = '정밀검사 일부 실패 · '+phaseError+coverage+' · 신규 매수 보류';
       }else{
         const signals = applyCatalystGate(generateTradeSignals(quotes,200_000,now),catalyst,now).signals;
         snapshot.screening = { checkedAt, signals };

@@ -197,8 +197,7 @@ test('a scan resumes after repeated KB 522 failures and a partial response',asyn
   assert.equal(pendingCatalyst.newsOk,false)
   assert.equal(pendingCatalyst.dartComplete,false)
   assert.equal(JSON.parse(db.server.snapshot_json).screening,null)
-  assert.equal((await tick(25)).result,'kb_cooldown')
-  assert.equal((await tick(26)).result,'scanned')
+  assert.equal((await tick(25)).result,'scanned')
   assert.equal(reads,4)
   assert.equal(catalystCalls,2)
   assert.equal(JSON.parse(db.server.snapshot_json).catalyst.skippedReason,undefined)
@@ -382,7 +381,7 @@ test('a resumed scan preserves the successful half of each stock read',async ctx
     throw Error('unexpected provider call '+path)
   }
   assert.equal((await serverPaperTick(db,post,date)).partial,true)
-  const resume=new Date(date.getTime()+120_000)
+  const resume=new Date(date.getTime()+60_000)
   ctx.mock.timers.setTime(resume.getTime())
   const outcome=await serverPaperTick(db,post,resume)
   assert.equal(outcome.result,'scanned')
