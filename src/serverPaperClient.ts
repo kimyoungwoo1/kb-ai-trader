@@ -24,6 +24,7 @@ export type ServerPaperStatus = {
   success: boolean; migrated: boolean; mode: string; revision?: number;
   updated_at?: string; last_error?: string | null; message?: string;
   cron_monitor_available?: boolean; cron?: ServerCronMonitor;
+  cron_latest_tick?: ServerCronRun | null; cron_observed_at?: string; cronReceivedAt?: number;
   unchanged?: boolean; heartbeat?: boolean;
   snapshot?: { account: AutoAccount; ledger: PaperLedger; savedAt: string; screening?: ScreeningSnapshot; catalyst?: CatalystSnapshot }
 }
@@ -66,6 +67,8 @@ export async function serverPaperAction(token: string, action: string): Promise<
     : received.unchanged
       ? { ...latest!, ...received, snapshot:latest!.snapshot }
       : received
+  if (action === 'status') data.cron_latest_tick = received.cron?.last_tick
+  if (received.cron_observed_at) data.cronReceivedAt = Date.now()
   latest = data
   lastConnectionError = ''
   if (data.migrated && data.snapshot) {

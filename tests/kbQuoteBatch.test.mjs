@@ -209,3 +209,28 @@ test('scheduled flow can recover late in the scan when the fallback itself still
   assert.equal(directFlows,1)
  }finally{globalThis.fetch=original}
 })
+
+test('a successful server watch still retries other failed quotes when the first retry times out',async()=>{
+ const original=globalThis.fetch
+ const sample=stocks.slice(0,3)
+ const retried=[]
+ const egress={async fetch(request){
+  const code=(await request.json()).dataBody.shrt_cd
+  return code===sample[2].code ? Response.json({dataBody:{now_prc:'12300'}}) :
+   new Response(null,{status:502,headers:{'X-KB-Egress-Error':'timeout'}})
+ }}
+ globalThis.fetch=async (url,init)=>{
+  if(String(url).endsWith('/oauth2/token'))return Response.json({dataBody:{access_token:'token',expires_in:3600}})
+  const code=JSON.parse(init.body).dataBody.shrt_cd
+  retried.push(code)
+  if(code===sample[0].code)throw new DOMException('simulated deadline','TimeoutError')
+  return Response.json({dataBody:{now_prc:'12300'}})
+ }
+ try{
+  const response=await service.fetch(req(sample),mkEnv('watch-partial-independent'),egress,new Map())
+  const result=await response.json()
+  assert.equal(result.received,2)
+  assert.deepEqual(retried,[sample[0].code,sample[1].code])
+  assert.equal(result.results[0].price,null)
+ }finally{globalThis.fetch=original}
+})

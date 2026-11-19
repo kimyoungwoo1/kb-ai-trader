@@ -53,7 +53,10 @@ export default function AutoPaperLab({
     window.addEventListener('storage', sync)
     const syncCloud = () => setCloud(getCloudSyncState())
     window.addEventListener(CLOUD_SYNC_EVENT, syncCloud)
-    const syncServer = () => setServerTick(x => x+1)
+    const syncServer = () => {
+      setClock(Date.now())
+      setServerTick(x => x+1)
+    }
     window.addEventListener(SERVER_PAPER_EVENT, syncServer)
     return () => {
       window.removeEventListener(CLOUD_SYNC_EVENT, syncCloud)
@@ -68,9 +71,14 @@ export default function AutoPaperLab({
   const serverInfo = getServerPaperStatus()
   const serverError = getServerPaperError()
   const cron = serverInfo?.cron
-  const lastCronAt = cron?.last_tick?.finished_at || ''
-  const cronAge = lastCronAt ? clock - Date.parse(lastCronAt) : Number.POSITIVE_INFINITY
+  const lastCron = serverInfo?.cron_latest_tick === undefined ? cron?.last_tick : serverInfo.cron_latest_tick
+  const lastCronAt = lastCron?.finished_at || ''
+  const observedAt = Date.parse(serverInfo?.cron_observed_at || '')
+  const monitorClock = Number.isFinite(observedAt) && serverInfo?.cronReceivedAt !== undefined
+    ? observedAt + Math.max(0, clock - serverInfo.cronReceivedAt) : clock
+  const cronAge = monitorClock - Date.parse(lastCronAt)
   const cronRecent = cronAge >= 0 && cronAge <= 180_000
+  const cronPartial = lastCron?.result === 'watch_partial' || lastCron?.result === 'scan_partial'
   const cronLabels: Record<string,string> = {
     market_closed:'장 마감 · 검사 대기', stopped:'자동매매 중지',
     duplicate:'중복 호출 무시', busy:'이전 검사 처리 중',
@@ -231,17 +239,17 @@ export default function AutoPaperLab({
       {serverMode && serverInfo?.migrated && <section className="panel" aria-label="서버 Cron 실행 모니터">
         <div className="panel-heading">
           <div><h3>서버 자동매매 실행 모니터</h3><span>SERVER CRON · D1 실행 이력 · 최근 12회</span></div>
-          <span className={'analysis-source-state ' + ((cronRecent || !health.inSession) && serverInfo.cron_monitor_available ? 'ready' : 'blocked')}>
-            {!serverInfo.cron_monitor_available ? '모니터 연결 확인 필요' : !health.inSession ? '정규장 대기' : !lastCronAt ? '첫 실행 기록 대기' : cronRecent ? '최근 실행 확인' : '최근 실행 지연'}
+          <span className={'analysis-source-state ' + (((cronRecent && !cronPartial) || !health.inSession) && serverInfo.cron_monitor_available ? 'ready' : 'blocked')}>
+            {!serverInfo.cron_monitor_available ? '모니터 연결 확인 필요' : !health.inSession ? '정규장 대기' : !lastCronAt ? '첫 실행 기록 대기' : cronRecent ? (cronPartial ? '최근 검사 일부 성공' : '최근 실행 확인') : '최근 실행 지연'}
           </span>
         </div>
         <div className="auto-health-grid">
-          <div><span>최근 서버 Cron 호출</span><strong>{formatTime(lastCronAt)}</strong><small>{cron?.last_tick ? (cronLabels[cron.last_tick.result] || cron.last_tick.result) : '서버 실행 이력 확인 전'}</small></div>
+          <div><span>최근 서버 Cron 완료</span><strong>{formatTime(lastCronAt)}</strong><small>{lastCron ? (cronLabels[lastCron.result] || lastCron.result) : '서버 실행 이력 확인 전'}</small></div>
           <div><span>최근 정상 서버 검사</span><strong>{formatTime(cron?.last_success?.finished_at)}</strong><small>정규장 중 정상 완료된 검사</small></div>
           <div><span>오늘 정상 완료</span><strong>{cron?.today?.completed ?? '-'}회</strong><small>일부 성공 {cron?.today?.partial ?? '-'}회 별도</small></div>
           <div><span>오늘 검사 실패</span><strong>{cron?.today?.errors ?? '-'}회</strong><small>실패한 검사만 집계 · KB 재조회 대기는 별도 기록</small></div>
         </div>
-        {['error','kb_cooldown'].includes(cron?.last_tick?.result ?? '') && <p className="news-message" role="alert">최근 서버 오류: {cron?.last_tick?.message}</p>}
+        {(cronPartial || ['error','kb_cooldown'].includes(lastCron?.result ?? '')) && <p className="news-message" role="status">{lastCron?.message}</p>}
         <details className="auto-advanced">
           <summary>서버 Cron 최근 실행 이력 보기</summary>
           <div className="table-wrap">

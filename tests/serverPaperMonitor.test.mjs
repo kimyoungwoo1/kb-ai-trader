@@ -4,7 +4,7 @@ import { build } from 'esbuild'
 import {readFileSync} from 'node:fs'
 
 const bundled = await build({entryPoints:['worker/src/serverPaperMonitor.ts'],bundle:true,platform:'node',format:'esm',write:false})
-const { isCronHealthy, paperCronPhase, runMonitoredPaperCron, readServerCronMonitor } = await import('data:text/javascript;base64,'+
+const { isCronHealthy, paperCronPhase, runMonitoredPaperCron, readServerCronMonitor, readServerCronLastTick } = await import('data:text/javascript;base64,'+
   Buffer.from(bundled.outputFiles[0].contents).toString('base64'))
 
 const createDb = () => {
@@ -53,7 +53,7 @@ test('Cron freshness check distinguishes recent successful heartbeat from stale 
   assert.equal(isCronHealthy(null),false)
 })
 
-test('high-frequency heartbeat bypasses Cron monitor and full snapshot assembly',()=>{
+test('high-frequency heartbeat reads one Cron row and bypasses full snapshot assembly',()=>{
  const worker=readFileSync('worker/src/index.ts','utf8')
  const paper=readFileSync('worker/src/serverPaper.ts','utf8')
  const client=readFileSync('src/App.tsx','utf8')
@@ -63,6 +63,9 @@ test('high-frequency heartbeat bypasses Cron monitor and full snapshot assembly'
  const route=worker.slice(start,finish)
  assert.match(route,/if \(action === 'status' && response\.ok && env\.PAPER_DB\)/)
  assert.doesNotMatch(route,/action === 'status' \|\| action === 'heartbeat'/)
+ const heartbeat=route.slice(route.indexOf("if (action === 'heartbeat' && response.ok"))
+ assert.match(heartbeat,/readServerCronLastTick\(env.PAPER_DB\)/)
+ assert.doesNotMatch(heartbeat,/readServerCronMonitor\(/)
  assert.match(paper,/if \(action === 'heartbeat'\) return ok\(\{ \.\.\.common, heartbeat:true \}\)/)
  assert.match(client,/\+\+polls % 4 === 0 \? 'status' : 'heartbeat'/)
 })
@@ -80,4 +83,16 @@ test('Cron only monitors weekday sessions and runs a single scheduled close job'
  assert.equal(check('2026-11-14T06:35:00Z'),'off')
  assert.deepEqual(JSON.parse(readFileSync('worker/wrangler.jsonc','utf8')).triggers.crons,
   ['* 0-6 * * MON-FRI'])
+})
+
+
+test('the lightweight Cron read reports a partial watchdog result from older records',async()=>{
+ let reads=0
+ const row={slot:1,result:'watched',message:'보유·감시 종목 4/5건',scanned:5,filled:0}
+ const result=await readServerCronLastTick({prepare(sql){
+  assert.match(sql,/ORDER BY slot DESC LIMIT 1$/)
+  return {async first(){reads++;return row}}
+ }})
+ assert.equal(reads,1)
+ assert.equal(result.result,'watch_partial')
 })

@@ -25,28 +25,34 @@ export function paperCronPhase(scheduledAt:Date,now:Date):'market'|'close'|'off'
   return now>=scheduledAt&&currentKst.toISOString().slice(0,10)===kst.toISOString().slice(0,10)?'close':'off'
 }
 
-export async function readServerCronMonitor(db: Db): Promise<{
-  last_tick: MonitorRow | null; recent: MonitorRow[]; last_success: MonitorRow | null;
-  today: { total: number; completed: number; partial: number; errors: number; skipped: number };
-}> {
-  const kst = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0,10)
-  const from = Date.parse(kst+'T00:00:00+09:00')
-  // Independent D1 reads run concurrently. The common 30-second heartbeat
-  // does not invoke this function at all.
-  const [recentQuery,lastGood,daily] = await Promise.all([
-    db.prepare('SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 12').all(),
-    db.prepare("SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs WHERE "+completed+" ORDER BY slot DESC LIMIT 1").first<MonitorRow>(),
-    db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN "+completed+" THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result IN ('scan_partial','watch_partial') OR ("+legacyPartial+") THEN 1 ELSE 0 END) AS partial, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols','kb_cooldown') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?")
-      .bind(Math.floor(from/60000)).first<Record<string,number|null>>()
-  ])
-  const recent = ((recentQuery.results || []) as MonitorRow[]).map(row=>{
+const normalizeCronRun = (row: MonitorRow):MonitorRow => {
     if (row.result==='scanned' && /일부 실패|보유 감시 (조회 실패|시세 미확인)/.test(row.message))
       return {...row,result:'scan_partial'};
     const watched = /^보유·감시 종목 (\d+)\/(\d+)건$/.exec(row.message);
     if (row.result==='watched' && watched && Number(watched[1])<Number(watched[2]))
       return {...row,result:'watch_partial'};
     return row;
-  })
+}
+
+export async function readServerCronLastTick(db:Db):Promise<MonitorRow|null>{
+  const row=await db.prepare('SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 1').first<MonitorRow>()
+  return row ? normalizeCronRun(row) : null
+}
+
+export async function readServerCronMonitor(db: Db): Promise<{
+  last_tick: MonitorRow | null; recent: MonitorRow[]; last_success: MonitorRow | null;
+  today: { total: number; completed: number; partial: number; errors: number; skipped: number };
+}> {
+  const kst = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0,10)
+  const from = Date.parse(kst+'T00:00:00+09:00')
+  // The 30-second heartbeat reads only the newest row. Full status adds aggregates and history.
+  const [recentQuery,lastGood,daily] = await Promise.all([
+    db.prepare('SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs ORDER BY slot DESC LIMIT 12').all(),
+    db.prepare("SELECT slot,started_at,finished_at,result,message,scanned,filled FROM server_paper_cron_runs WHERE "+completed+" ORDER BY slot DESC LIMIT 1").first<MonitorRow>(),
+    db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN "+completed+" THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN result IN ('scan_partial','watch_partial') OR ("+legacyPartial+") THEN 1 ELSE 0 END) AS partial, SUM(CASE WHEN result='error' THEN 1 ELSE 0 END) AS errors, SUM(CASE WHEN result IN ('market_closed','stopped','busy','duplicate','no_symbols','kb_cooldown') THEN 1 ELSE 0 END) AS skipped FROM server_paper_cron_runs WHERE slot >= ?")
+      .bind(Math.floor(from/60000)).first<Record<string,number|null>>()
+  ])
+  const recent = ((recentQuery.results || []) as MonitorRow[]).map(normalizeCronRun)
   return {last_tick:recent[0] || null,recent,last_success:lastGood || null,
     today: {total:Number(daily?.total)||0,completed:Number(daily?.completed)||0,partial:Number(daily?.partial)||0,errors:Number(daily?.errors)||0,skipped:Number(daily?.skipped)||0}}
 }

@@ -2,7 +2,7 @@ import {runLiveStrategy} from './liveStrategy'
 import {fetchDartScan} from './dartScan'
 import {kbQuotePrice} from './kbQuotePrice'
 import { KbWatchUnavailable, serverPaperApi } from './serverPaper'
-import { runMonitoredPaperCron, readServerCronMonitor, paperCronPhase } from './serverPaperMonitor'
+import { runMonitoredPaperCron, readServerCronMonitor, readServerCronLastTick, paperCronPhase } from './serverPaperMonitor'
 import { handleNotifications, publishNotification } from './notifications'
 import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi } from './liveTrial'
@@ -227,10 +227,17 @@ const service = {
         let monitor:unknown = null, available = false;
         try { monitor = await readServerCronMonitor(env.PAPER_DB); available = true; }
         catch { /* Monitoring never blocks the paper account read. */ }
-        const extra = ',"cron_monitor_available":'+JSON.stringify(available)+
+        const extra = ',"cron_observed_at":'+JSON.stringify(new Date().toISOString())+',"cron_monitor_available":'+JSON.stringify(available)+
           (available ? ',"cron":'+JSON.stringify(monitor) : '');
         return new Response(raw.slice(0,-1)+extra+'}', {status:200,
           headers:{...corsHeaders,'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+      }
+      if (action === 'heartbeat' && response.ok && env.PAPER_DB) {
+        try {
+          const lastTick=await readServerCronLastTick(env.PAPER_DB);
+          const status=await response.json() as Record<string,unknown>;
+          return json({...status,cron_latest_tick:lastTick,cron_observed_at:new Date().toISOString()});
+        } catch { /* Keep the account heartbeat available when monitoring is unavailable. */ }
       }
       const headers = new Headers(response.headers);
       for (const [k,v] of Object.entries(corsHeaders)) headers.set(k,v);
@@ -569,8 +576,10 @@ const service = {
           if (timeLeft < 2_000) return Promise.resolve(results[index]);
           return readQuote(index, 2, Math.min(timeLeft, 20_000));
         };
+        const partialServerSuccess=!!cronQuotes && results.some(item=>item.price!==null);
         results[probe] = await retry(probe);
-        if (results[probe].price !== null) {
+        if (!results[probe].rate_limited && !results[probe].token_expired &&
+            (results[probe].price !== null || partialServerSuccess)) {
           await Promise.all(remaining.map(async index => { results[index] = await retry(index); }));
         }
       }
