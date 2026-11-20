@@ -29,6 +29,8 @@ test('Korean weekday pre-open Cron warms OAuth once and writes only the encrypte
       await Promise.all(running.splice(0))
     }
     await invoke('2026-11-21T23:55:00Z') // Sunday KST
+    await invoke('2026-11-22T00:01:00Z') // Inclusive UTC weekday filter fires on Sunday.
+    await invoke('2026-11-22T23:54:00Z') // Minute outside the warmup window.
     assert.equal(grants,0)
     await invoke(monday.toISOString())
     assert.equal(grants,1)
