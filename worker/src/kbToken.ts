@@ -98,6 +98,15 @@ export async function revokeKbAccessToken(env: KbCredentials, token: string): Pr
   } catch { /* The local rejection still prevents reuse in this isolate. */ }
 }
 
+// The Korean opening window is on the previous UTC date.
+export function isKbOpeningWarmup(scheduledAt:Date,now:Date):boolean {
+  const scheduled=scheduledAt.getTime(), actual=now.getTime()
+  return scheduledAt.getUTCDay()<=4 && scheduledAt.getUTCHours()===23 &&
+    [55,57,59].includes(scheduledAt.getUTCMinutes()) &&
+    actual>=scheduled && actual-scheduled<120_000 &&
+    now.getUTCHours()===23
+}
+
 export async function getKbAccessToken(env: KbCredentials): Promise<string> {
   if (!env.KB_APP_KEY || !env.KB_APP_SECRET) throw new KbAuthError('KB 인증키가 없습니다.', 503)
   const key = env.KB_APP_KEY + '\n' + kbBaseUrl(env)

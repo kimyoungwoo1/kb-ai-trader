@@ -606,13 +606,13 @@ async function main(){
       await putSchedules(newSchedules)
       const current=scheduleEntries(await api(schedulePath)).map(({cron})=>scheduleKey(cron))
       ensure(!current.includes(retired)&&managedKeys.every(cron=>current.includes(cron)),
-        '정규장 및 마감 작업 Cron 등록 확인 실패')
+        '개장 전 인증·정규장·마감 작업 Cron 등록 확인 실패')
     }catch(error){
       try{await putSchedules(oldSchedules)}
       catch{console.error('⚠ 기존 Cron 스케줄 복구 실패 · 운영 설정 확인 필요')}
       throw error
     }
-    console.log('✓ 평일 정규장 1분 감시 · 15:35 마감 작업 Cron 확인')
+    console.log('✓ 평일 08:55·08:57·08:59 KB 인증 준비 · 정규장 1분 감시 · 15:35 마감 작업 Cron 확인')
   }
   console.log('✅ 운영 반영 성공: '+domain)
 }

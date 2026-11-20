@@ -8,7 +8,7 @@ import { formatPaperFillNotification } from './paperFillNotice'
 import { liveTrialApi } from './liveTrial'
 import { reconcileLiveOrders, cancelStaleLiveOrders } from './liveExecution'
 import { paperBackupRoute } from './paperBackupEndpoint'
-import { getKbAccessToken, clearKbAccessToken, revokeKbAccessToken, kbBaseUrl, KbAuthError } from './kbToken'
+import { getKbAccessToken, clearKbAccessToken, revokeKbAccessToken, kbBaseUrl, KbAuthError, isKbOpeningWarmup } from './kbToken'
 import {readKbAccountJson,fetchKbObserved,isKbGatewayFailure,isKbReadTransportFailure,accountRead,marketRead,type MarketEgress} from './kbAccountRead'
 import {runAccountBatch} from './kbAccountBatch'
 import {accountSnapshots} from './kbAccountSnapshots'
@@ -1412,6 +1412,19 @@ const service = {
   async scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
     const now=new Date();
     const scheduledAt=new Date(controller.scheduledTime ?? now.getTime());
+    if(isKbOpeningWarmup(scheduledAt,now)){
+      if(!env.PAPER_DB)return;
+      context.waitUntil((async()=>{
+        try{
+          await getKbAccessToken(env);
+          console.log(JSON.stringify({event:'kb_opening_oauth_ready',scheduled_at:scheduledAt.toISOString()}));
+        }catch(error){
+          console.warn(JSON.stringify({event:'kb_opening_oauth_unavailable',scheduled_at:scheduledAt.toISOString(),
+            upstream_status:error instanceof KbAuthError ? error.upstreamStatus??null : null}));
+        }
+      })());
+      return;
+    }
     const phase=paperCronPhase(scheduledAt,now);
     if(phase==='off')return;
     const cronQuotes: CronQuotes = new Map();
