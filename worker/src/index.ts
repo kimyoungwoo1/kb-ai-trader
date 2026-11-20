@@ -511,8 +511,9 @@ const service = {
       }
       const baseUrl = kbBaseUrl(env);
       const retryDeadline = Date.now() + 40_000;
+      const quoteTimeout = cronQuotes ? 8_000 : 20_000;
       const requestIds = stocks.map(() => crypto.randomUUID());
-      const readQuote = async (index: number, attempt = 1, timeoutMs = 20_000) => {
+      const readQuote = async (index: number, attempt = 1, timeoutMs = quoteTimeout) => {
         const stock = stocks[index];
         try {
           const response = await marketRead(baseUrl + "/api/v1/ivu10140", {
@@ -523,7 +524,7 @@ const service = {
               dataHeader: { ipAddr: "127.0.0.1", macAddr: "00:00:00:00:00:00" },
               dataBody: { excg_clsf: "1", shrt_cd: stock.code },
             }),
-          }, {requestId:requestIds[index],attempt}, timeoutMs, marketEgress);
+          }, {requestId:requestIds[index],attempt}, timeoutMs, marketEgress, cronQuotes ? 750 : 0);
           let data: any;
           try { data = await response.json(); }
           catch { return { code: stock.code, name: stock.name,
@@ -565,7 +566,19 @@ const service = {
           };
         }
       };
-      const results = await Promise.all(stocks.map((_, index) => readQuote(index)));
+      const results: Awaited<ReturnType<typeof readQuote>>[] = [];
+      const readInOrder = async (indices: number[], read: typeof readQuote) => {
+        let next = 0;
+        const readRemaining = async () => {
+          while (next < indices.length) {
+            const index = indices[next++];
+            results[index] = await read(index);
+          }
+        };
+        const parallel = cronQuotes ? 2 : indices.length;
+        await Promise.all(Array.from({length: Math.min(indices.length, parallel)}, readRemaining));
+      };
+      await readInOrder(stocks.map((_, index) => index), readQuote);
       const failed = results.flatMap((item,index) => isKbGatewayFailure(item.upstream_status) || item.transport_error ? [index] : []);
       if (failed.length && !results.some(item => item.rate_limited || item.token_expired)) {
         // Retry a single failed symbol first, to avoid a second burst during an outage.
@@ -574,13 +587,13 @@ const service = {
         const retry = (index: number) => {
           const timeLeft = retryDeadline - Date.now();
           if (timeLeft < 2_000) return Promise.resolve(results[index]);
-          return readQuote(index, 2, Math.min(timeLeft, 20_000));
+          return readQuote(index, 2, Math.min(timeLeft, quoteTimeout));
         };
         const partialServerSuccess=!!cronQuotes && results.some(item=>item.price!==null);
         results[probe] = await retry(probe);
         if (!results[probe].rate_limited && !results[probe].token_expired &&
             (results[probe].price !== null || partialServerSuccess)) {
-          await Promise.all(remaining.map(async index => { results[index] = await retry(index); }));
+          await readInOrder(remaining, retry);
         }
       }
       if (results.some(item => item.token_expired || item.rate_limited)) cronQuotes?.clear();

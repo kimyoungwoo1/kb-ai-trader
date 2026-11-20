@@ -235,6 +235,44 @@ test('a successful server watch still retries other failed quotes when the first
  }finally{globalThis.fetch=original}
 })
 
+test('Cron watch bounds the first-pass burst and starts the next quote as soon as a slot frees up',async()=>{
+ const original=globalThis.fetch
+ let releaseFirst
+ const held=new Promise(resolve=>{releaseFirst=resolve})
+ let active=0, peak=0, firstFinished=false, thirdPassedFirst=false
+ const egress={async fetch(request){
+  const code=(await request.json()).dataBody.shrt_cd
+  assert.equal(request.headers.get('X-KB-Timeout'),'8000')
+  peak=Math.max(peak,++active)
+  try{
+   if(code===stocks[0].code){await held;firstFinished=true}
+   if(code===stocks[2].code){thirdPassedFirst=!firstFinished;releaseFirst()}
+   return Response.json({dataBody:{now_prc:'12300'}})
+  }finally{active--}
+ }}
+ globalThis.fetch=async url=>{
+  assert.match(String(url),/\/oauth2\/token$/)
+  return Response.json({dataBody:{access_token:'token',expires_in:3600}})
+ }
+ const pending=service.fetch(req(),mkEnv('cron-watch-bounded'),egress,new Map())
+ let watchdog
+ try{
+  const response=await Promise.race([pending,new Promise((_,reject)=>{
+   watchdog=setTimeout(()=>reject(Error('third quote waited for first quote')),1000)
+  })])
+  const result=await response.json()
+  assert.equal(peak,2)
+  assert.equal(thirdPassedFirst,true)
+  assert.equal(result.received,stocks.length)
+  assert.deepEqual(result.results.map(item=>item.code),stocks.map(item=>item.code))
+ }finally{
+  clearTimeout(watchdog)
+  releaseFirst()
+  await pending.catch(()=>{})
+  globalThis.fetch=original
+ }
+})
+
 test('scheduled scans start the next symbol while an earlier flow request is pending',async()=>{
  const saved=globalThis.fetch
  let releaseFlow
