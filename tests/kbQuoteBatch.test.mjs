@@ -234,3 +234,46 @@ test('a successful server watch still retries other failed quotes when the first
   assert.equal(result.results[0].price,null)
  }finally{globalThis.fetch=original}
 })
+
+test('scheduled scans start the next symbol while an earlier flow request is pending',async()=>{
+ const saved=globalThis.fetch
+ let releaseFlow
+ const heldFlow=new Promise(resolve=>{releaseFlow=resolve})
+ const sample=stocks.slice(0,3)
+ const timeline=[]
+ let startedThird
+ const thirdStarted=new Promise(resolve=>{startedThird=resolve})
+ const egress={async fetch(request){
+  const data=(await request.json()).dataBody
+  const code=data.shrt_cd||data.is_cd
+  const quote=!!data.shrt_cd
+  if(quote&&code===sample[2].code){timeline.push('third started');startedThird()}
+  if(!quote&&code===sample[0].code)await heldFlow
+  return Response.json({dataBody:quote?{now_prc:'12300'}:{out:[]}})
+ }}
+ globalThis.fetch=async url=>{
+  assert.match(String(url),/\/oauth2\/token$/)
+  return Response.json({dataBody:{access_token:'token',expires_in:3600}})
+ }
+ const request=service.fetch(new Request(base.replace('/kb/quotes','/market/investor-flow'),{
+  method:'POST',headers:{Authorization:'Bearer dashboard-pass','Content-Type':'application/json'},
+  body:JSON.stringify({stocks:sample,stopOnUpstream:true}),
+ }),mkEnv('scheduled-continuous-workers'),egress,new Map())
+ let watchdog
+ try{
+  await Promise.race([thirdStarted,new Promise((_,reject)=>{
+   watchdog=setTimeout(()=>reject(Error('third symbol waited for first flow')),1000)
+  })])
+  timeline.push('first flow released')
+  releaseFlow()
+  const result=await (await request).json()
+  assert.equal(result.success,true)
+  assert.deepEqual(result.results.map(item=>item.code),sample.map(item=>item.code))
+  assert.deepEqual(timeline,['third started','first flow released'])
+ }finally{
+  clearTimeout(watchdog)
+  releaseFlow()
+  await request.catch(()=>{})
+  globalThis.fetch=saved
+ }
+})

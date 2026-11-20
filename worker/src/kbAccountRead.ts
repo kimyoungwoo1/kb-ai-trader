@@ -105,6 +105,8 @@ export const marketRead = async (
   } catch (error) {
     const timeoutError = timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')
     report('service_binding', init.signal?.aborted ? 'cancelled' : timeoutError ? 'timeout' : 'error', null)
+    init.signal?.throwIfAborted()
+    if (timeoutError) throw new DOMException('KB market egress binding timeout','TimeoutError')
     throw new TypeError('KB market egress binding failed')
   }
   const failure = response.headers.get('X-KB-Egress-Error')

@@ -967,24 +967,44 @@ const service = {
           } : {}),
         }, stopAfterStock};
       };
-      const batchSize = scheduledScan ? 2 : 1;
-      for (let index = 0; index < stocks.length; index += batchSize) {
-        if (scheduledScan && Date.now() >= scanDeadline) {
-          skippedMessage ||= "정밀검사 시간 한도 도달 · 남은 종목 미조회";
-          break;
+      if (scheduledScan) {
+        // Keep two reads in flight without waiting for the slower member of a fixed pair.
+        const outcomes: Array<Awaited<ReturnType<typeof readStock>> | undefined> = [];
+        let nextStock = 0;
+        let stop = false;
+        const readRemaining = async () => {
+          while (!abortScan && !stop && nextStock < stocks.length) {
+            if (Date.now() >= scanDeadline) {
+              skippedMessage ||= "정밀검사 시간 한도 도달 · 남은 종목 미조회";
+              return;
+            }
+            const index = nextStock++;
+            const outcome = await readStock(stocks[index]);
+            outcomes[index] = outcome;
+            if (outcome.failure || outcome.stopAfterStock) stop = true;
+          }
+        };
+        await Promise.all([readRemaining(), readRemaining()]);
+        if (!abortScan) {
+          for (const item of outcomes) {
+            if (item?.result) results.push(item.result);
+            if (item?.failure) skippedMessage ||= item.failure;
+          }
         }
-        const batch = await Promise.all(stocks.slice(index, index + batchSize).map(readStock));
-        if (abortScan) {
-          const { message, status } = abortScan;
-          if (status === 401) await revokeKbAccessToken(env,accessToken);
-          else if (status === 403) clearKbAccessToken(accessToken);
-          return unavailable(message, status);
-        }
-        for (const item of batch) {
+      } else {
+        for (const stock of stocks) {
+          const item = await readStock(stock);
+          if (abortScan) break;
           if (item.result) results.push(item.result);
           if (item.failure) return unavailable(item.failure, item.status);
+          if (item.stopAfterStock) break;
         }
-        if (batch.some(item => item.stopAfterStock)) break;
+      }
+      if (abortScan) {
+        const { message, status } = abortScan;
+        if (status === 401) await revokeKbAccessToken(env,accessToken);
+        else if (status === 403) clearKbAccessToken(accessToken);
+        return unavailable(message, status);
       }
       if (skippedMessage) return unavailable(skippedMessage);
       return json({ success: true, api: ["IVU10140", "IVU10430"], requested: stocks.length, results, checked_at: new Date().toISOString(), period: "최근 7일" });
